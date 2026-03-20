@@ -1,0 +1,249 @@
+import Foundation
+import ReadiumShared
+import SwiftSoup
+
+// Responsible for taking a ReadiumPublication and extracting a flat, ordered chapters and paragraphs for the Context Engine
+public class ParagraphIndexer {
+    public init() {}
+
+    // Extracts chapters and paragraphs from a publication.
+    public func index(publication: Publication, bookID: UUID) async throws -> (chapters: [NarrativeChapter], paragraphs: [NarrativeParagraph]) {
+        var chapters: [NarrativeChapter] = []
+        var allParagraphs: [NarrativeParagraph] = []
+
+        var absoluteParagraphIndex = 0
+
+        // Reading Order = linear chapters/sections in the EPUB
+        for (chapterIndex, link) in publication.readingOrder.enumerated() {
+            // fetch raw resource for this chapter
+            let resource = publication.get(link)
+
+            // read as string
+            guard let htmlString = try? await resource?.readAsString().get() else {
+                continue
+            }
+
+            // clean the html and split into paragraphs
+            let rawParagraphs = extractParagraphs(from: htmlString)
+
+            let chapterID = UUID()
+            let startParagraphIndex = absoluteParagraphIndex
+
+            var chapterParagraphs: [NarrativeParagraph] = []
+
+            for (indexInChapter, text) in rawParagraphs.enumerated() {
+                let paragraph = NarrativeParagraph(
+                    id: UUID(),
+                    bookID: bookID,
+                    chapterID: chapterID,
+                    indexInChapter: indexInChapter,
+                    absoluteIndex: absoluteParagraphIndex,
+                    text: text,
+                    startOffset: 0,  //TODO: We will calculate exact character offsets later
+                    endOffset: text.count,
+                    prevParagraphID: chapterParagraphs.last?.id,
+                    nextParagraphID: nil
+                )
+                chapterParagraphs.append(paragraph)
+                absoluteParagraphIndex += 1
+            }
+
+            let chapter = NarrativeChapter(
+                id: chapterID,
+                bookID: bookID,
+                index: chapterIndex,
+                title: link.title ?? "Chapter \(chapterIndex + 1)",
+                startParagraphIndex: startParagraphIndex,
+                endParagraphIndex: absoluteParagraphIndex - 1
+            )
+
+            chapters.append(chapter)
+            allParagraphs.append(contentsOf: chapterParagraphs)
+        }
+
+        for i in 0..<(allParagraphs.count - 1) {
+            let current = allParagraphs[i]
+            allParagraphs[i] = NarrativeParagraph(
+                id: current.id,
+                bookID: current.bookID,
+                chapterID: current.chapterID,
+                indexInChapter: current.indexInChapter,
+                absoluteIndex: current.absoluteIndex,
+                text: current.text,
+                startOffset: current.startOffset,
+                endOffset: current.endOffset,
+                prevParagraphID: current.prevParagraphID,
+                nextParagraphID: allParagraphs[i + 1].id
+            )
+        }
+
+        return (chapters, allParagraphs)
+    }
+
+
+    private func extractParagraphs(from html: String) -> [String] {
+        do {
+            let doc = try SwiftSoup.parse(html)
+
+            // Remove obvious non-content nodes
+            try doc.select("script, style, noscript").remove()
+
+            var collected: [String] = []
+
+            // 1) Prefer real paragraph tags
+            let pNodes = try doc.select("p")
+            if !pNodes.isEmpty() {
+                for node in pNodes.array() {
+                    let text = try node.text().trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty {
+                        collected.append(text)
+                    }
+                }
+                if !collected.isEmpty { return normalizeParagraphs(collected) }
+            }
+
+            // 2) Fallback to common block nodes if <p> is sparse/nonexistent
+            let blockNodes = try doc.select("article, section, div, li, blockquote, h1, h2, h3, h4")
+            for node in blockNodes.array() {
+                let text = try node.text().trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    collected.append(text)
+                }
+            }
+
+            // De-duplicate while preserving order
+            var seen = Set<String>()
+            let unique = collected.filter { seen.insert($0).inserted }
+            if !unique.isEmpty { return normalizeParagraphs(unique) }
+
+            // 3) Last fallback: full body text split by blank lines/sentences
+            let bodyText = (try? doc.body()?.text()) ?? ""
+            return
+                normalizeParagraphs(
+                    bodyText
+                        .components(separatedBy: CharacterSet.newlines)
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                )
+        } catch {
+            // Safe fallback if parsing fails on malformed EPUB HTML
+            return
+                normalizeParagraphs(
+                    html
+                        .replacingOccurrences(of: "\n", with: " ")
+                        .components(separatedBy: ". ")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                )
+        }
+    }
+
+    private func normalizeParagraphs(_ raw: [String]) -> [String] {
+        let junkExact: Set<String> = [
+            "oceanofpdf.com",
+            "oceanofpdf",
+            "contents",
+            "table of contents",
+        ]
+
+        func isLikely (_ text: String) -> Bool {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { return true }
+
+            let lower = trimmed.lowercased()
+
+            if junkExact.contains(lower) { return true }
+            if lower.hasPrefix("chapter ") && trimmed.count < 24 { return true }  // heading-only fragments
+            if lower.contains("all rights reserved") { return true }
+            if lower.contains("copyright") && trimmed.count < 120 { return true }
+            if lower.contains("www.") && trimmed.count < 120 { return true }
+            if lower.hasSuffix(".com") && trimmed.count < 80 { return true }
+
+            return false
+        }
+
+        let cleaned =
+            raw
+            .map {
+                $0
+                    .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .filter { !$0.isEmpty }
+
+            .filter { !isLikelyJunk($0) }
+
+        // De-duplicate while preserving order
+        var seen = Set<String>()
+        return cleaned.filter { seen.insert($0).inserted }
+    }
+
+    struct ParagraphQualityReport {
+        let totalParagraphs: Int
+        let uniqueParagraphs: Int
+        let duplicateParagraphs: Int
+        let shortParagraphs: Int  // < 20 chars
+        let longParagraphs: Int  // > 1200 chars (likely merged blocks)
+        let junkParagraphs: Int  // watermark/header/footer-like
+        let averageLength: Int
+        let medianLength: Int
+        let junkSamples: [String]
+    }
+
+    func qualityReport(for paragraphs: [NarrativeParagraph]) -> ParagraphQualityReport {
+        let texts = paragraphs.map(\.text)
+        return qualityReport(for: texts)
+    }
+
+    private func qualityReport(for texts: [String]) -> ParagraphQualityReport {
+        let cleaned = texts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let lengths = cleaned.map(\.count).sorted()
+        let total = cleaned.count
+
+        let uniqueCount = Set(cleaned).count
+        let duplicateCount = max(0, total - uniqueCount)
+
+        let shortCount = cleaned.filter { $0.count < 20 }.count
+        let longCount = cleaned.filter { $0.count > 1200 }.count
+
+        let junkTokens = [
+            "ocean of pdf",
+            "oceanofpdf",
+            "table of contents",
+            "contents",
+            "all rights reserved",
+            "copyright",
+            "scan",
+            "www.",
+            ".com",
+        ]
+
+        let junkCandidates = cleaned.filter { text in
+            let lower = text.lowercased()
+            return junkTokens.contains(where: { lower.contains($0) })
+        }
+        let junkCount = junkCandidates.count
+        let junkSamples = Array(junkCandidates.prefix(5))
+
+        let avgLength = total > 0 ? cleaned.map(\.count).reduce(0, +) / total : 0
+        let medianLength: Int = {
+            guard !lengths.isEmpty else { return 0 }
+            let mid = lengths.count / 2
+            if lengths.count.isMultiple(of: 2) {
+                return (lengths[mid - 1] + lengths[mid]) / 2
+            } else {
+                return lengths[mid]
+            }
+        }()
+
+        return ParagraphQualityReport(
+            totalParagraphs: total,
+            uniqueParagraphs: uniqueCount,
+            duplicateParagraphs: duplicateCount,
+            shortParagraphs: shortCount,
+            longParagraphs: longCount,
+            junkParagraphs: junkCount,
+            averageLength: avgLength,
+            medianLength: medianLength,
+            junkSamples: junkSamples
+        )
+    }
+}

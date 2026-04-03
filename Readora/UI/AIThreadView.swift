@@ -3,6 +3,7 @@ import SwiftUI
 struct AIThreadView: View {
     let threadID: UUID
     let bookID: UUID
+    private let chatService: AIChatService
 
     @State private var thread: AIThread?
     @State private var inputText: String = ""
@@ -11,6 +12,12 @@ struct AIThreadView: View {
     @FocusState private var isInputFocused: Bool
 
     @Environment(\.dismiss) private var dismiss
+
+    init(threadID: UUID, bookID: UUID, chatService: AIChatService = DefaultAIChatService()) {
+        self.threadID = threadID
+        self.bookID = bookID
+        self.chatService = chatService
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -141,15 +148,10 @@ struct AIThreadView: View {
             do {
                 let allMessages = AIThreadStore.shared.thread(id: threadID)?.messages ?? []
                 let passageText = thread?.passageText ?? ""
-                let context = await NarrativeContextStore.shared.buildPromptContext(
+                let responseText = try await chatService.reply(
                     bookID: bookID,
-                    selectedText: passageText
-                )
-                let client = try OpenAIClient.fromEnvironment()
-                let responseText = try await client.chat(
-                    messages: allMessages,
                     passageText: passageText,
-                    retrievedContext: context.promptContext
+                    messages: allMessages
                 )
                 let aiMessage = AIMessage(
                     id: UUID(),

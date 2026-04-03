@@ -61,14 +61,14 @@ struct NarrativeScene: Codable, FetchableRecord, PersistableRecord, Identifiable
 
     var id: UUID
     var bookID: UUID
-    var chapterID: UUID?
     var indexInBook: Int
+
     var firstParagraphID: Int64
     var lastParagraphID: Int64
+
     var summary: String
     var locationText: String?
-    var participantEntityIDsJSON: String
-    var toneSummary: String?
+
     var importanceScore: Double
 }
 
@@ -77,12 +77,12 @@ struct NarrativeEvent: Codable, FetchableRecord, PersistableRecord, Identifiable
 
     var id: UUID
     var bookID: UUID
-    var sceneID: UUID?
     var indexInNarrative: Int
-    var title: String
+
     var summary: String
+
     var firstParagraphID: Int64
     var lastParagraphID: Int64
-    var participantEntityIDsJSON: String
+
     var importanceScore: Double
 }

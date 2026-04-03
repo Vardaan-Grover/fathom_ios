@@ -21,6 +21,7 @@ struct ReaderScreen: View {
     @State private var selectedText: String = ""
     @State private var isShowingSelectionPanel = false
     @State private var noteQuoteText: String = ""
+    @State private var noteLocatorJSON: String?
     @State private var isShowingNoteEditor = false
 
     @StateObject private var loader = PublicationLoader()
@@ -80,12 +81,12 @@ struct ReaderScreen: View {
                             }
                         }
 
-                        commands.onExplain = { text in
+                        commands.onExplain = { text, locatorJSON in
                             let thread = AIThread(
                                 id: UUID(),
                                 bookID: bookID,
                                 passageText: text,
-                                locatorJSON: nil,
+                                locatorJSON: locatorJSON,
                                 chapterTitle: nil,
                                 createdAt: Date(),
                                 messages: []
@@ -96,8 +97,9 @@ struct ReaderScreen: View {
                             activeThreadID = thread.id
                         }
 
-                        commands.onAddNote = { text in
+                        commands.onAddNote = { text, locatorJSON in
                             noteQuoteText = text
+                            noteLocatorJSON = locatorJSON
                             isShowingNoteEditor = true
                         }
                     }
@@ -128,7 +130,11 @@ struct ReaderScreen: View {
                 }
             }
             .sheet(isPresented: $isShowingNoteEditor) {
-                NoteEditorSheet(quoteText: noteQuoteText)
+                NoteEditorSheet(
+                    bookID: bookID,
+                    quoteText: noteQuoteText,
+                    locatorJSON: noteLocatorJSON
+                )
                     .presentationDetents([.medium])
             }
             .sheet(isPresented: $isShowingSettings) {
@@ -234,7 +240,9 @@ struct ReaderScreen: View {
 // MARK: - Note Editor Sheet
 
 private struct NoteEditorSheet: View {
+    let bookID: UUID
     let quoteText: String
+    let locatorJSON: String?
     @State private var noteBody: String = ""
     @Environment(\.dismiss) private var dismiss
 
@@ -271,12 +279,62 @@ private struct NoteEditorSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        // Notes persistence coming soon
+                        let note = ReaderNote(
+                            id: UUID(),
+                            bookID: bookID,
+                            locatorJSON: locatorJSON,
+                            quoteText: quoteText,
+                            body: noteBody.trimmingCharacters(in: .whitespacesAndNewlines),
+                            createdAt: Date()
+                        )
+                        NoteStore.shared.add(note)
                         dismiss()
                     }
                     .disabled(noteBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
+    }
+}
+
+private struct ReaderNote: Identifiable, Codable {
+    let id: UUID
+    let bookID: UUID
+    let locatorJSON: String?
+    let quoteText: String
+    let body: String
+    let createdAt: Date
+}
+
+private final class NoteStore {
+    static let shared = NoteStore()
+
+    private init() {}
+
+    private var fileURL: URL {
+        let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        )[0]
+        return appSupport.appendingPathComponent("reader_notes.json")
+    }
+
+    func add(_ note: ReaderNote) {
+        var notes = loadAll()
+        notes.append(note)
+        saveAll(notes)
+    }
+
+    private func loadAll() -> [ReaderNote] {
+        guard
+            let data = try? Data(contentsOf: fileURL),
+            let notes = try? JSONDecoder().decode([ReaderNote].self, from: data)
+        else { return [] }
+
+        return notes
+    }
+
+    private func saveAll(_ notes: [ReaderNote]) {
+        guard let data = try? JSONEncoder().encode(notes) else { return }
+        try? data.write(to: fileURL, options: .atomic)
     }
 }

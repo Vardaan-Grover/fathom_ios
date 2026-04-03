@@ -141,7 +141,8 @@ struct AIThreadView: View {
             do {
                 let allMessages = AIThreadStore.shared.thread(id: threadID)?.messages ?? []
                 let passageText = thread?.passageText ?? ""
-                let responseText = try await OpenAIClient().chat(
+                let client = try OpenAIClient.fromEnvironment()
+                let responseText = try await client.chat(
                     messages: allMessages, passageText: passageText)
                 let aiMessage = AIMessage(
                     id: UUID(),

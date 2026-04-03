@@ -95,7 +95,6 @@ final class DatabaseManager {
                 t.column("id", .text).notNull().primaryKey()
                 t.column("bookID", .text).notNull().indexed().references(
                     "books", onDelete: .cascade)
-                t.column("chapterID", .text).indexed().references("chapters", onDelete: .setNull)
                 t.column("indexInBook", .integer).notNull()
                 t.column("firstParagraphID", .integer).notNull().indexed().references(
                     "paragraphs", onDelete: .cascade)
@@ -103,8 +102,6 @@ final class DatabaseManager {
                     "paragraphs", onDelete: .cascade)
                 t.column("summary", .text).notNull()
                 t.column("locationText", .text)
-                t.column("participantEntityIDsJSON", .text).notNull()
-                t.column("toneSummary", .text)
                 t.column("importanceScore", .double).notNull().defaults(to: 0.0)
             }
 
@@ -116,15 +113,12 @@ final class DatabaseManager {
                 t.column("id", .text).notNull().primaryKey()
                 t.column("bookID", .text).notNull().indexed().references(
                     "books", onDelete: .cascade)
-                t.column("sceneID", .text).indexed().references("scenes", onDelete: .setNull)
                 t.column("indexInNarrative", .integer).notNull()
-                t.column("title", .text).notNull()
                 t.column("summary", .text).notNull()
                 t.column("firstParagraphID", .integer).notNull().indexed().references(
                     "paragraphs", onDelete: .cascade)
                 t.column("lastParagraphID", .integer).notNull().indexed().references(
                     "paragraphs", onDelete: .cascade)
-                t.column("participantEntityIDsJSON", .text).notNull()
                 t.column("importanceScore", .double).notNull().defaults(to: 0.0)
             }
 

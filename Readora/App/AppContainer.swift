@@ -38,13 +38,24 @@ final class AppContainer {
             assertionFailure("Database smoke test failed: \(error)")
         }
 
+        let openAIKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"]
+        let openAIModel = ProcessInfo.processInfo.environment["OPENAI_MODEL"] ?? "gpt-4.1"
+        let geminiKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"]
+
         let bookRepo = BookRepositorySQLite(dbQueue: databaseManager.dbQueue)
         let readerService = DefaultReaderService()
-        let coordinator = BookPreprocessingCoordinator(dbQueue: databaseManager.dbQueue)
+        let coordinator = BookPreprocessingCoordinator(
+            dbQueue: databaseManager.dbQueue,
+            geminiAPIKey: geminiKey
+        )
         let contextEngine = DefaultContextEngine()
-        
-        // Placeholder client (no network yet)
-        let aiClient = MockAIClient()
+
+        let aiClient: AIClient
+        if let key = openAIKey?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
+            aiClient = OpenAIClient(apiKey: key, model: openAIModel)
+        } else {
+            aiClient = MockAIClient()
+        }
         
         return AppContainer(
             databaseManager: databaseManager,

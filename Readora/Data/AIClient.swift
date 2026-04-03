@@ -7,6 +7,7 @@ protocol AIClient {
 enum AIClientError: Error {
     case network
     case badResponse
+    case missingConfiguration
 }
 
 struct MockAIClient: AIClient {
@@ -28,8 +29,26 @@ struct MockAIClient: AIClient {
 }
 
 struct OpenAIClient: AIClient {
-    private let apiKey =""
-    private let model = "gpt-4.1"
+    private let apiKey: String
+    private let model: String
+
+    init(apiKey: String, model: String = "gpt-4.1") {
+        self.apiKey = apiKey
+        self.model = model
+    }
+
+    static func fromEnvironment() throws -> OpenAIClient {
+        guard
+            let key = ProcessInfo.processInfo.environment["OPENAI_API_KEY"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !key.isEmpty
+        else {
+            throw AIClientError.missingConfiguration
+        }
+
+        let model = ProcessInfo.processInfo.environment["OPENAI_MODEL"] ?? "gpt-4.1"
+        return OpenAIClient(apiKey: key, model: model)
+    }
 
     func explainPassage(context: ContextBundle) async throws -> Explanation {
         let messages: [[String: String]] = [
@@ -75,7 +94,6 @@ struct OpenAIClient: AIClient {
             "model": model,
             "messages": messages,
         ]
-        print(body)
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)

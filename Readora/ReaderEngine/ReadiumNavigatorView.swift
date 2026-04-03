@@ -10,13 +10,13 @@ import SwiftUI
         var goLeft: (() async -> Void)?
         var goRight: (() async -> Void)?
         var onTap: ((CGPoint, CGSize) -> Void)?
-        var onExplain: ((String) -> Void)?
-        var onAddNote: ((String) -> Void)?
+        var onExplain: ((String, String) -> Void)?
+        var onAddNote: ((String, String) -> Void)?
     }
 
     final class ReaderContainerViewController: UIViewController, UIEditMenuInteractionDelegate {
-        var onExplain: ((String) -> Void)?
-        var onAddNote: ((String) -> Void)?
+        var onExplain: ((String, String) -> Void)?
+        var onAddNote: ((String, String) -> Void)?
         var bookID: UUID = UUID()
         private(set) var navigator: EPUBNavigatorViewController?
         private var editMenuInteraction: UIEditMenuInteraction?
@@ -71,8 +71,9 @@ import SwiftUI
             ) { [weak self] _ in
                 guard let self else { return }
                 let text = pendingText
+                let locatorJSON = pendingLocatorJSON
                 navigator?.clearSelection()
-                onAddNote?(text)
+                onAddNote?(text, locatorJSON)
             }
 
             let explainAction = UIAction(
@@ -80,8 +81,9 @@ import SwiftUI
             ) { [weak self] _ in
                 guard let self else { return }
                 let text = pendingText
+                let locatorJSON = pendingLocatorJSON
                 navigator?.clearSelection()
-                onExplain?(text)
+                onExplain?(text, locatorJSON)
             }
 
             let readerGroup = UIMenu(
@@ -297,8 +299,12 @@ import SwiftUI
 
             container.bookID = bookID
 
-            container.onExplain = { [commands] text in commands?.onExplain?(text) }
-            container.onAddNote = { [commands] text in commands?.onAddNote?(text) }
+            container.onExplain = { [commands] text, locatorJSON in
+                commands?.onExplain?(text, locatorJSON)
+            }
+            container.onAddNote = { [commands] text, locatorJSON in
+                commands?.onAddNote?(text, locatorJSON)
+            }
 
             container.applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
             container.setupHighlightInteractions()

@@ -31,7 +31,7 @@ final class ReaderViewModel: ObservableObject, Identifiable {
         
         defer { isExplaining = false }
         
-        let bundle = contextEngine.makeBundle(from: passage)
+        let bundle = await contextEngine.makeBundle(from: passage)
         
         do {
             explanation = try await aiClient.explainPassage(context: bundle)

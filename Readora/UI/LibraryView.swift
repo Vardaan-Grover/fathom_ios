@@ -10,6 +10,7 @@ struct LibraryView: View {
     @State private var readerBookID: UUID = UUID()
 
     @State private var isImporting = false
+    @State private var refreshTimer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     var body: some View {
 
@@ -38,6 +39,20 @@ struct LibraryView: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
+
+                            HStack(spacing: 8) {
+                                Text(statusLabel(for: book.preprocessingStatus))
+                                    .font(.caption)
+                                    .foregroundStyle(statusColor(for: book.preprocessingStatus))
+
+                                if book.preprocessingStatus == .inProgress {
+                                    ProgressView(value: Double(book.aiAnalysisProgress))
+                                        .frame(maxWidth: 120)
+                                    Text("\(Int(book.aiAnalysisProgress * 100))%")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
                     }
 
@@ -51,6 +66,11 @@ struct LibraryView: View {
             .navigationTitle("Library")
             .task {
                 await viewModel.load()
+            }
+            .onReceive(refreshTimer) { _ in
+                Task {
+                    await viewModel.load()
+                }
             }
             .sheet(item: $readerVM) { vm in
                 ReaderView(viewModel: vm)
@@ -84,6 +104,32 @@ struct LibraryView: View {
                     await viewModel.importBook(from: url)
                 }
             }
+        }
+    }
+
+    private func statusLabel(for status: PreprocessingStatus) -> String {
+        switch status {
+        case .pending:
+            return "Pending analysis"
+        case .inProgress:
+            return "Analyzing"
+        case .completed:
+            return "Analysis ready"
+        case .failed:
+            return "Analysis failed"
+        }
+    }
+
+    private func statusColor(for status: PreprocessingStatus) -> Color {
+        switch status {
+        case .pending:
+            return .secondary
+        case .inProgress:
+            return .blue
+        case .completed:
+            return .green
+        case .failed:
+            return .red
         }
     }
 }

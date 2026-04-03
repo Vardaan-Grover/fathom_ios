@@ -141,9 +141,16 @@ struct AIThreadView: View {
             do {
                 let allMessages = AIThreadStore.shared.thread(id: threadID)?.messages ?? []
                 let passageText = thread?.passageText ?? ""
+                let context = await NarrativeContextStore.shared.buildPromptContext(
+                    bookID: bookID,
+                    selectedText: passageText
+                )
                 let client = try OpenAIClient.fromEnvironment()
                 let responseText = try await client.chat(
-                    messages: allMessages, passageText: passageText)
+                    messages: allMessages,
+                    passageText: passageText,
+                    retrievedContext: context.promptContext
+                )
                 let aiMessage = AIMessage(
                     id: UUID(),
                     role: .assistant,

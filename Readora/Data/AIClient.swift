@@ -67,12 +67,23 @@ struct OpenAIClient: AIClient {
         return try await sendRequest(messages: messages)
     }
 
-    func chat(messages: [AIMessage], passageText: String) async throws -> String {
+    func chat(
+        messages: [AIMessage],
+        passageText: String,
+        retrievedContext: String?
+    ) async throws -> String {
+        let contextBlock: String
+        if let retrievedContext, !retrievedContext.isEmpty {
+            contextBlock = "\n\nUse this spoiler-safe narrative context when answering:\n\(retrievedContext)"
+        } else {
+            contextBlock = ""
+        }
+
         var payload: [[String: String]] = [
             [
                 "role": "system",
                 "content":
-                    "You are an AI reading companion embedded in a book app. The user selected this passage: \"\(passageText)\". Help them understand it — covering meaning, tone, literary devices, or historical context as relevant. Keep responses concise and under 200 words.",
+                    "You are an AI reading companion embedded in a book app. The user selected this passage: \"\(passageText)\". Help them understand it, covering meaning, tone, literary devices, or historical context as relevant. Keep responses concise and under 200 words. Never reveal spoilers beyond the provided context.\(contextBlock)",
             ]
         ]
         payload +=

@@ -11,9 +11,17 @@ struct Book: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
     var format: BookFormat
     var localFilename: String?
 
+    var description: String?
+    var language: String?
+    var publisher: String?
+    var coverFilename: String?
+
     var importDate: Date = Date()
     var preprocessingStatus: PreprocessingStatus = .pending
     var aiAnalysisProgress: Float = 0.0
+
+    var estimatedPageCount: Int? = nil
+    var estimatedReadingTimeMinutes: Int? = nil
 
     var localURL: URL? {
         guard let filename = localFilename else { return nil }
@@ -22,8 +30,12 @@ struct Book: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
                 for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil,
                 create: false)
         else { return nil }
-
         return appSupport.appendingPathComponent("Books").appendingPathComponent(filename)
+    }
+
+    var coverURL: URL? {
+        guard let filename = coverFilename else { return nil }
+        return BookFileStore.coverURL(for: filename)
     }
 }
 

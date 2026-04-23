@@ -149,6 +149,22 @@ final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v2_add_book_metadata") { db in
+            try db.alter(table: "books") { t in
+                t.add(column: "description", .text)
+                t.add(column: "language", .text)
+                t.add(column: "publisher", .text)
+                t.add(column: "coverFilename", .text)
+            }
+        }
+
+        migrator.registerMigration("v3_add_reading_estimates") { db in
+            try db.alter(table: "books") { t in
+                t.add(column: "estimatedPageCount", .integer)
+                t.add(column: "estimatedReadingTimeMinutes", .integer)
+            }
+        }
+
         return migrator
     }
 

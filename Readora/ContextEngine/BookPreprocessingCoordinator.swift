@@ -47,7 +47,7 @@ actor BookPreprocessingCoordinator {
             let publication = try await BookPreprocessingCoordinator.openPublication(at: localURL)
             AppLogger.log(tag: "Preprocessing", "✅ EPUB opened: \(publication.metadata.title ?? "Unknown")")
 
-            try await extractAndSaveParagraphs(from: publication, bookID: book.id)
+            let totalWordCount = try await extractAndSaveParagraphs(from: publication, bookID: book.id)
             AppLogger.log(tag: "Preprocessing", "✅ Local paragraph extraction complete")
 
             processingBook.aiAnalysisProgress = 0.50
@@ -58,6 +58,10 @@ actor BookPreprocessingCoordinator {
 
             processingBook.aiAnalysisProgress = 1.0
             processingBook.preprocessingStatus = .completed
+            if totalWordCount > 0 {
+                processingBook.estimatedPageCount = max(1, totalWordCount / 250)
+                processingBook.estimatedReadingTimeMinutes = max(1, totalWordCount / 250)
+            }
             try await saveBookStatus(processingBook)
             AppLogger.log(tag: "Preprocessing", "✅ Book ready: \(book.title)")
 
@@ -88,8 +92,10 @@ actor BookPreprocessingCoordinator {
         }
     }
 
-    private func extractAndSaveParagraphs(from publication: Publication, bookID: UUID) async throws {
+    @discardableResult
+    private func extractAndSaveParagraphs(from publication: Publication, bookID: UUID) async throws -> Int {
         var absoluteIndex = 0
+        var totalWordCount = 0
 
         for (chapterIndex, link) in publication.readingOrder.enumerated() {
             guard let resource = publication.get(link) else { continue }
@@ -117,8 +123,11 @@ actor BookPreprocessingCoordinator {
                 paragraphs: extraction.paragraphs
             )
 
+            totalWordCount += extraction.paragraphs.reduce(0) { $0 + $1.text.split(separator: " ").count }
             absoluteIndex = extraction.nextIndex
         }
+
+        return totalWordCount
     }
 
     private func persistChapterAndParagraphs(

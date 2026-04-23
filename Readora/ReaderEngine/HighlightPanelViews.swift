@@ -7,32 +7,30 @@ struct HighlightColorPickerView: View {
     var body: some View {
         VStack(spacing: 24) {
             Text("Choose a Color")
-            .font(.headline)
+                .font(.headline)
 
             HStack(spacing: 24) {
-                ForEach(HighlightColor.allCases, id: \.self) {
-                    color in
+                ForEach(HighlightColor.allCases, id: \.self) { color in
                     Button {
                         onSelect(color)
                         dismiss()
                     } label: {
                         Circle()
-                        .fill(color.displayColor)
-                        .frame(width: 48, height: 48)
-                        .shadow(color: color.displayColor.opacity(0.5), radius: 4, y:2)
+                            .fill(color.displayColor)
+                            .frame(width: 48, height: 48)
+                            .shadow(color: color.displayColor.opacity(0.5), radius: 4, y: 2)
                     }
                 }
             }
 
-            Button("Cancel") {dismiss()}
-            .foregroundStyle(.secondary)
+            Button("Cancel") { dismiss() }
+                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 32)
         .padding(.horizontal)
     }
 }
 
-// Shown when tapping an existing highlight — change colour or remove
 struct HighlightMenuView: View {
     let onChangeColor: (HighlightColor) -> Void
     let onRemove: () -> Void

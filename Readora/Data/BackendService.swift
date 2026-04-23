@@ -118,11 +118,11 @@ actor BackendService {
         }
     }
 
-    func initBook(s3Key: String, title: String, author: String?, contentHash: String) async throws
+    func initBook(s3Key: String, title: String, author: String?, language: String?, contentHash: String) async throws
         -> InitBookResponse
     {
         let reqBody = InitBookRequest(
-            s3_key: s3Key, title: title, author: author, language: "en", content_hash: contentHash)
+            s3_key: s3Key, title: title, author: author, language: language ?? "en", content_hash: contentHash)
         let body = try JSONEncoder().encode(reqBody)
         let request = try makeRequest(path: "/books", method: "POST", body: body)
 

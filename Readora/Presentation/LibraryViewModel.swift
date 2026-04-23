@@ -65,53 +65,68 @@ final class LibraryViewModel: ObservableObject {
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
 
             let localURL = try BookFileStore.copyIntoAppLibrary(from: url)
-            let title = localURL.deletingPathExtension().lastPathComponent
+
+            AppLogger.log(tag: "LibraryViewModel", "1. Extracting EPUB metadata...")
+            let meta = try await EPUBMetadataExtractor.extract(from: localURL)
+            AppLogger.log(tag: "LibraryViewModel", "   Title: \(meta.title), Author: \(meta.author ?? "nil"), Language: \(meta.language ?? "nil")")
+
+            var coverFilename: String? = nil
+            if let coverData = meta.coverImageData {
+                let coverID = UUID()
+                coverFilename = try BookFileStore.saveCoverImage(coverData, coverID: coverID)
+                AppLogger.log(tag: "LibraryViewModel", "   Cover saved: \(coverFilename!)")
+            }
 
             let backendService = BackendService.shared
 
-            AppLogger.log(tag: "LibraryViewModel", "1. Requesting upload URL for \(title)...")
+            AppLogger.log(tag: "LibraryViewModel", "2. Requesting upload URL for \(meta.title)...")
             let uploadInfo = try await backendService.getUploadURL(
                 filename: localURL.lastPathComponent)
 
-            AppLogger.log(tag: "LibraryViewModel", "2. Computing SHA-256 hash of EPUB bytes...")
+            AppLogger.log(tag: "LibraryViewModel", "3. Computing SHA-256 hash of EPUB bytes...")
             let fileData = try Data(contentsOf: localURL)
             let hashDigest = SHA256.hash(data: fileData)
             let hashString = hashDigest.compactMap { String(format: "%02x", $0) }.joined()
 
             AppLogger.log(
-                tag: "LibraryViewModel", "3. Initializing book record with hash: \(hashString)")
+                tag: "LibraryViewModel", "4. Initializing book record with hash: \(hashString)")
             let backendBookResponse = try await backendService.initBook(
                 s3Key: uploadInfo.s3_key,
-                title: title,
-                author: nil,
+                title: meta.title,
+                author: meta.author,
+                language: meta.language,
                 contentHash: hashString
             )
 
             // If duplicate, SKIP R2 upload & ingestion trigger
             if !backendBookResponse.duplicate {
                 AppLogger.log(
-                    tag: "LibraryViewModel", "4. New book detected. Uploading EPUB to R2...")
+                    tag: "LibraryViewModel", "5. New book detected. Uploading EPUB to R2...")
                 try await backendService.uploadEPUB(
                     uploadURL: uploadInfo.upload_url, fileURL: localURL)
 
                 AppLogger.log(
-                    tag: "LibraryViewModel", "5. Triggering ingestion worker on Backend...")
+                    tag: "LibraryViewModel", "6. Triggering ingestion worker on Backend...")
                 try await backendService.startIngestion(bookID: backendBookResponse.book_id)
             } else {
                 AppLogger.log(
                     tag: "LibraryViewModel",
-                    "4 & 5. Duplicate detected. Skipping R2 upload and ingestion.")
+                    "5 & 6. Duplicate detected. Skipping R2 upload and ingestion.")
             }
 
             let book = Book(
                 id: backendBookResponse.book_id,
-                title: title,
-                author: nil,
+                title: meta.title,
+                author: meta.author,
                 format: .epub,
-                localFilename: localURL.lastPathComponent
+                localFilename: localURL.lastPathComponent,
+                description: meta.description,
+                language: meta.language,
+                publisher: meta.publisher,
+                coverFilename: coverFilename
             )
 
-            AppLogger.log(tag: "LibraryViewModel", "Saving \(title) to local database.")
+            AppLogger.log(tag: "LibraryViewModel", "Saving \(meta.title) to local database.")
             await bookRepo.addBook(book)
             books = await bookRepo.listBooks()
 

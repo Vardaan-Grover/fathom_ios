@@ -2,6 +2,8 @@ import SwiftUI
 
 struct BookCategorySection: View {
     let category: HomeCategory
+    @Binding var config: ScrollHeroEffectConfig
+    var namespace: Namespace.ID
     var onBookTap: ((UUID) -> Void)? = nil
 
     private let sectionHeight: CGFloat = 196
@@ -49,17 +51,27 @@ struct BookCategorySection: View {
 
     private var bookShelfArea: some View {
         ZStack(alignment: .bottom) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(category.books) { book in
-                        BookCoverView(book: book)
-                            .onTapGesture { onBookTap?(book.id) }
+            SourceHeroEffectScrollView(
+                config: $config,
+                namespace: namespace,
+                cardWidth: 120,
+                data: category.books,
+                id: \.id
+            ) { book in
+                BookCoverView(book: book)
+                    .matchedGeometryEffect(id: book.id.uuidString, in: namespace)
+                    .onTapGesture {
+                        if let index = category.books.firstIndex(where: { $0.id == book.id }) {
+                            withAnimation(.interpolatingSpring(duration: 0.5)) {
+                                config.sourceIndex = index
+                                config.expandDetailView = true
+                            }
+                        }
                     }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, bookTopPadding)
-                .padding(.bottom, bookBottomPadding)
             }
+            .safeAreaPadding(.horizontal, 20)
+            .padding(.top, bookTopPadding)
+            .padding(.bottom, bookBottomPadding)
 
             shelfBand
         }
@@ -115,17 +127,32 @@ struct BookCategorySection: View {
     }
 }
 
-
 #Preview {
-    let books = [
-        HomeBook(id: UUID(), title: "Bauhaus", author: "Frank Whitford", coverColor: Color(hex: "1A5EA8"), textColor: .white, coverFilename: nil),
-        HomeBook(id: UUID(), title: "Dieter Rams", author: "Klaus Klemp", coverColor: Color(hex: "E84B1F"), textColor: .white, coverFilename: nil),
-        HomeBook(id: UUID(), title: "The Design of Everyday Things", author: "Don Norman", coverColor: Color(hex: "F5C518"), textColor: .black, coverFilename: nil),
-    ]
-    let category = HomeCategory(id: UUID(), name: "Design", books: books, shelfColor: Color(hex: "4A7DB5"))
+    struct PreviewWrapper: View {
+        @State private var config = ScrollHeroEffectConfig()
+        @Namespace private var namespace
 
-    ScrollView {
-        BookCategorySection(category: category)
+        var body: some View {
+            let books = [
+                HomeBook(
+                    id: UUID(), title: "Bauhaus", author: "Frank Whitford",
+                    coverColor: Color(hex: "1A5EA8"), textColor: .white, coverFilename: nil),
+                HomeBook(
+                    id: UUID(), title: "Dieter Rams", author: "Klaus Klemp",
+                    coverColor: Color(hex: "E84B1F"), textColor: .white, coverFilename: nil),
+                HomeBook(
+                    id: UUID(), title: "The Design of Everyday Things", author: "Don Norman",
+                    coverColor: Color(hex: "F5C518"), textColor: .black, coverFilename: nil),
+            ]
+            let category = HomeCategory(
+                id: UUID(), name: "Design", books: books, shelfColor: Color(hex: "4A7DB5"))
+
+            ScrollView {
+                BookCategorySection(category: category, config: $config, namespace: namespace)
+            }
+            .background(Color(.systemGroupedBackground))
+        }
     }
-    .background(Color(.systemGroupedBackground))
+
+    return PreviewWrapper()
 }

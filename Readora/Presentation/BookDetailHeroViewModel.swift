@@ -1,9 +1,9 @@
 import Combine
-import ReadiumShared  // Locator type used via ReadingStateStore
+import ReadiumShared
 import SwiftUI
 
 @MainActor
-final class BookDetailsViewModel: ObservableObject {
+final class BookDetailHeroViewModel: ObservableObject {
 
     @Published var book: Book? = nil
     @Published var totalProgression: Double? = nil

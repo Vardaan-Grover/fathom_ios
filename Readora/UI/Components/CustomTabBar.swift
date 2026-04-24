@@ -65,7 +65,7 @@ struct CustomTabBar<TabItemView: View>: UIViewRepresentable {
 
 #Preview {
     let container = AppContainer.live()
-    let homeVM = HomeViewModel(bookRepository: container.bookRepo)
+    let homeVM = HomeViewModel(bookRepository: container.bookRepo, categoryRepository: container.categoryRepo)
     let libraryVM = LibraryViewModel(
         bookRepo: container.bookRepo,
         readerService: container.readerService,

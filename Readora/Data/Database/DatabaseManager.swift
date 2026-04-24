@@ -165,6 +165,15 @@ final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v4_add_book_categories") { db in
+            try db.create(table: "bookCategories") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("name", .text).notNull()
+                t.column("shelfColorHex", .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+            }
+        }
+
         return migrator
     }
 

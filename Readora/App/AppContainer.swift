@@ -3,6 +3,7 @@ import Foundation
 final class AppContainer {
     // Repos
     let bookRepo: BookRepository
+    let categoryRepo: CategoryRepository
     let databaseManager: DatabaseManager
 
     // Services
@@ -15,6 +16,7 @@ final class AppContainer {
     private init(
         databaseManager: DatabaseManager,
         bookRepo: BookRepository,
+        categoryRepo: CategoryRepository,
         readerService: ReaderService,
         preprocessingCoordinator: BookPreprocessingCoordinator,
         contextEngine: ContextEngine,
@@ -22,6 +24,7 @@ final class AppContainer {
     ) {
         self.databaseManager = databaseManager
         self.bookRepo = bookRepo
+        self.categoryRepo = categoryRepo
         self.readerService = readerService
         self.preprocessingCoordinator = preprocessingCoordinator
         self.contextEngine = contextEngine
@@ -38,6 +41,7 @@ final class AppContainer {
         }
 
         let bookRepo = BookRepositorySQLite(dbQueue: databaseManager.dbQueue)
+        let categoryRepo = CategoryRepositorySQLite(dbQueue: databaseManager.dbQueue)
         let readerService = DefaultReaderService()
         let coordinator = BookPreprocessingCoordinator(
             dbQueue: databaseManager.dbQueue
@@ -49,6 +53,7 @@ final class AppContainer {
         return AppContainer(
             databaseManager: databaseManager,
             bookRepo: bookRepo,
+            categoryRepo: categoryRepo,
             readerService: readerService,
             preprocessingCoordinator: coordinator,
             contextEngine: contextEngine,

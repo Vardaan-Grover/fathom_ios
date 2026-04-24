@@ -44,6 +44,14 @@ enum BookFormat: String, Codable {
     case pdf
 }
 
+struct BookCategory: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "bookCategories"
+    let id: UUID
+    var name: String
+    var shelfColorHex: String
+    var createdAt: Date
+}
+
 struct Passage: Identifiable, Equatable {
     let id: UUID
     let bookID: UUID
@@ -67,16 +75,124 @@ struct Explanation: Equatable {
     let cached: Bool
 }
 
-enum ReaderTheme: String, Codable, CaseIterable {
-    case light
-    case sepia
-    case dark
+enum ReaderColorTheme: Int, Codable, CaseIterable {
+    case parchment = 0
+    case night     = 1
+    case paper     = 2
+    case stone     = 3
+    case ebony     = 4
+    case espresso  = 5
+}
+
+enum ReaderFont: String, Codable, CaseIterable {
+    case original
+    case newYork
+    case georgia
+    case palatino
+    case iowanOldStyle
+    case charter
+    case sfProText
+    case avenir
+}
+
+enum ReadingLayout: String, Codable {
+    case paginated
+    case scrolling
 }
 
 struct ReaderSettings: Codable, Equatable {
     var fontSize: Double = 1.0
     var lineHeight: Double = 1.4
-    var theme: ReaderTheme = .light
+    var colorTheme: ReaderColorTheme = .paper
+    var font: ReaderFont = .original
+    var margin: Double = 1.5
+    var justifyText: Bool = false
+    var layout: ReadingLayout = .paginated
+    var boldText: Bool = false
+}
+
+extension ReaderColorTheme {
+    var backgroundHex: String {
+        switch self {
+        case .parchment: "f1e1c9"
+        case .night:     "1b1b1d"
+        case .paper:     "fefbf3"
+        case .stone:     "eeecec"
+        case .ebony:     "18160c"
+        case .espresso:  "423b30"
+        }
+    }
+
+    var foregroundHex: String {
+        switch self {
+        case .parchment: "34281d"
+        case .night:     "f2f2f0"
+        case .paper:     "141200"
+        case .stone:     "1e1a1a"
+        case .ebony:     "fff9ea"
+        case .espresso:  "f9ebdb"
+        }
+    }
+
+    var backgroundColor: Color { Color(hex: backgroundHex) }
+    var foregroundColor: Color { Color(hex: foregroundHex) }
+
+    var isDark: Bool {
+        switch self {
+        case .night, .ebony, .espresso: true
+        default: false
+        }
+    }
+
+    var dimColor: Color {
+        isDark ? .white.opacity(0.15) : .black.opacity(0.25)
+    }
+
+    var displayName: String {
+        switch self {
+        case .parchment: "Parchment"
+        case .night:     "Night"
+        case .paper:     "Paper"
+        case .stone:     "Stone"
+        case .ebony:     "Ebony"
+        case .espresso:  "Espresso"
+        }
+    }
+
+    func next() -> ReaderColorTheme {
+        let all = ReaderColorTheme.allCases
+        let idx = (rawValue + 1) % all.count
+        return all[idx]
+    }
+}
+
+extension ReaderFont {
+    var displayName: String {
+        switch self {
+        case .original:      "Original"
+        case .newYork:       "New York"
+        case .georgia:       "Georgia"
+        case .palatino:      "Palatino"
+        case .iowanOldStyle: "Iowan Old Style"
+        case .charter:       "Charter"
+        case .sfProText:     "SF Pro Text"
+        case .avenir:        "Avenir"
+        }
+    }
+
+    /// The CSS font-family name to pass to Readium. `nil` means use publisher font.
+    var cssFamily: String? {
+        switch self {
+        case .original:      nil
+        case .newYork:       "New York"
+        case .georgia:       "Georgia"
+        case .palatino:      "Palatino"
+        case .iowanOldStyle: "Iowan Old Style"
+        case .charter:       "Charter"
+        case .sfProText:     "-apple-system"
+        case .avenir:        "Avenir"
+        }
+    }
 }
 
 enum HighlightColor: String, Codable, CaseIterable {

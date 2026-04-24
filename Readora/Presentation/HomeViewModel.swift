@@ -7,42 +7,64 @@ class HomeViewModel: ObservableObject {
     @Published var isLoading = true
 
     private let bookRepository: BookRepository
+    private let categoryRepository: CategoryRepository
 
-    init(bookRepository: BookRepository) {
+    init(bookRepository: BookRepository, categoryRepository: CategoryRepository = InMemoryCategoryRepository()) {
         self.bookRepository = bookRepository
+        self.categoryRepository = categoryRepository
     }
 
     func load() async {
         isLoading = true
-        let books = await bookRepository.listBooks()
-        categories = Self.mapToCategories(books)
+        async let books = bookRepository.listBooks()
+        async let userCats = categoryRepository.listCategories()
+        let (fetchedBooks, fetchedCats) = await (books, userCats)
+        categories = Self.mapToCategories(fetchedBooks, userCategories: fetchedCats)
         isLoading = false
+    }
+
+    func createCategory(name: String, colorHex: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        let category = BookCategory(id: UUID(), name: trimmed, shelfColorHex: colorHex, createdAt: Date())
+        await categoryRepository.addCategory(category)
+        await load()
     }
 
     // MARK: - Mapping
 
-    private static func mapToCategories(_ books: [Book]) -> [HomeCategory] {
-        guard !books.isEmpty else { return [] }
+    private static func mapToCategories(_ books: [Book], userCategories: [BookCategory]) -> [HomeCategory] {
+        var result: [HomeCategory] = []
 
-        let homeBooks = books.map { book in
-            HomeBook(
-                id: book.id,
-                title: book.title,
-                author: book.author ?? "Unknown Author",
-                coverColor: coverColor(for: book),
-                textColor: textColor(for: book),
-                coverFilename: book.coverFilename
-            )
-        }
-
-        return [
-            HomeCategory(
+        if !books.isEmpty {
+            let homeBooks = books.map { book in
+                HomeBook(
+                    id: book.id,
+                    title: book.title,
+                    author: book.author ?? "Unknown Author",
+                    coverColor: coverColor(for: book),
+                    textColor: textColor(for: book),
+                    coverFilename: book.coverFilename
+                )
+            }
+            result.append(HomeCategory(
                 id: UUID(),
                 name: "My Library",
                 books: homeBooks,
-                shelfColor: AppTheme.default.colors.shelfAccent  // ← Token, not a raw hex
-            )
-        ]
+                shelfColor: AppTheme.default.colors.shelfAccent
+            ))
+        }
+
+        for cat in userCategories {
+            result.append(HomeCategory(
+                id: cat.id,
+                name: cat.name,
+                books: [],
+                shelfColor: Color(hex: cat.shelfColorHex)
+            ))
+        }
+
+        return result
     }
 
     // Paired cover + text colors. Index is derived from the book's UUID so the

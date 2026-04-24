@@ -208,6 +208,7 @@ import SwiftUI
         let publication: Publication
         var initialLocation: Locator?
         var onLocationChange: (Locator) -> Void = { _ in }
+        var onPositionsLoaded: (Int) -> Void = { _ in }
         var commands: NavigatorCommands? = nil
         var settings: ReaderSettings = ReaderSettings()
         var bookID: UUID = UUID()
@@ -225,6 +226,14 @@ import SwiftUI
 
             func navigator(_ navigator: Navigator, locationDidChange locator: Locator) {
                 onLocationChange(locator)
+            }
+
+            func navigatorContentInset(_ navigator: VisualNavigator) -> UIEdgeInsets? {
+                let safe = navigator.view.window?.safeAreaInsets
+                    ?? UIEdgeInsets(top: 50, left: 0, bottom: 34, right: 0)
+                // top: safe area + active overlay bar (56pt) + gap
+                // bottom: safe area + page-label bar (33pt) + gap
+                return UIEdgeInsets(top: safe.top + 56, left: 0, bottom: safe.bottom + 45, right: 0)
             }
 
             func navigator(
@@ -258,6 +267,20 @@ import SwiftUI
                 _ gestureRecognizer: UIGestureRecognizer,
                 shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
             ) -> Bool {
+                return true
+            }
+
+            func gestureRecognizer(
+                _ gestureRecognizer: UIGestureRecognizer,
+                shouldReceive touch: UITouch
+            ) -> Bool {
+                guard let view = gestureRecognizer.view else { return true }
+                let point = touch.location(in: view)
+                let safeTop = view.window?.safeAreaInsets.top ?? 44
+                let safeBottom = view.window?.safeAreaInsets.bottom ?? 34
+                // Block the gesture in the overlay bar zones so SwiftUI buttons there handle taps
+                if point.y < safeTop + 72 { return false }
+                if point.y > view.bounds.height - safeBottom - 52 { return false }
                 return true
             }
         }
@@ -311,6 +334,14 @@ import SwiftUI
 
             context.coordinator.container = container
 
+            let pub = publication
+            let positionsCallback = onPositionsLoaded
+            Task {
+                if case .success(let positions) = await pub.positions() {
+                    await MainActor.run { positionsCallback(positions.count) }
+                }
+            }
+
             return container
         }
 
@@ -319,23 +350,27 @@ import SwiftUI
                 let navigator = container.navigator
             else { return }
 
-            let theme: ReadiumNavigator.Theme =
-                switch settings.theme {
-                case .light: .light
-                case .dark: .dark
-                case .sepia: .sepia
-                }
+            let bg = ReadiumNavigator.Color(hex: settings.colorTheme.backgroundHex)
+            let fg = ReadiumNavigator.Color(hex: settings.colorTheme.foregroundHex)
+
+            let fontFamily: ReadiumNavigator.FontFamily? = settings.font.cssFamily
+                .map { ReadiumNavigator.FontFamily(rawValue: $0) }
 
             let preferences = EPUBPreferences(
+                backgroundColor: bg,
+                fontFamily: fontFamily,
                 fontSize: settings.fontSize,
+                fontWeight: settings.boldText ? 1.75 : nil,
                 lineHeight: settings.lineHeight,
-                theme: theme
+                pageMargins: settings.margin,
+                publisherStyles: settings.font == .original ? nil : false,
+                scroll: settings.layout == .scrolling,
+                textAlign: settings.justifyText ? .justify : .start,
+                textColor: fg
             )
 
             Task {
-                withAnimation {
-                    navigator.submitPreferences(preferences)
-                }
+                await navigator.submitPreferences(preferences)
             }
         }
     }

@@ -26,6 +26,7 @@ struct RootView: View {
 
     @State private var activeTab: CustomTab = .library
     @State private var showImporter = false
+    @State private var showShelfSheet = false
 
     var body: some View {
         TabView(selection: $activeTab) {
@@ -57,6 +58,15 @@ struct RootView: View {
             customTabBar
                 .padding(.horizontal, 20)
         }
+        .sheet(isPresented: $showShelfSheet) {
+            NewShelfSheet { name, colorHex in
+                Task { await homeViewModel.createCategory(name: name, colorHex: colorHex) }
+            }
+            .presentationDetents([.height(380)])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(20)
+            .presentationBackground(.regularMaterial)
+        }
     }
 
     private var customTabBar: some View {
@@ -76,8 +86,17 @@ struct RootView: View {
                     .glassEffect(.regular.interactive(), in: .capsule)
                 }
 
-                Button {
-                    showImporter = true
+                Menu {
+                    Button {
+                        showImporter = true
+                    } label: {
+                        Label("Add Book", systemImage: "book.badge.plus")
+                    }
+                    Button {
+                        showShelfSheet = true
+                    } label: {
+                        Label("Add Shelf", systemImage: "folder.badge.plus")
+                    }
                 } label: {
                     Image(systemName: "plus")
                         .foregroundColor(.primary)

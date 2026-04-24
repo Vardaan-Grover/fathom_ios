@@ -11,7 +11,7 @@ struct ReadoraApp: App {
     init() {
         let container = AppContainer.live()
         bookRepository = container.bookRepo
-        _homeViewModel = StateObject(wrappedValue: HomeViewModel(bookRepository: container.bookRepo))
+        _homeViewModel = StateObject(wrappedValue: HomeViewModel(bookRepository: container.bookRepo, categoryRepository: container.categoryRepo))
         _libraryViewModel = StateObject(wrappedValue: LibraryViewModel(
             bookRepo: container.bookRepo,
             readerService: container.readerService,

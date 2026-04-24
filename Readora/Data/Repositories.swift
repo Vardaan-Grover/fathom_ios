@@ -1,5 +1,21 @@
 import Foundation
 
+protocol CategoryRepository {
+    func listCategories() async -> [BookCategory]
+    func addCategory(_ category: BookCategory) async
+    func deleteCategory(_ category: BookCategory) async
+}
+
+final actor InMemoryCategoryRepository: CategoryRepository {
+    private var categories: [BookCategory] = []
+
+    func listCategories() async -> [BookCategory] { categories }
+    func addCategory(_ category: BookCategory) async { categories.append(category) }
+    func deleteCategory(_ category: BookCategory) async {
+        categories.removeAll { $0.id == category.id }
+    }
+}
+
 protocol BookRepository {
     func listBooks() async -> [Book]
     func addBook(_ book: Book) async

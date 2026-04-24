@@ -3,15 +3,14 @@ import SwiftUI
 struct BookCoverView: View {
     let book: HomeBook
 
-    var width: CGFloat?
-    var height: CGFloat?
     @State private var shouldShowMenu = true
 
-    init(book: HomeBook, width: CGFloat? = 120, height: CGFloat? = 168) {
+    init(book: HomeBook) {
         self.book = book
-        self.width = width
-        self.height = height
     }
+
+    private let coverWidth: CGFloat = 120
+    private let coverHeight: CGFloat = 168
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -19,7 +18,7 @@ struct BookCoverView: View {
             spineShading
             textOverlay
         }
-        .frame(width: width, height: height)
+        .frame(width: coverWidth, height: coverHeight)
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .shadow(color: .black.opacity(0.18), radius: 8, x: 2, y: 4)
         .contextMenu(shouldShowMenu ? menuItems : nil)
@@ -34,11 +33,11 @@ struct BookCoverView: View {
             Image(uiImage: uiImage)
                 .resizable()
                 .scaledToFill()
-                .frame(width: width, height: height)
+                .frame(width: coverWidth, height: coverHeight)
                 .clipped()
         } else {
             book.coverColor
-                .frame(width: width, height: height)
+                .frame(width: coverWidth, height: coverHeight)
         }
     }
 

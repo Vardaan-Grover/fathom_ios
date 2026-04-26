@@ -31,6 +31,18 @@ class HomeViewModel: ObservableObject {
         await load()
     }
 
+    func updateCategory(id: UUID, name: String, colorHex: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        await categoryRepository.updateCategory(id: id, name: trimmed, colorHex: colorHex)
+        await load()
+    }
+
+    func deleteCategory(id: UUID) async {
+        await categoryRepository.deleteCategory(id: id)
+        await load()
+    }
+
     // MARK: - Mapping
 
     private static func mapToCategories(_ books: [Book], userCategories: [BookCategory]) -> [HomeCategory] {
@@ -51,7 +63,8 @@ class HomeViewModel: ObservableObject {
                 id: UUID(),
                 name: "My Library",
                 books: homeBooks,
-                shelfColor: AppTheme.default.colors.shelfAccent
+                shelfColor: AppTheme.default.colors.shelfAccent,
+                shelfColorHex: ""
             ))
         }
 
@@ -60,7 +73,8 @@ class HomeViewModel: ObservableObject {
                 id: cat.id,
                 name: cat.name,
                 books: [],
-                shelfColor: Color(hex: cat.shelfColorHex)
+                shelfColor: Color(hex: cat.shelfColorHex),
+                shelfColorHex: cat.shelfColorHex
             ))
         }
 

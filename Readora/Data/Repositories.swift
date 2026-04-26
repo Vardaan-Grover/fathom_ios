@@ -3,7 +3,8 @@ import Foundation
 protocol CategoryRepository {
     func listCategories() async -> [BookCategory]
     func addCategory(_ category: BookCategory) async
-    func deleteCategory(_ category: BookCategory) async
+    func updateCategory(id: UUID, name: String, colorHex: String) async
+    func deleteCategory(id: UUID) async
 }
 
 final actor InMemoryCategoryRepository: CategoryRepository {
@@ -11,8 +12,13 @@ final actor InMemoryCategoryRepository: CategoryRepository {
 
     func listCategories() async -> [BookCategory] { categories }
     func addCategory(_ category: BookCategory) async { categories.append(category) }
-    func deleteCategory(_ category: BookCategory) async {
-        categories.removeAll { $0.id == category.id }
+    func updateCategory(id: UUID, name: String, colorHex: String) async {
+        guard let idx = categories.firstIndex(where: { $0.id == id }) else { return }
+        categories[idx].name = name
+        categories[idx].shelfColorHex = colorHex
+    }
+    func deleteCategory(id: UUID) async {
+        categories.removeAll { $0.id == id }
     }
 }
 

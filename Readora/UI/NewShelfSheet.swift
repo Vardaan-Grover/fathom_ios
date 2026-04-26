@@ -2,11 +2,13 @@ import SwiftUI
 
 struct NewShelfSheet: View {
     @Environment(\.dismiss) private var dismiss
-    var onCreate: (String, String) -> Void
 
-    @State private var name = ""
-    @State private var selectedColorHex = Self.palette[0]
-    @State private var isNameEmpty = true
+    let isEditing: Bool
+    var onCommit: (String, String) -> Void
+
+    @State private var name: String
+    @State private var selectedColorHex: String
+    @State private var isNameEmpty: Bool
     @FocusState private var nameFocused: Bool
 
     static let palette: [String] = [
@@ -15,9 +17,23 @@ struct NewShelfSheet: View {
         "3A72D4", "C75B9B", "5B8A5E", "6C5CE7",
     ]
 
+    init(
+        initialName: String = "",
+        initialColorHex: String = "",
+        isEditing: Bool = false,
+        onCommit: @escaping (String, String) -> Void
+    ) {
+        self.isEditing = isEditing
+        self.onCommit = onCommit
+        let hex = initialColorHex.isEmpty ? Self.palette[0] : initialColorHex
+        _name = State(initialValue: initialName)
+        _selectedColorHex = State(initialValue: hex)
+        _isNameEmpty = State(initialValue: initialName.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("New Shelf")
+            Text(isEditing ? "Edit Shelf" : "New Shelf")
                 .font(.title2.bold())
                 .padding(.top, 4)
 
@@ -29,7 +45,6 @@ struct NewShelfSheet: View {
                 .padding(.vertical, 13)
                 .background(Color(.systemFill), in: RoundedRectangle(cornerRadius: 12))
                 .onChange(of: name) { _, new in
-                    // Only flip the bool on empty<->non-empty transitions, not every keystroke
                     let empty = new.trimmingCharacters(in: .whitespaces).isEmpty
                     if empty != isNameEmpty { isNameEmpty = empty }
                 }
@@ -38,8 +53,8 @@ struct NewShelfSheet: View {
 
             Spacer()
 
-            ShelfCreateButton(isEmpty: isNameEmpty, selectedHex: selectedColorHex) {
-                onCreate(name.trimmingCharacters(in: .whitespaces), selectedColorHex)
+            ShelfCreateButton(isEmpty: isNameEmpty, selectedHex: selectedColorHex, isEditing: isEditing) {
+                onCommit(name.trimmingCharacters(in: .whitespaces), selectedColorHex)
                 dismiss()
             }
         }
@@ -102,17 +117,21 @@ private struct ShelfColorSwatch: View {
 private struct ShelfCreateButton: View {
     let isEmpty: Bool
     let selectedHex: String
+    let isEditing: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Label("Create Shelf", systemImage: "folder.badge.plus")
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(isEmpty ? Color(.systemFill) : Color(hex: selectedHex))
-                .foregroundStyle(isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+            Label(
+                isEditing ? "Save Changes" : "Create Shelf",
+                systemImage: isEditing ? "checkmark" : "folder.badge.plus"
+            )
+            .font(.body.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(isEmpty ? Color(.systemFill) : Color(hex: selectedHex))
+            .foregroundStyle(isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
         }
         .disabled(isEmpty)
         .animation(.easeInOut(duration: 0.15), value: selectedHex)

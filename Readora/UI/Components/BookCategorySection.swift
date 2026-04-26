@@ -3,6 +3,8 @@ import SwiftUI
 struct BookCategorySection: View {
     let category: HomeCategory
     var onBookTap: ((UUID) -> Void)? = nil
+    var onEdit: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
 
     private let sectionHeight: CGFloat = 196
     private let shelfBandHeight: CGFloat = 72
@@ -26,22 +28,34 @@ struct BookCategorySection: View {
 
             Spacer()
 
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 Text("\(category.books.count) books")
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
 
-                Button {
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.secondary)
-                }
-                Button {
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.secondary)
+                if onEdit != nil || onDelete != nil {
+                    Menu {
+                        if let onEdit {
+                            Button {
+                                onEdit()
+                            } label: {
+                                Label("Edit Shelf", systemImage: "pencil")
+                            }
+                        }
+                        if let onDelete {
+                            Button(role: .destructive) {
+                                onDelete()
+                            } label: {
+                                Label("Delete Shelf", systemImage: "trash")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
                 }
             }
         }
@@ -122,10 +136,10 @@ struct BookCategorySection: View {
         HomeBook(id: UUID(), title: "Dieter Rams", author: "Klaus Klemp", coverColor: Color(hex: "E84B1F"), textColor: .white, coverFilename: nil),
         HomeBook(id: UUID(), title: "The Design of Everyday Things", author: "Don Norman", coverColor: Color(hex: "F5C518"), textColor: .black, coverFilename: nil),
     ]
-    let category = HomeCategory(id: UUID(), name: "Design", books: books, shelfColor: Color(hex: "4A7DB5"))
+    let category = HomeCategory(id: UUID(), name: "Design", books: books, shelfColor: Color(hex: "4A7DB5"), shelfColorHex: "4A7DB5")
 
     ScrollView {
-        BookCategorySection(category: category)
+        BookCategorySection(category: category, onEdit: {}, onDelete: {})
     }
     .background(Color(.systemGroupedBackground))
 }

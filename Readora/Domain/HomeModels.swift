@@ -14,4 +14,5 @@ struct HomeCategory: Identifiable {
     let name: String
     let books: [HomeBook]
     let shelfColor: Color
+    let shelfColorHex: String
 }

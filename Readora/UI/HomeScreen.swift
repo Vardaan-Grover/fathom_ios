@@ -12,6 +12,8 @@ struct HomeScreen: View {
 
     @State private var selectedBook: SelectedBook? = nil
     @State private var readerBook: Book? = nil
+    @State private var editingCategory: HomeCategory? = nil
+    @State private var categoryToDelete: HomeCategory? = nil
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -28,9 +30,13 @@ struct HomeScreen: View {
                         .padding(.top, 60)
                 } else {
                     ForEach(viewModel.categories) { category in
-                        BookCategorySection(category: category, onBookTap: { id in
-                            selectedBook = SelectedBook(id: id)
-                        })
+                        let isUserShelf = !category.shelfColorHex.isEmpty
+                        BookCategorySection(
+                            category: category,
+                            onBookTap: { id in selectedBook = SelectedBook(id: id) },
+                            onEdit: isUserShelf ? { editingCategory = category } : nil,
+                            onDelete: isUserShelf ? { categoryToDelete = category } : nil
+                        )
                     }
                 }
             }
@@ -51,6 +57,39 @@ struct HomeScreen: View {
                 }
             )
             .id(selection.id)
+        }
+        .sheet(item: $editingCategory) { category in
+            NewShelfSheet(
+                initialName: category.name,
+                initialColorHex: category.shelfColorHex,
+                isEditing: true
+            ) { name, colorHex in
+                Task { await viewModel.updateCategory(id: category.id, name: name, colorHex: colorHex) }
+            }
+            .presentationDetents([.height(380)])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(20)
+            .presentationBackground(.regularMaterial)
+        }
+        .confirmationDialog(
+            "Delete \"\(categoryToDelete?.name ?? "")\"?",
+            isPresented: Binding(
+                get: { categoryToDelete != nil },
+                set: { if !$0 { categoryToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Shelf", role: .destructive) {
+                if let id = categoryToDelete?.id {
+                    Task { await viewModel.deleteCategory(id: id) }
+                }
+                categoryToDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                categoryToDelete = nil
+            }
+        } message: {
+            Text("This will permanently remove the shelf. Books in it won't be deleted.")
         }
         .fullScreenCover(item: $readerBook) { book in
             if let url = book.localURL {

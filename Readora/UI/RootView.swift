@@ -60,7 +60,9 @@ struct RootView: View {
         }
         .sheet(isPresented: $showShelfSheet) {
             NewShelfSheet { name, colorHex in
-                Task { await homeViewModel.createCategory(name: name, colorHex: colorHex) }
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                    homeViewModel.createCategory(name: name, colorHex: colorHex)
+                }
             }
             .presentationDetents([.height(380)])
             .presentationDragIndicator(.visible)

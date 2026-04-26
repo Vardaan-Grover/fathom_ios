@@ -23,24 +23,36 @@ class HomeViewModel: ObservableObject {
         isLoading = false
     }
 
-    func createCategory(name: String, colorHex: String) async {
+    // Synchronous optimistic updates — callers can wrap these in withAnimation directly.
+    // Each fires a background Task to persist; no load() needed.
+
+    func createCategory(name: String, colorHex: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        let category = BookCategory(id: UUID(), name: trimmed, shelfColorHex: colorHex, createdAt: Date())
-        await categoryRepository.addCategory(category)
-        await load()
+        let record = BookCategory(id: UUID(), name: trimmed, shelfColorHex: colorHex, createdAt: Date())
+        categories.append(HomeCategory(
+            id: record.id, name: trimmed, books: [],
+            shelfColor: Color(hex: colorHex), shelfColorHex: colorHex
+        ))
+        Task { await categoryRepository.addCategory(record) }
     }
 
-    func updateCategory(id: UUID, name: String, colorHex: String) async {
+    func updateCategory(id: UUID, name: String, colorHex: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        await categoryRepository.updateCategory(id: id, name: trimmed, colorHex: colorHex)
-        await load()
+        if let idx = categories.firstIndex(where: { $0.id == id }) {
+            let existing = categories[idx]
+            categories[idx] = HomeCategory(
+                id: id, name: trimmed, books: existing.books,
+                shelfColor: Color(hex: colorHex), shelfColorHex: colorHex
+            )
+        }
+        Task { await categoryRepository.updateCategory(id: id, name: trimmed, colorHex: colorHex) }
     }
 
-    func deleteCategory(id: UUID) async {
-        await categoryRepository.deleteCategory(id: id)
-        await load()
+    func deleteCategory(id: UUID) {
+        categories.removeAll { $0.id == id }
+        Task { await categoryRepository.deleteCategory(id: id) }
     }
 
     // MARK: - Mapping

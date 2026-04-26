@@ -25,6 +25,7 @@ struct BookCategorySection: View {
             Text(category.name)
                 .font(.system(size: 18, weight: .medium))
                 .foregroundColor(.primary)
+                .contentTransition(.opacity)
 
             Spacer()
 
@@ -85,6 +86,7 @@ struct BookCategorySection: View {
             // Glass body: thin material blurred background + a tint from the category color
             Rectangle()
                 .fill(category.shelfColor.opacity(0.40))
+                .animation(.spring(response: 0.5, dampingFraction: 0.82), value: category.shelfColor)
                 .overlay(
                     VStack {
                         LinearGradient(

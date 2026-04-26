@@ -15,6 +15,10 @@ struct HomeScreen: View {
     @State private var editingCategory: HomeCategory? = nil
     @State private var categoryToDelete: HomeCategory? = nil
 
+    // IDs currently in their dissolve-out phase — layout space is released
+    // after the dissolve completes, creating a two-phase deletion.
+    @State private var removingCategoryIDs: Set<UUID> = []
+
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: theme.layout.sectionSpacing) {
@@ -31,12 +35,30 @@ struct HomeScreen: View {
                 } else {
                     ForEach(viewModel.categories) { category in
                         let isUserShelf = !category.shelfColorHex.isEmpty
+                        let isRemoving = removingCategoryIDs.contains(category.id)
+
                         BookCategorySection(
                             category: category,
                             onBookTap: { id in selectedBook = SelectedBook(id: id) },
                             onEdit: isUserShelf ? { editingCategory = category } : nil,
                             onDelete: isUserShelf ? { categoryToDelete = category } : nil
                         )
+                        // Dissolve modifiers — order matters:
+                        // blur first (at natural size), then vertical crush, then fade.
+                        .blur(radius: isRemoving ? 8 : 0)
+                        .scaleEffect(
+                            x: isRemoving ? 0.88 : 1,
+                            y: isRemoving ? 0.001 : 1,
+                            anchor: .center
+                        )
+                        .opacity(isRemoving ? 0 : 1)
+                        .allowsHitTesting(!isRemoving)
+                        // Each section gets an animated transition driven by the
+                        // parent withAnimation context on insertion/removal.
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top)),
+                            removal: .identity // already invisible by the time data removes it
+                        ))
                     }
                 }
             }
@@ -64,7 +86,11 @@ struct HomeScreen: View {
                 initialColorHex: category.shelfColorHex,
                 isEditing: true
             ) { name, colorHex in
-                Task { await viewModel.updateCategory(id: category.id, name: name, colorHex: colorHex) }
+                // withAnimation drives the name cross-dissolve and shelf band
+                // color interpolation simultaneously inside BookCategorySection.
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                    viewModel.updateCategory(id: category.id, name: name, colorHex: colorHex)
+                }
             }
             .presentationDetents([.height(380)])
             .presentationDragIndicator(.visible)
@@ -80,10 +106,9 @@ struct HomeScreen: View {
             titleVisibility: .visible
         ) {
             Button("Delete Shelf", role: .destructive) {
-                if let id = categoryToDelete?.id {
-                    Task { await viewModel.deleteCategory(id: id) }
-                }
+                guard let category = categoryToDelete else { return }
                 categoryToDelete = nil
+                beginDeleteAnimation(for: category)
             }
             Button("Cancel", role: .cancel) {
                 categoryToDelete = nil
@@ -95,6 +120,24 @@ struct HomeScreen: View {
             if let url = book.localURL {
                 ReaderScreen(bookFileURL: url, bookTitle: book.title, bookID: book.id)
             }
+        }
+    }
+
+    // MARK: - Delete animation
+
+    // Phase 1 (0ms):   blur + vertical crush + fade (~300ms spring)
+    // Phase 2 (200ms): layout reflow — remaining items spring upward into the gap.
+    // The 200ms overlap makes both phases feel like one continuous motion.
+    private func beginDeleteAnimation(for category: HomeCategory) {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.80)) {
+            removingCategoryIDs.insert(category.id)
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            withAnimation(.spring(response: 0.48, dampingFraction: 0.86)) {
+                viewModel.deleteCategory(id: category.id)
+            }
+            removingCategoryIDs.remove(category.id)
         }
     }
 

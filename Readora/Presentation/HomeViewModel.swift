@@ -18,8 +18,9 @@ class HomeViewModel: ObservableObject {
         isLoading = true
         async let books = bookRepository.listBooks()
         async let userCats = categoryRepository.listCategories()
-        let (fetchedBooks, fetchedCats) = await (books, userCats)
-        categories = Self.mapToCategories(fetchedBooks, userCategories: fetchedCats)
+        async let memberships = categoryRepository.listMemberships()
+        let (fetchedBooks, fetchedCats, fetchedMemberships) = await (books, userCats, memberships)
+        categories = Self.mapToCategories(fetchedBooks, userCategories: fetchedCats, memberships: fetchedMemberships)
         isLoading = false
     }
 
@@ -55,36 +56,88 @@ class HomeViewModel: ObservableObject {
         Task { await categoryRepository.deleteCategory(id: id) }
     }
 
+    func toggleBookInCategory(bookID: UUID, categoryID: UUID) {
+        guard let catIdx = categories.firstIndex(where: { $0.id == categoryID }) else { return }
+
+        let alreadyIn = categories[catIdx].books.contains(where: { $0.id == bookID })
+
+        if alreadyIn {
+            categories[catIdx].books.removeAll { $0.id == bookID }
+            Task { await categoryRepository.removeBookFromCategory(bookID: bookID, categoryID: categoryID) }
+        } else {
+            if let source = categories.flatMap(\.books).first(where: { $0.id == bookID }) {
+                var toAdd = source
+                toAdd.categoryIDs.insert(categoryID)
+                categories[catIdx].books.append(toAdd)
+            }
+            Task { await categoryRepository.addBookToCategory(bookID: bookID, categoryID: categoryID) }
+        }
+
+        // Keep categoryIDs in sync across every occurrence of this book (e.g. My Library row)
+        for i in categories.indices {
+            for j in categories[i].books.indices where categories[i].books[j].id == bookID {
+                if alreadyIn {
+                    categories[i].books[j].categoryIDs.remove(categoryID)
+                } else {
+                    categories[i].books[j].categoryIDs.insert(categoryID)
+                }
+            }
+        }
+    }
+
     // MARK: - Mapping
 
-    private static func mapToCategories(_ books: [Book], userCategories: [BookCategory]) -> [HomeCategory] {
+    private static func mapToCategories(
+        _ books: [Book],
+        userCategories: [BookCategory],
+        memberships: [BookCategoryMembership]
+    ) -> [HomeCategory] {
+        // bookID → set of categoryIDs the book belongs to
+        var bookCategoryIDs: [UUID: Set<UUID>] = [:]
+        for m in memberships {
+            bookCategoryIDs[m.bookID, default: []].insert(m.categoryID)
+        }
+
+        // categoryID → ordered list of member bookIDs
+        var categoryBookIDs: [UUID: [UUID]] = [:]
+        for m in memberships {
+            categoryBookIDs[m.categoryID, default: []].append(m.bookID)
+        }
+
+        // Map every Book to its HomeBook, including which shelves it's on
+        let bookByID: [UUID: Book] = Dictionary(uniqueKeysWithValues: books.map { ($0.id, $0) })
+        func homeBook(from book: Book) -> HomeBook {
+            HomeBook(
+                id: book.id,
+                title: book.title,
+                author: book.author ?? "Unknown Author",
+                coverColor: coverColor(for: book),
+                textColor: textColor(for: book),
+                coverFilename: book.coverFilename,
+                categoryIDs: bookCategoryIDs[book.id] ?? []
+            )
+        }
+
         var result: [HomeCategory] = []
 
         if !books.isEmpty {
-            let homeBooks = books.map { book in
-                HomeBook(
-                    id: book.id,
-                    title: book.title,
-                    author: book.author ?? "Unknown Author",
-                    coverColor: coverColor(for: book),
-                    textColor: textColor(for: book),
-                    coverFilename: book.coverFilename
-                )
-            }
             result.append(HomeCategory(
                 id: UUID(),
                 name: "My Library",
-                books: homeBooks,
+                books: books.map { homeBook(from: $0) },
                 shelfColor: AppTheme.default.colors.shelfAccent,
                 shelfColorHex: ""
             ))
         }
 
         for cat in userCategories {
+            let memberBooks = (categoryBookIDs[cat.id] ?? []).compactMap { id in
+                bookByID[id].map { homeBook(from: $0) }
+            }
             result.append(HomeCategory(
                 id: cat.id,
                 name: cat.name,
-                books: [],
+                books: memberBooks,
                 shelfColor: Color(hex: cat.shelfColorHex),
                 shelfColorHex: cat.shelfColorHex
             ))
@@ -114,14 +167,15 @@ class HomeViewModel: ObservableObject {
         abs(book.id.hashValue) % coverPalette.count
     }
 
-    static func makeHomeBook(_ book: Book) -> HomeBook {
+    static func makeHomeBook(_ book: Book, categoryIDs: Set<UUID> = []) -> HomeBook {
         HomeBook(
             id: book.id,
             title: book.title,
             author: book.author ?? "Unknown Author",
             coverColor: coverColor(for: book),
             textColor: textColor(for: book),
-            coverFilename: book.coverFilename
+            coverFilename: book.coverFilename,
+            categoryIDs: categoryIDs
         )
     }
 }

@@ -14,7 +14,10 @@ import SwiftUI
         var onAddNote: ((String, String) -> Void)?
     }
 
-    final class ReaderContainerViewController: UIViewController, UIEditMenuInteractionDelegate {
+    final class ReaderContainerViewController: UIViewController,
+        UIEditMenuInteractionDelegate,
+        UIPopoverPresentationControllerDelegate
+    {
         var onExplain: ((String, String) -> Void)?
         var onAddNote: ((String, String) -> Void)?
         var bookID: UUID = UUID()
@@ -36,20 +39,45 @@ import SwiftUI
 
         // Called by Coordinator when text is selected
         func showMenuForSelection(text: String, locatorJSON: String, at frame: CGRect) {
-            // Convert the selection frame from navigator view coords to our view coords
             guard let navView = navigator?.view else { return }
-            let converted = navView.convert(frame, to: view)
-            let config = UIEditMenuConfiguration(
-                identifier: nil, sourcePoint: CGPoint(x: converted.midX, y: converted.minY - 70))
-            editMenuInteraction?.presentEditMenu(with: config)
 
-            // Store for use in action callbacks
+            // Store BEFORE presenting — the delegate is called synchronously inside presentEditMenu
             pendingText = text
             pendingLocatorJSON = locatorJSON
+            pendingIsSingleWord = text.split(whereSeparator: \.isWhitespace).count == 1
+
+            // Convert to self.view coordinates and store for targetRectFor delegate
+            lastSelectionRect = navView.convert(frame, to: view)
+            presentMenu()
+        }
+
+        // Re-presents the menu at the same position (e.g. when user taps on selected text)
+        func reshowMenu() {
+            guard !pendingText.isEmpty else { return }
+            presentMenu()
+        }
+
+        private func presentMenu() {
+            // sourcePoint is required by the API but placement is driven by targetRectFor below
+            let config = UIEditMenuConfiguration(
+                identifier: nil,
+                sourcePoint: CGPoint(x: lastSelectionRect.midX, y: lastSelectionRect.midY))
+            editMenuInteraction?.presentEditMenu(with: config)
+        }
+
+        // UIEditMenuInteractionDelegate — returns the selection rect so iOS places the menu
+        // fully above or below the selected text without overlapping it.
+        func editMenuInteraction(
+            _ interaction: UIEditMenuInteraction,
+            targetRectFor configuration: UIEditMenuConfiguration
+        ) -> CGRect {
+            return lastSelectionRect
         }
 
         private var pendingText: String = ""
         private var pendingLocatorJSON: String = ""
+        private var pendingIsSingleWord: Bool = false
+        private var lastSelectionRect: CGRect = .zero
 
         // UIEditMenuInteractionDelegate — builds the menu items
         func editMenuInteraction(
@@ -57,7 +85,6 @@ import SwiftUI
             suggestedActions: [UIMenuElement]
         ) -> UIMenu? {
 
-            // — Reader actions group —
             let highlightAction = UIAction(
                 title: "Highlight", image: UIImage(systemName: "highlighter")
             ) { [weak self] _ in
@@ -67,7 +94,7 @@ import SwiftUI
             }
 
             let addNoteAction = UIAction(
-                title: "Add Note", image: UIImage(systemName: "note.text.badge.plus")
+                title: "Add Note", image: UIImage(systemName: "square.and.pencil")
             ) { [weak self] _ in
                 guard let self else { return }
                 let text = pendingText
@@ -76,21 +103,37 @@ import SwiftUI
                 onAddNote?(text, locatorJSON)
             }
 
-            let explainAction = UIAction(
-                title: "Ask AI", image: UIImage(systemName: "sparkles")
-            ) { [weak self] _ in
-                guard let self else { return }
-                let text = pendingText
-                let locatorJSON = pendingLocatorJSON
-                navigator?.clearSelection()
-                onExplain?(text, locatorJSON)
+            // Lead action depends on selection length: Define for single words, Ask AI for phrases
+            let leadAction: UIAction
+            if pendingIsSingleWord {
+                leadAction = UIAction(
+                    title: "Define", image: UIImage(systemName: "character.book.closed")
+                ) { [weak self] _ in
+                    guard let self else { return }
+                    let term = pendingText
+                    navigator?.clearSelection()
+                    guard UIReferenceLibraryViewController.dictionaryHasDefinition(forTerm: term)
+                    else { return }
+                    present(UIReferenceLibraryViewController(term: term), animated: true)
+                }
+            } else {
+                leadAction = UIAction(
+                    title: "Ask AI", image: UIImage(systemName: "sparkles")
+                ) { [weak self] _ in
+                    guard let self else { return }
+                    let text = pendingText
+                    let locatorJSON = pendingLocatorJSON
+                    navigator?.clearSelection()
+                    onExplain?(text, locatorJSON)
+                }
             }
 
-            let readerGroup = UIMenu(
+            // Primary group: visible immediately in the pill
+            let primaryGroup = UIMenu(
                 options: .displayInline,
-                children: [highlightAction, addNoteAction, explainAction])
+                children: [leadAction, highlightAction, addNoteAction])
 
-            // — Utility actions group —
+            // Secondary group: Copy and Share appear behind the > chevron
             let copyAction = UIAction(
                 title: "Copy", image: UIImage(systemName: "doc.on.doc")
             ) { [weak self] _ in
@@ -115,26 +158,30 @@ import SwiftUI
                 present(activityVC, animated: true)
             }
 
-            let utilityGroup = UIMenu(
+            let secondaryGroup = UIMenu(
                 options: .displayInline,
                 children: [copyAction, shareAction])
 
-            // — System actions (Translate, Look Up, etc.) — iOS provides these via suggestedActions.
-            // Filter out Copy since we supply our own.
+            // System actions (Translate, Look Up, etc.) — filter out Copy since we supply our own
             let systemActions = suggestedActions.filter { element in
                 guard let action = element as? UIAction else { return true }
                 return action.title != "Copy"
             }
 
-            return UIMenu(children: [readerGroup, utilityGroup] + systemActions)
+            return UIMenu(children: [primaryGroup, secondaryGroup] + systemActions)
+        }
+
+        func adaptivePresentationStyle(
+            for controller: UIPresentationController
+        ) -> UIModalPresentationStyle {
+            return .none
         }
 
         private func showColorPicker(text: String, locatorJSON: String) {
-            // Check for duplicate
             let existing = HighlightStore.shared.highlights(forBookID: bookID)
             if existing.contains(where: { $0.locatorJSON == locatorJSON }) { return }
 
-            let view = HighlightColorPickerView { [weak self] color in
+            let content = HighlightColorPickerView { [weak self] color in
                 guard let self else { return }
                 let highlight = Highlight(
                     id: UUID(),
@@ -142,17 +189,23 @@ import SwiftUI
                     locatorJSON: locatorJSON,
                     text: text,
                     createdAt: Date(),
-                    color: color,
+                    color: color
                 )
                 HighlightStore.shared.add(highlight)
                 applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
             }
-            let host = UIHostingController(rootView: view)
-            host.modalPresentationStyle = .pageSheet
-            if let sheet = host.sheetPresentationController {
-                sheet.detents = [.custom { _ in 200 }]
-                sheet.prefersGrabberVisible = true
+
+            let host = UIHostingController(rootView: content)
+            host.modalPresentationStyle = .popover
+            host.preferredContentSize = CGSize(width: 216, height: 60)
+
+            if let popover = host.popoverPresentationController {
+                popover.sourceView = view
+                popover.sourceRect = lastSelectionRect
+                popover.permittedArrowDirections = [.up, .down]
+                popover.delegate = self
             }
+
             present(host, animated: true)
         }
 
@@ -171,18 +224,35 @@ import SwiftUI
             navigator.apply(decorations: decorations, in: "highlights")
         }
 
+        func applyAIQueryHighlight(locatorJSON: String?) {
+            guard let navigator = navigator else { return }
+            if let locatorJSON,
+               let locator = try? Locator(jsonString: locatorJSON) {
+                // Vibrant purple that is distinct from the standard highlight colors
+                let aiTint = UIColor(red: 0.48, green: 0.53, blue: 0.94, alpha: 0.55)
+                let decoration = Decoration(
+                    id: "ai_query_highlight",
+                    locator: locator,
+                    style: .highlight(tint: aiTint)
+                )
+                navigator.apply(decorations: [decoration], in: "ai_query")
+            } else {
+                navigator.apply(decorations: [], in: "ai_query")
+            }
+        }
+
         func setupHighlightInteractions() {
             guard let navigator = navigator else { return }
             navigator.observeDecorationInteractions(inGroup: "highlights") { [weak self] event in
                 guard let self, let highlightID = UUID(uuidString: event.decoration.id) else {
                     return
                 }
-                showHighlightMenu(for: highlightID)
+                showHighlightMenu(for: highlightID, at: event.point)
             }
         }
 
-        private func showHighlightMenu(for highlightID: UUID) {
-            let view = HighlightMenuView(
+        private func showHighlightMenu(for highlightID: UUID, at navigatorPoint: CGPoint?) {
+            let content = HighlightMenuView(
                 onChangeColor: { [weak self] color in
                     guard let self else { return }
                     HighlightStore.shared.updateColor(id: highlightID, color: color)
@@ -194,12 +264,24 @@ import SwiftUI
                     applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
                 }
             )
-            let host = UIHostingController(rootView: view)
-            host.modalPresentationStyle = .pageSheet
-            if let sheet = host.sheetPresentationController {
-                sheet.detents = [.custom { _ in 260 }]
-                sheet.prefersGrabberVisible = false
+
+            let host = UIHostingController(rootView: content)
+            host.modalPresentationStyle = .popover
+            host.preferredContentSize = CGSize(width: 256, height: 56)
+
+            if let popover = host.popoverPresentationController {
+                popover.sourceView = view
+                let anchorPoint: CGPoint
+                if let pt = navigatorPoint, let navView = navigator?.view {
+                    anchorPoint = navView.convert(pt, to: view)
+                } else {
+                    anchorPoint = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+                }
+                popover.sourceRect = CGRect(x: anchorPoint.x, y: anchorPoint.y, width: 0, height: 0)
+                popover.permittedArrowDirections = [.up, .down]
+                popover.delegate = self
             }
+
             present(host, animated: true)
         }
     }
@@ -212,6 +294,7 @@ import SwiftUI
         var commands: NavigatorCommands? = nil
         var settings: ReaderSettings = ReaderSettings()
         var bookID: UUID = UUID()
+        var aiQueryLocatorJSON: String? = nil
 
         class Coordinator: NSObject, EPUBNavigatorDelegate, UIGestureRecognizerDelegate {
             var onLocationChange: (Locator) -> Void
@@ -372,6 +455,8 @@ import SwiftUI
             Task {
                 await navigator.submitPreferences(preferences)
             }
+
+            container.applyAIQueryHighlight(locatorJSON: aiQueryLocatorJSON)
         }
     }
 #endif

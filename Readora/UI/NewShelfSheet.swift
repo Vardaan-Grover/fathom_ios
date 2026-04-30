@@ -8,14 +8,18 @@ struct NewShelfSheet: View {
 
     @State private var name: String
     @State private var selectedColorHex: String
-    @State private var isNameEmpty: Bool
     @FocusState private var nameFocused: Bool
 
-    static let palette: [String] = [
+    var isNameEmpty: Bool {
+        name.allSatisfy(\.isWhitespace)
+    }
+
+    // Pre-compute the colors
+    static let palette: [(hex: String, color: Color)] = [
         "4A7DB5", "C0392B", "2A6B3E", "7D3C98",
         "E67E22", "1ABC9C", "8B4513", "D4A017",
         "3A72D4", "C75B9B", "5B8A5E", "6C5CE7",
-    ]
+    ].map { ($0, Color(hex: $0)) }
 
     init(
         initialName: String = "",
@@ -25,17 +29,19 @@ struct NewShelfSheet: View {
     ) {
         self.isEditing = isEditing
         self.onCommit = onCommit
-        let hex = initialColorHex.isEmpty ? Self.palette[0] : initialColorHex
+
+        // Add the fallback back in using the new tuple structure
+        let hex = initialColorHex.isEmpty ? Self.palette[0].hex : initialColorHex
+
         _name = State(initialValue: initialName)
         _selectedColorHex = State(initialValue: hex)
-        _isNameEmpty = State(initialValue: initialName.trimmingCharacters(in: .whitespaces).isEmpty)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             Text(isEditing ? "Edit Shelf" : "New Shelf")
                 .font(.title2.bold())
-                .padding(.top, 4)
+                .padding(.top, 24)
 
             TextField("e.g. Favourites, To Read…", text: $name)
                 .font(.body)
@@ -44,12 +50,8 @@ struct NewShelfSheet: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 13)
                 .background(Color(.systemFill), in: RoundedRectangle(cornerRadius: 12))
-                .onChange(of: name) { _, new in
-                    let empty = new.trimmingCharacters(in: .whitespaces).isEmpty
-                    if empty != isNameEmpty { isNameEmpty = empty }
-                }
 
-            ShelfColorPicker(selectedHex: $selectedColorHex)
+            ShelfColorPicker(selectedHex: $selectedColorHex).equatable()
 
             Spacer()
 
@@ -59,13 +61,15 @@ struct NewShelfSheet: View {
             }
         }
         .padding(24)
-        .onAppear { nameFocused = true }
     }
 }
 
-// Isolated struct — only re-renders when selectedHex changes, never on typing
-private struct ShelfColorPicker: View {
+private struct ShelfColorPicker: View, Equatable {
     @Binding var selectedHex: String
+
+    static func == (lhs: ShelfColorPicker, rhs: ShelfColorPicker) -> Bool {
+        lhs.selectedHex == rhs.selectedHex
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -77,23 +81,28 @@ private struct ShelfColorPicker: View {
                 columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 6),
                 spacing: 10
             ) {
-                ForEach(NewShelfSheet.palette, id: \.self) { hex in
-                    ShelfColorSwatch(hex: hex, isSelected: hex == selectedHex)
-                        .onTapGesture { selectedHex = hex }
+                // Iterate using \.hex and pass both values to the swatch
+                ForEach(NewShelfSheet.palette, id: \.hex) { item in
+                    ShelfColorSwatch(
+                        hex: item.hex,
+                        themeColor: item.color,  // Pass pre-computed color
+                        isSelected: item.hex == selectedHex
+                    )
+                    .onTapGesture { selectedHex = item.hex }
                 }
             }
         }
     }
 }
 
-// Isolated struct — only re-renders when isSelected flips for this specific swatch
 private struct ShelfColorSwatch: View {
     let hex: String
+    let themeColor: Color  // Accept the pre-computed color
     let isSelected: Bool
 
     var body: some View {
         Circle()
-            .fill(Color(hex: hex))
+            .fill(themeColor)  // Use it here
             .frame(width: 42, height: 42)
             .overlay {
                 if isSelected {
@@ -104,7 +113,7 @@ private struct ShelfColorSwatch: View {
             }
             .overlay {
                 Circle()
-                    .strokeBorder(Color(hex: hex), lineWidth: 2.5)
+                    .strokeBorder(themeColor, lineWidth: 2.5)  // And use it here
                     .padding(-5)
                     .opacity(isSelected ? 1 : 0)
             }
@@ -113,12 +122,16 @@ private struct ShelfColorSwatch: View {
     }
 }
 
-// Isolated struct — only re-renders on isEmpty transitions or color changes
 private struct ShelfCreateButton: View {
     let isEmpty: Bool
     let selectedHex: String
     let isEditing: Bool
     let action: () -> Void
+
+    // Look up the pre-computed color from our static palette
+    private var themeColor: Color {
+        NewShelfSheet.palette.first(where: { $0.hex == selectedHex })?.color ?? .blue
+    }
 
     var body: some View {
         Button(action: action) {
@@ -129,8 +142,9 @@ private struct ShelfCreateButton: View {
             .font(.body.weight(.semibold))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
-            .background(isEmpty ? Color(.systemFill) : Color(hex: selectedHex))
-            .foregroundStyle(isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
+            // Use the looked-up color instead of Color(hex:)
+            .background(isEmpty ? Color(.systemFill) : themeColor)
+            .foregroundStyle(isEmpty ? Color.secondary : Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 14))
         }
         .disabled(isEmpty)

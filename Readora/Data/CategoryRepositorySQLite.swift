@@ -53,4 +53,38 @@ final actor CategoryRepositorySQLite: CategoryRepository {
             AppLogger.logError(tag: "CategoryRepository", error)
         }
     }
+
+    func listMemberships() async -> [BookCategoryMembership] {
+        do {
+            return try await dbQueue.read { db in
+                try BookCategoryMembership.fetchAll(db)
+            }
+        } catch {
+            AppLogger.logError(tag: "CategoryRepository", error)
+            return []
+        }
+    }
+
+    func addBookToCategory(bookID: UUID, categoryID: UUID) async {
+        do {
+            try await dbQueue.write { db in
+                let membership = BookCategoryMembership(bookID: bookID, categoryID: categoryID, addedAt: Date())
+                try membership.insert(db, onConflict: .ignore)
+            }
+        } catch {
+            AppLogger.logError(tag: "CategoryRepository", error)
+        }
+    }
+
+    func removeBookFromCategory(bookID: UUID, categoryID: UUID) async {
+        do {
+            try await dbQueue.write { db in
+                try BookCategoryMembership
+                    .filter(Column("bookID") == bookID && Column("categoryID") == categoryID)
+                    .deleteAll(db)
+            }
+        } catch {
+            AppLogger.logError(tag: "CategoryRepository", error)
+        }
+    }
 }

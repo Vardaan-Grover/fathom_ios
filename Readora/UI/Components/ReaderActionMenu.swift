@@ -4,6 +4,7 @@ struct ReaderActionMenu: View {
     @Binding var isPresented: Bool
     @Binding var settings: ReaderSettings
     var onOpenSettings: () -> Void
+    var onOpenAIChats: () -> Void = {}
 
     private var fg: Color { settings.colorTheme.foregroundColor }
     private var bg: Color { settings.colorTheme.backgroundColor }
@@ -66,11 +67,12 @@ struct ReaderActionMenu: View {
                         settings.fontSize = min(2.5, settings.fontSize + 0.1)
                     }
                     CustomSectionButton(
-                        symbol: "circle.lefthalf.filled",
+                        symbol: "sparkles",
                         isPresented: $isPresented,
                         foregroundColor: fg, backgroundColor: bg
                     ) {
-                        settings.colorTheme = settings.colorTheme.next()
+                        isPresented = false
+                        onOpenAIChats()
                     }
                     CustomSectionButton(
                         symbol: "bookmark",

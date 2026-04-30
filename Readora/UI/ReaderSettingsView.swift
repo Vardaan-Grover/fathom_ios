@@ -4,64 +4,142 @@ import SwiftUI
 
 struct ReaderSettingsView: View {
     @Binding var settings: ReaderSettings
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Sticky — stays visible regardless of scroll position
-                ReaderPreviewCard(settings: settings)
-
-                Divider()
+                // Header
+                HStack {
+                    Text("Reader Settings")
+                        .font(.system(size: 20, weight: .bold, design: .default))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 28, height: 28)
+                            .background(Color.primary.opacity(0.08))
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+                .padding(.bottom, 16)
 
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        sectionHeader("Theme")
-                        themeGrid
+                    VStack(alignment: .leading, spacing: 24) {
+
+                        topRowControls
                             .padding(.horizontal, 20)
 
-                        sectionHeader("Font")
-                        fontScroll
+                        VStack(alignment: .leading, spacing: 12) {
+                            sectionHeader("Font")
+                            fontScroll
+                        }
 
-                        sectionHeader("Typography")
-                        typographyCard
-                            .padding(.horizontal, 20)
+                        VStack(alignment: .leading, spacing: 12) {
+                            sectionHeader("Themes")
+                            themeGrid
+                                .padding(.horizontal, 20)
+                        }
 
-                        sectionHeader("Layout & Text")
-                        layoutCard
-                            .padding(.horizontal, 20)
+                        customiseSection
 
                         resetButton
                             .padding(.horizontal, 20)
-                            .padding(.top, 24)
-                            .padding(.bottom, 44)
+                            .padding(.top, 16)
                     }
-                    .padding(.top, 8)
+                    .padding(.bottom, 16)
                 }
             }
-            .navigationTitle("Reading")
-            .navigationBarTitleDisplayMode(.inline)
+            .background(settings.colorTheme.backgroundColor.ignoresSafeArea())
+            // Hide standard nav bar since we made a custom header
+            .navigationBarHidden(true)
         }
+        .environment(\.colorScheme, settings.colorTheme.isDark ? .dark : .light)
         .presentationDragIndicator(.visible)
-        .presentationDetents([.fraction(0.72), .large])
+        .presentationDetents([.fraction(0.6)])
+        .presentationBackground(settings.colorTheme.backgroundColor)
     }
 
-    // MARK: - Section header
+    // MARK: - Top Segmented Row
 
-    @ViewBuilder
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.headline)
-            .padding(.horizontal, 20)
-            .padding(.top, 24)
-            .padding(.bottom, 12)
+    private var topRowControls: some View {
+        HStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    settings.fontSize = max(0.5, (round(settings.fontSize * 10) - 1) / 10)
+                }
+            } label: {
+                Text("A")
+                    .font(.system(size: 14, weight: .regular))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .disabled(settings.fontSize <= 0.5)
+
+            Divider().padding(.vertical, 8)
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    settings.fontSize = min(2.5, (round(settings.fontSize * 10) + 1) / 10)
+                }
+            } label: {
+                Text("A")
+                    .font(.system(size: 22, weight: .regular))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .disabled(settings.fontSize >= 2.5)
+
+            Divider().padding(.vertical, 8)
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    settings.layout = (settings.layout == .paginated) ? .scrolling : .paginated
+                }
+            } label: {
+                Image(systemName: settings.layout == .paginated ? "book.pages" : "scroll")
+                    .font(.system(size: 18))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+
+            Divider().padding(.vertical, 8)
+
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    if settings.colorTheme.isDark {
+                        settings.colorTheme = .paper
+                    } else {
+                        settings.colorTheme = .night
+                    }
+                }
+            } label: {
+                Image(systemName: settings.colorTheme.isDark ? "sun.max" : "moon")
+                    .font(.system(size: 18))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+        }
+        .frame(height: 48)
+        .foregroundStyle(Color.primary)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    // MARK: - Theme grid
+    // MARK: - Theme Grid
 
     private var themeGrid: some View {
         LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2),
-            spacing: 10
+            columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+            ], spacing: 12
         ) {
             ForEach(ReaderColorTheme.allCases, id: \.self) { theme in
                 ThemeCard(
@@ -69,7 +147,7 @@ struct ReaderSettingsView: View {
                     font: settings.font,
                     isSelected: settings.colorTheme == theme
                 ) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                         settings.colorTheme = theme
                     }
                 }
@@ -77,7 +155,31 @@ struct ReaderSettingsView: View {
         }
     }
 
-    // MARK: - Font scroll
+    // MARK: - Customise Section
+
+    private var customiseSection: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 12) {
+                sectionHeader("Text Options")
+                layoutOptionsCard
+                    .padding(.horizontal, 20)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                sectionHeader("Spacing")
+                spacingCard
+                    .padding(.horizontal, 20)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 13, weight: .semibold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .kerning(0.8)
+            .padding(.horizontal, 20)
+    }
 
     private var fontScroll: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -95,84 +197,50 @@ struct ReaderSettingsView: View {
         }
     }
 
-    // MARK: - Typography card
-
-    private var typographyCard: some View {
+    private var spacingCard: some View {
         VStack(spacing: 0) {
-            SliderRow(
-                icon: "textformat.size",
-                label: "Text Size",
-                value: $settings.fontSize,
-                range: 0.5...2.5,
-                step: 0.1,
-                format: { String(format: "%.1f×", $0) }
-            )
-            Divider().padding(.leading, 54)
             SliderRow(
                 icon: "line.3.horizontal",
                 label: "Line Height",
                 value: $settings.lineHeight,
                 range: 1.0...2.0,
                 step: 0.1,
-                format: { String(format: "%.2f", $0) }
+                format: { String(format: "%.1f", $0) }
             )
-            Divider().padding(.leading, 54)
+            Divider().padding(.leading, 52)
             SliderRow(
                 icon: "arrow.left.and.right",
-                label: "Margin",
+                label: "Margins",
                 value: $settings.margin,
                 range: 0.5...2.5,
                 step: 0.1,
                 format: { String(format: "%.1f×", $0) }
             )
         }
-        .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
     }
 
-    // MARK: - Layout & text card
-
-    private var layoutCard: some View {
+    private var layoutOptionsCard: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "book.pages")
-                    .foregroundStyle(.secondary)
-                    .font(.system(size: 14))
-                    .frame(width: 28)
-                Text("Layout")
-                    .font(.subheadline)
-                Spacer()
-                Picker("", selection: $settings.layout) {
-                    Text("Pages").tag(ReadingLayout.paginated)
-                    Text("Scroll").tag(ReadingLayout.scrolling)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 130)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 13)
-
-            Divider().padding(.leading, 54)
-
             Toggle(isOn: $settings.justifyText) {
                 Label("Justify Text", systemImage: "text.justify.leading")
                     .font(.subheadline)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 13)
+            .padding(.vertical, 12)
 
-            Divider().padding(.leading, 54)
+            Divider().padding(.leading, 52)
 
             Toggle(isOn: $settings.boldText) {
                 Label("Bold Text", systemImage: "bold")
                     .font(.subheadline)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 13)
+            .padding(.vertical, 12)
         }
-        .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 14))
+        .tint(.accentColor)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
     }
-
-    // MARK: - Reset
 
     private var resetButton: some View {
         Button {
@@ -181,64 +249,13 @@ struct ReaderSettingsView: View {
             }
         } label: {
             Text("Reset to Defaults")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.subheadline.bold())
+                .foregroundStyle(.red)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 12))
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Preview Card
-
-private struct ReaderPreviewCard: View {
-    let settings: ReaderSettings
-
-    private let sampleText = "'But is it possible, is it really possible, that we shall never see each other again? Is it possible it will end like this?' 'There, you see,' the girl said, laughing, 'at first you wanted just two words, and now...'"
-
-    // Clamp preview sizes so the card looks reasonable at any fontSize setting
-    private var aaSize: CGFloat   { min(42.0 * settings.fontSize, 58.0) }
-    private var bodySize: CGFloat { min(max(14.0 * settings.fontSize, 11.0), 20.0) }
-    private var extraLineSpacing: CGFloat { bodySize * max(0, settings.lineHeight - 1.0) * 0.5 }
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            // Background fills the full card — not masked
-            settings.colorTheme.backgroundColor
-
-            // Text content — masked so it fades into the background at the bottom
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Aa")
-                    .font(settings.font.swiftUIFont(size: aaSize))
-                    .fontWeight(settings.boldText ? .bold : .regular)
-                    .foregroundStyle(settings.colorTheme.foregroundColor)
-
-                Text(sampleText)
-                    .font(settings.font.swiftUIFont(size: bodySize))
-                    .fontWeight(settings.boldText ? .bold : .regular)
-                    .foregroundStyle(settings.colorTheme.foregroundColor)
-                    .lineSpacing(extraLineSpacing)
-                    .multilineTextAlignment(settings.justifyText ? .leading : .leading)
-                    .lineLimit(8)
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .mask(
-                VStack(spacing: 0) {
-                    Color.black
-                    LinearGradient(
-                        colors: [.black, .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 48)
-                }
-            )
-        }
-        .frame(maxWidth: .infinity, minHeight: 200, maxHeight: 200)
-        .clipped()
     }
 }
 
@@ -252,30 +269,41 @@ private struct ThemeCard: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(theme.backgroundColor)
+            VStack(spacing: 0) {
+                Text("Aa")
+                    .font(font.swiftUIFont(size: 26))
+                    .foregroundStyle(theme.foregroundColor)
+                    .frame(height: 48)
 
-                VStack(spacing: 3) {
-                    Text("Aa")
-                        .font(font.swiftUIFont(size: 24))
-                        .foregroundStyle(theme.foregroundColor)
-                    Text(theme.displayName)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(theme.foregroundColor.opacity(0.65))
-                }
+                Divider()
+                    .overlay(theme.foregroundColor.opacity(0.1))
 
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(
-                        isSelected ? Color.accentColor : Color.primary.opacity(0.1),
-                        lineWidth: isSelected ? 2.5 : 1
+                Text(theme.displayName)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(
+                        isSelected ? theme.foregroundColor : theme.foregroundColor.opacity(0.7)
                     )
+                    .frame(height: 32)
             }
-            .frame(height: 78)
-            .scaleEffect(isSelected ? 1.0 : 0.97)
-            .animation(.easeInOut(duration: 0.15), value: isSelected)
+            .frame(maxWidth: .infinity)
+            .background(theme.backgroundColor, in: RoundedRectangle(cornerRadius: 12))
+            // Inner border for contrast on light variants
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(
+                        isSelected ? Color.accentColor : Color.clear,
+                        lineWidth: 2.5
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+        .scaleEffect(isSelected ? 0.98 : 1.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
     }
 }
 
@@ -288,23 +316,58 @@ private struct FontCard: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemGray6))
-
-                VStack(spacing: 4) {
-                    Text("Aa")
-                        .font(font.swiftUIFont(size: 24))
-                        .foregroundStyle(.primary)
-                    Text(font.cardLabel)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+            VStack(spacing: 4) {
+                Text("Aa")
+                    .font(font.swiftUIFont(size: 22))
+                    .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                Text(font.cardLabel)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
             }
             .frame(width: 74, height: 74)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        isSelected
+                            ? AnyShapeStyle(Color.accentColor.opacity(0.12))
+                            : AnyShapeStyle(.regularMaterial))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(
+                        isSelected ? Color.accentColor : Color.clear,
+                        lineWidth: 1.5
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.15), value: isSelected)
+    }
+}
+
+// MARK: - Layout Option
+
+private struct LayoutOption: View {
+    let icon: String
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -324,7 +387,7 @@ private struct SliderRow: View {
         HStack(spacing: 10) {
             Image(systemName: icon)
                 .foregroundStyle(.secondary)
-                .font(.system(size: 14))
+                .font(.system(size: 13))
                 .frame(width: 28)
             Text(label)
                 .font(.subheadline)
@@ -335,36 +398,36 @@ private struct SliderRow: View {
                 .frame(minWidth: 36, alignment: .trailing)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        .padding(.vertical, 12)
     }
 }
 
 // MARK: - ReaderFont SwiftUI helpers
 
-private extension ReaderFont {
-    func swiftUIFont(size: CGFloat) -> Font {
+extension ReaderFont {
+    fileprivate func swiftUIFont(size: CGFloat) -> Font {
         switch self {
-        case .original:      .system(size: size)
-        case .newYork:       .system(size: size, design: .serif)
-        case .georgia:       .custom("Georgia", size: size)
-        case .palatino:      .custom("Palatino", size: size)
+        case .original: .system(size: size)
+        case .newYork: .system(size: size, design: .serif)
+        case .georgia: .custom("Georgia", size: size)
+        case .palatino: .custom("Palatino", size: size)
         case .iowanOldStyle: .custom("Iowan Old Style", size: size)
-        case .charter:       .custom("Charter", size: size)
-        case .sfProText:     .system(size: size)
-        case .avenir:        .custom("Avenir", size: size)
+        case .charter: .custom("Charter", size: size)
+        case .sfProText: .system(size: size)
+        case .avenir: .custom("Avenir", size: size)
         }
     }
 
-    var cardLabel: String {
+    fileprivate var cardLabel: String {
         switch self {
-        case .original:      "Original"
-        case .newYork:       "New York"
-        case .georgia:       "Georgia"
-        case .palatino:      "Palatino"
+        case .original: "Original"
+        case .newYork: "New York"
+        case .georgia: "Georgia"
+        case .palatino: "Palatino"
         case .iowanOldStyle: "Iowan"
-        case .charter:       "Charter"
-        case .sfProText:     "SF Pro"
-        case .avenir:        "Avenir"
+        case .charter: "Charter"
+        case .sfProText: "SF Pro"
+        case .avenir: "Avenir"
         }
     }
 }

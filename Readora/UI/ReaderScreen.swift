@@ -11,11 +11,14 @@ struct ReaderScreen: View {
 
     @State private var isShowingBars = true
     @State private var isShowingSettings = false
+    @State private var isShowingAIChats = false
     @State private var isActionButtonPresented = false
     @State private var settings: ReaderSettings = ReaderSettingsStore.shared.load()
     @State private var currentPage: Int = 0
     @State private var totalPages: Int = 0
     @StateObject private var loader = PublicationLoader()
+    @State private var aiSelectedText: String?
+    @State private var aiSelectedLocatorJSON: String?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -48,7 +51,9 @@ struct ReaderScreen: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding()
 
-                    Button { dismiss() } label: {
+                    Button {
+                        dismiss()
+                    } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 15, weight: .medium))
                             .padding()
@@ -72,10 +77,15 @@ struct ReaderScreen: View {
                     },
                     commands: commands,
                     settings: settings,
-                    bookID: bookID
+                    bookID: bookID,
+                    aiQueryLocatorJSON: aiSelectedText != nil ? aiSelectedLocatorJSON : nil
                 )
                 .ignoresSafeArea()
                 .onAppear {
+                    commands.onExplain = { text, locatorJSON in
+                        aiSelectedLocatorJSON = locatorJSON
+                        aiSelectedText = text
+                    }
                     commands.onTap = { point, size in
                         let leftEdge = size.width * 0.2
                         let rightEdge = size.width * 0.8
@@ -93,12 +103,17 @@ struct ReaderScreen: View {
                 .overlay {
                     ZStack(alignment: .bottomTrailing) {
                         Rectangle()
-                            .fill(settings.colorTheme.dimColor.opacity(isActionButtonPresented ? 1 : 0))
+                            .fill(
+                                settings.colorTheme.dimColor.opacity(
+                                    isActionButtonPresented ? 1 : 0)
+                            )
                             .blur(radius: 20)
                             .ignoresSafeArea()
                             .allowsHitTesting(isActionButtonPresented)
                             .onTapGesture { isActionButtonPresented = false }
-                            .animation(.smooth(duration: 0.5, extraBounce: 0), value: isActionButtonPresented)
+                            .animation(
+                                .smooth(duration: 0.5, extraBounce: 0),
+                                value: isActionButtonPresented)
 
                         ReaderOverlay(
                             bookTitle: bookTitle,
@@ -106,14 +121,18 @@ struct ReaderScreen: View {
                             totalPages: totalPages,
                             isActive: isShowingBars,
                             foregroundColor: settings.colorTheme.foregroundColor,
+                            isScrolling: settings.layout == .scrolling,
                             onDismiss: { dismiss() }
                         )
 
                         ReaderActionMenu(
                             isPresented: $isActionButtonPresented,
                             settings: $settings,
-                            onOpenSettings: { isShowingSettings = true }
+                            onOpenSettings: { isShowingSettings = true },
+                            onOpenAIChats: { isShowingAIChats = true }
                         )
+                        .opacity(isShowingBars ? 1 : 0)
+                        .allowsHitTesting(isShowingBars)
                     }
                 }
             }
@@ -124,6 +143,26 @@ struct ReaderScreen: View {
                     ReaderSettingsStore.shared.save(newSettings)
                 }
         }
+        .sheet(isPresented: $isShowingAIChats) {
+            AIChatsListScreen(bookID: bookID, bookTitle: bookTitle)
+        }
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { aiSelectedText != nil },
+                set: { if !$0 { aiSelectedText = nil } }
+            )
+        ) {
+            if let text = aiSelectedText {
+                AICompanionScreen(
+                    bookID: bookID,
+                    selectedText: text,
+                    bookTitle: bookTitle,
+                    onDismiss: {
+                        aiSelectedText = nil
+                        aiSelectedLocatorJSON = nil
+                    }
+                )
+            }
+        }
     }
-
 }

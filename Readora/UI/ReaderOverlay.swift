@@ -6,6 +6,7 @@ struct ReaderOverlay: View {
     let totalPages: Int
     let isActive: Bool
     let foregroundColor: Color
+    let isScrolling: Bool
     let onDismiss: () -> Void
 
     private var textColor: Color { foregroundColor }
@@ -29,11 +30,22 @@ struct ReaderOverlay: View {
     private var topBar: some View {
         ZStack {
             Text(bookTitle)
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(textColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .padding(.horizontal, isScrolling ? 16 : 0)
+                .padding(.vertical, isScrolling ? 6 : 0)
+                .background(
+                    Group {
+                        if isScrolling {
+                            Capsule()
+                                .glassEffect(.regular)
+                        }
+                    }
+                )
                 .frame(maxWidth: .infinity)
+                .opacity(isScrolling && !isActive ? 0 : 1)
 
             if isActive {
                 HStack {
@@ -45,6 +57,15 @@ struct ReaderOverlay: View {
                     }
                     Spacer()
                 }
+                .background(
+                    Group {
+                        if isScrolling {
+                            Capsule()
+                                .glassEffect(.regular)
+                        }
+                    }
+                )
+                .opacity(isScrolling && !isActive ? 0 : 1)
                 .padding(.leading, 32)
             }
         }
@@ -55,12 +76,23 @@ struct ReaderOverlay: View {
         ZStack {
             if !pageLabel.isEmpty {
                 Text(pageLabel)
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(textColor)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, isScrolling ? 14 : 0)
+                    .padding(.vertical, isScrolling ? 6 : 10)
+                    .background(
+                        Group {
+                            if isScrolling {
+                                Capsule()
+                                    .glassEffect(.regular)
+                            }
+                        }
+                    )
             }
         }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, isScrolling ? 20 : 0)
         .fixedSize(horizontal: false, vertical: true)
+        .opacity(isScrolling && !isActive ? 0 : 1)
     }
 }

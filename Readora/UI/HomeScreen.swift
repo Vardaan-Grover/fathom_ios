@@ -33,6 +33,8 @@ struct HomeScreen: View {
                     ProgressView()
                         .padding(.top, 60)
                 } else {
+                    let userShelves = viewModel.categories.filter { !$0.shelfColorHex.isEmpty }
+
                     ForEach(viewModel.categories) { category in
                         let isUserShelf = !category.shelfColorHex.isEmpty
                         let isRemoving = removingCategoryIDs.contains(category.id)
@@ -40,12 +42,35 @@ struct HomeScreen: View {
                         BookCategorySection(
                             category: category,
                             onBookTap: { id in selectedBook = SelectedBook(id: id) },
-                            onEdit: isUserShelf ? { editingCategory = category } : nil,
-                            onDelete: isUserShelf ? { categoryToDelete = category } : nil
+                            onEdit: isUserShelf
+                                ? {
+                                    // Delay matches the context menu dismiss animation so the
+                                    // edit sheet doesn't fight the blur-out in progress.
+                                    let cat = category
+                                    Task { @MainActor in
+                                        try? await Task.sleep(nanoseconds: 500_000_000)
+                                        editingCategory = cat
+                                    }
+                                } : nil,
+                            onDelete: isUserShelf
+                                ? {
+                                    // Same delay — prevents the confirmation dialog from
+                                    // overlapping the context menu's spring dismissal.
+                                    let cat = category
+                                    Task { @MainActor in
+                                        try? await Task.sleep(nanoseconds: 500_000_000)
+                                        categoryToDelete = cat
+                                    }
+                                } : nil,
+                            userCategories: userShelves,
+                            onToggleCategoryMembership: { bookID, categoryID in
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                    viewModel.toggleBookInCategory(
+                                        bookID: bookID, categoryID: categoryID)
+                                }
+                            }
                         )
-                        // Dissolve modifiers — order matters:
-                        // blur first (at natural size), then vertical crush, then fade.
-                        .blur(radius: isRemoving ? 8 : 0)
+                        // Dissolve modifiers: vertical crush then fade.
                         .scaleEffect(
                             x: isRemoving ? 0.88 : 1,
                             y: isRemoving ? 0.001 : 1,
@@ -55,14 +80,16 @@ struct HomeScreen: View {
                         .allowsHitTesting(!isRemoving)
                         // Each section gets an animated transition driven by the
                         // parent withAnimation context on insertion/removal.
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top)),
-                            removal: .identity // already invisible by the time data removes it
-                        ))
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(
+                                    with: .scale(scale: 0.94, anchor: .top)),
+                                removal: .identity  // already invisible by the time data removes it
+                            ))
                     }
                 }
             }
-            .padding(.bottom, 20)
+            .padding(.bottom, 72)
             .padding(.horizontal, 20)
         }
         .background(theme.colors.background)
@@ -92,29 +119,59 @@ struct HomeScreen: View {
                     viewModel.updateCategory(id: category.id, name: name, colorHex: colorHex)
                 }
             }
+            .padding(.top, 16)
             .presentationDetents([.height(380)])
             .presentationDragIndicator(.visible)
-            .presentationCornerRadius(20)
-            .presentationBackground(.regularMaterial)
         }
-        .confirmationDialog(
-            "Delete \"\(categoryToDelete?.name ?? "")\"?",
-            isPresented: Binding(
-                get: { categoryToDelete != nil },
-                set: { if !$0 { categoryToDelete = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Delete Shelf", role: .destructive) {
-                guard let category = categoryToDelete else { return }
-                categoryToDelete = nil
-                beginDeleteAnimation(for: category)
+        .sheet(item: $categoryToDelete) { category in
+            VStack(spacing: 24) {
+                VStack(spacing: 8) {
+                    Text("Delete \"\(category.name)\"?")
+                        .font(.title2.bold())
+                        .multilineTextAlignment(.center)
+
+                    Text("This will permanently remove the shelf. Books in it won't be deleted.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                .padding(.top, 10)
+
+                HStack(spacing: 12) {
+                    Button(role: .cancel) {
+                        categoryToDelete = nil
+                    } label: {
+                        Text("Cancel")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(
+                                Color(.secondarySystemFill), in: RoundedRectangle(cornerRadius: 14)
+                            )
+                            .foregroundStyle(.primary)
+                    }
+                    Button(role: .destructive) {
+                        categoryToDelete = nil
+                        beginDeleteAnimation(for: category)
+                    } label: {
+                        Text("Delete Shelf")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(
+                                Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 14)
+                            )
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Spacer(minLength: 0)
             }
-            Button("Cancel", role: .cancel) {
-                categoryToDelete = nil
-            }
-        } message: {
-            Text("This will permanently remove the shelf. Books in it won't be deleted.")
+            .padding(.top, 36)
+            .padding(.horizontal, 24)
+            .presentationDetents([.height(172)])
+            .presentationDragIndicator(.visible)
         }
         .fullScreenCover(item: $readerBook) { book in
             if let url = book.localURL {
@@ -125,7 +182,7 @@ struct HomeScreen: View {
 
     // MARK: - Delete animation
 
-    // Phase 1 (0ms):   blur + vertical crush + fade (~300ms spring)
+    // Phase 1 (0ms):   vertical crush + fade (~300ms spring)
     // Phase 2 (200ms): layout reflow — remaining items spring upward into the gap.
     // The 200ms overlap makes both phases feel like one continuous motion.
     private func beginDeleteAnimation(for category: HomeCategory) {

@@ -5,6 +5,9 @@ struct BookCategorySection: View {
     var onBookTap: ((UUID) -> Void)? = nil
     var onEdit: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
+    // All user-created shelves, so any book can be added to any of them.
+    var userCategories: [HomeCategory] = []
+    var onToggleCategoryMembership: ((UUID, UUID) -> Void)? = nil  // (bookID, categoryID)
 
     private let sectionHeight: CGFloat = 196
     private let shelfBandHeight: CGFloat = 72
@@ -67,8 +70,19 @@ struct BookCategorySection: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(category.books) { book in
-                        BookCoverView(book: book)
-                            .onTapGesture { onBookTap?(book.id) }
+                        BookCoverView(
+                            book: book,
+                            userCategories: userCategories,
+                            onToggleCategory: { categoryID in
+                                onToggleCategoryMembership?(book.id, categoryID)
+                            }
+                        )
+                        .onTapGesture { onBookTap?(book.id) }
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .bottom).combined(with: .opacity),
+                                removal: .opacity
+                            ))
                     }
                 }
                 .padding(.horizontal, 20)
@@ -86,7 +100,9 @@ struct BookCategorySection: View {
             // Glass body: thin material blurred background + a tint from the category color
             Rectangle()
                 .fill(category.shelfColor.opacity(0.40))
-                .animation(.spring(response: 0.5, dampingFraction: 0.82), value: category.shelfColor)
+                .animation(
+                    .spring(response: 0.5, dampingFraction: 0.82), value: category.shelfColor
+                )
                 .overlay(
                     VStack {
                         LinearGradient(
@@ -131,14 +147,21 @@ struct BookCategorySection: View {
     }
 }
 
-
 #Preview {
     let books = [
-        HomeBook(id: UUID(), title: "Bauhaus", author: "Frank Whitford", coverColor: Color(hex: "1A5EA8"), textColor: .white, coverFilename: nil),
-        HomeBook(id: UUID(), title: "Dieter Rams", author: "Klaus Klemp", coverColor: Color(hex: "E84B1F"), textColor: .white, coverFilename: nil),
-        HomeBook(id: UUID(), title: "The Design of Everyday Things", author: "Don Norman", coverColor: Color(hex: "F5C518"), textColor: .black, coverFilename: nil),
+        HomeBook(
+            id: UUID(), title: "Bauhaus", author: "Frank Whitford",
+            coverColor: Color(hex: "1A5EA8"), textColor: .white, coverFilename: nil),
+        HomeBook(
+            id: UUID(), title: "Dieter Rams", author: "Klaus Klemp",
+            coverColor: Color(hex: "E84B1F"), textColor: .white, coverFilename: nil),
+        HomeBook(
+            id: UUID(), title: "The Design of Everyday Things", author: "Don Norman",
+            coverColor: Color(hex: "F5C518"), textColor: .black, coverFilename: nil),
     ]
-    let category = HomeCategory(id: UUID(), name: "Design", books: books, shelfColor: Color(hex: "4A7DB5"), shelfColorHex: "4A7DB5")
+    let category = HomeCategory(
+        id: UUID(), name: "Design", books: books, shelfColor: Color(hex: "4A7DB5"),
+        shelfColorHex: "4A7DB5")
 
     ScrollView {
         BookCategorySection(category: category, onEdit: {}, onDelete: {})

@@ -174,6 +174,15 @@ final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v5_add_book_category_memberships") { db in
+            try db.create(table: "bookCategoryMemberships") { t in
+                t.column("bookID", .text).notNull().references("books", onDelete: .cascade)
+                t.column("categoryID", .text).notNull().references("bookCategories", onDelete: .cascade)
+                t.column("addedAt", .datetime).notNull()
+                t.primaryKey(["bookID", "categoryID"])
+            }
+        }
+
         return migrator
     }
 

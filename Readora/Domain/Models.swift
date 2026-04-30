@@ -52,6 +52,13 @@ struct BookCategory: Identifiable, Equatable, Codable, FetchableRecord, Persista
     var createdAt: Date
 }
 
+struct BookCategoryMembership: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "bookCategoryMemberships"
+    let bookID: UUID
+    let categoryID: UUID
+    let addedAt: Date
+}
+
 struct Passage: Identifiable, Equatable {
     let id: UUID
     let bookID: UUID

@@ -66,8 +66,15 @@ struct RootView: View {
             }
             .presentationDetents([.height(380)])
             .presentationDragIndicator(.visible)
-            .presentationCornerRadius(20)
-            .presentationBackground(.regularMaterial)
+        }
+        .sheet(item: $libraryViewModel.pendingCustomization) { customization in
+            BookCustomizationSheet(
+                initial: customization,
+                onConfirm: { edited in libraryViewModel.confirmImport(with: edited) },
+                onCancel: { libraryViewModel.cancelImport() }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 

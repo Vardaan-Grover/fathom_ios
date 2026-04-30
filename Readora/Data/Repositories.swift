@@ -5,10 +5,14 @@ protocol CategoryRepository {
     func addCategory(_ category: BookCategory) async
     func updateCategory(id: UUID, name: String, colorHex: String) async
     func deleteCategory(id: UUID) async
+    func listMemberships() async -> [BookCategoryMembership]
+    func addBookToCategory(bookID: UUID, categoryID: UUID) async
+    func removeBookFromCategory(bookID: UUID, categoryID: UUID) async
 }
 
 final actor InMemoryCategoryRepository: CategoryRepository {
     private var categories: [BookCategory] = []
+    private var memberships: [BookCategoryMembership] = []
 
     func listCategories() async -> [BookCategory] { categories }
     func addCategory(_ category: BookCategory) async { categories.append(category) }
@@ -19,6 +23,15 @@ final actor InMemoryCategoryRepository: CategoryRepository {
     }
     func deleteCategory(id: UUID) async {
         categories.removeAll { $0.id == id }
+        memberships.removeAll { $0.categoryID == id }
+    }
+    func listMemberships() async -> [BookCategoryMembership] { memberships }
+    func addBookToCategory(bookID: UUID, categoryID: UUID) async {
+        guard !memberships.contains(where: { $0.bookID == bookID && $0.categoryID == categoryID }) else { return }
+        memberships.append(BookCategoryMembership(bookID: bookID, categoryID: categoryID, addedAt: Date()))
+    }
+    func removeBookFromCategory(bookID: UUID, categoryID: UUID) async {
+        memberships.removeAll { $0.bookID == bookID && $0.categoryID == categoryID }
     }
 }
 

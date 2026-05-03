@@ -21,16 +21,21 @@ struct DefaultAIChatService: AIChatService {
                 selectedText: passageText
             ) ?? 0
 
-        // The user's query is the last message
+        // The user's query is the last message; everything before it is conversation history
         guard let lastMessage = messages.last, lastMessage.role == .user else {
             return "Error: No user message found."
+        }
+
+        let history = messages.dropLast().map {
+            ConversationMessage(role: $0.role.rawValue, content: $0.content)
         }
 
         let client = BackendService.shared
         return try await client.queryBook(
             bookID: bookID,
             absoluteIndex: absoluteIndex,
-            query: lastMessage.content
+            query: lastMessage.content,
+            messages: history
         )
     }
 }

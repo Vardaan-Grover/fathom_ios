@@ -21,6 +21,7 @@ final class AICompanionViewModel: ObservableObject {
     private let bookID: UUID
     private let passageText: String
     private var threadID: UUID?
+    private var conversationHistory: [ConversationMessage] = []
 
     init(bookID: UUID, passageText: String, threadID: UUID? = nil) {
         self.bookID = bookID
@@ -65,13 +66,18 @@ final class AICompanionViewModel: ObservableObject {
         inputText = ""
         isTyping = true
 
+        let historySnapshot = conversationHistory
+
         Task {
             let absoluteIndex =
                 await NarrativeContextStore.shared.getAbsoluteIndex(
                     for: bookID, selectedText: passageText) ?? 0
             do {
                 let answer = try await BackendService.shared.queryBook(
-                    bookID: bookID, absoluteIndex: absoluteIndex, query: trimmed)
+                    bookID: bookID, absoluteIndex: absoluteIndex, query: trimmed,
+                    messages: historySnapshot)
+                conversationHistory.append(ConversationMessage(role: "user", content: trimmed))
+                conversationHistory.append(ConversationMessage(role: "assistant", content: answer))
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
                     isTyping = false
                     messages.append(
@@ -173,7 +179,7 @@ struct AICompanionScreen: View {
                     .frame(width: 44, height: 44)
             }
             Spacer()
-            Text("Ask Readora")
+            Text("Ask Fathom")
                 .font(theme.typography.headline)
                 .foregroundStyle(theme.colors.primary)
             Spacer()
@@ -479,7 +485,7 @@ private struct GradientInputBar: View {
     }
 
     private var inputField: some View {
-        TextField("Message Readora", text: $text, axis: .vertical)
+        TextField("Message Fathom", text: $text, axis: .vertical)
             .lineLimit(1...5)
             .font(theme.typography.body)
             .foregroundStyle(theme.colors.primary)
@@ -487,45 +493,19 @@ private struct GradientInputBar: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 13)
             .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 22)
-                        .fill(theme.colors.surface)
-                        .opacity(isFocused ? 0 : 1)
-
-                    AnimatedMeshGradient()
-                        .clipShape(RoundedRectangle(cornerRadius: 22))
-                        .opacity(isFocused ? 1 : 0)
-
-                    RoundedRectangle(cornerRadius: 22)
-                        .fill(.ultraThinMaterial)
-                        .opacity(isFocused ? 0.42 : 0)
-                }
+                RoundedRectangle(cornerRadius: 22)
+                    .fill(theme.colors.surface)
             }
             .clipShape(RoundedRectangle(cornerRadius: 22))
-            .overlay {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 22)
-                        .stroke(theme.colors.separator, lineWidth: 0.5)
-                        .opacity(isFocused ? 0 : 1)
-
-                    RoundedRectangle(cornerRadius: 22)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    Color(hex: "FF6EB4").opacity(0.75),
-                                    Color(hex: "7C86F0").opacity(0.75),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                        .opacity(isFocused ? 1 : 0)
-                }
-            }
-            .shadow(color: Color(hex: "B06EE0").opacity(isFocused ? 0.55 : 0), radius: 36, y: 10)
-            .shadow(color: Color(hex: "FF6EB4").opacity(isFocused ? 0.35 : 0), radius: 16, y: 4)
-            .animation(isFocused ? .spring(response: 0.4, dampingFraction: 0.85) : .easeOut(duration: 0.6), value: isFocused)
+            .borderBeam(
+                border: .primary,
+                // beam: [Color(hex: "FF6EB4"), Color(hex: "7C86F0"), Color(hex: "4052E3")],
+                beam: [.green, .blue, .pink, .orange, .indigo],
+                beamBlur: 8,
+                cornerRadius: 22,
+                isEnabled: isFocused
+            )
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: isFocused)
     }
 
     private var sendButton: some View {
@@ -537,7 +517,7 @@ private struct GradientInputBar: View {
                 .background(
                     Circle().fill(
                         LinearGradient(
-                            colors: [Color(hex: "FF6EB4"), Color(hex: "7C86F0")],
+                            colors: [Color(hex: "FF6EB4"), Color(hex: "7C86F0"), Color(hex: "4052E3")],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -545,49 +525,6 @@ private struct GradientInputBar: View {
                 )
         }
         .padding(.bottom, 5)
-    }
-}
-
-// MARK: - Animated Mesh Gradient
-
-private struct AnimatedMeshGradient: View {
-    @State private var startDate = Date()
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = Float(timeline.date.timeIntervalSince(startDate)) * 0.75
-            MeshGradient(
-                width: 3,
-                height: 3,
-                points: animatedPoints(t: t),
-                colors: paletteColors,
-                smoothsColors: true
-            )
-        }
-    }
-
-    private func animatedPoints(t: Float) -> [SIMD2<Float>] {
-        [
-            [0.0, 0.0],
-            [0.5 + 0.40 * sin(t * 1.3), 0.0],
-            [1.0, 0.0],
-
-            [0.0, 0.5 + 0.40 * cos(t * 1.1)],
-            [0.5 + 0.45 * sin(t * 1.5 + 1.0), 0.5 + 0.45 * cos(t * 1.4 + 0.5)],
-            [1.0, 0.5 + 0.40 * sin(t * 1.2)],
-
-            [0.0, 1.0],
-            [0.5 + 0.40 * cos(t * 0.9 + 2.0), 1.0],
-            [1.0, 1.0],
-        ]
-    }
-
-    private var paletteColors: [Color] {
-        [
-            Color(hex: "FFB3D9"), Color(hex: "FF79B0"), Color(hex: "CE93F8"),
-            Color(hex: "FFCBA4"), Color(hex: "F9A8D4"), Color(hex: "93B8F8"),
-            Color(hex: "BAE6FD"), Color(hex: "DDD6FE"), Color(hex: "BAD8FF"),
-        ]
     }
 }
 

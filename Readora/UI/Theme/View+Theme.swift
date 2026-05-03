@@ -6,7 +6,7 @@ extension View {
 
     /// Wires the `ThemeManager` into the SwiftUI environment.
     ///
-    /// Call **once at the root** of your view hierarchy (inside `ReadoraApp.body`):
+    /// Call **once at the root** of your view hierarchy (inside `FathomApp.body`):
     /// ```swift
     /// RootView(...)
     ///     .themed(with: themeManager)

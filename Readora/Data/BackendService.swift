@@ -2,7 +2,7 @@ import Foundation
 
 enum BackendError: Error {
     case invalidURL
-    case missingAPIKey
+    case unauthenticated
     case networkError(Error)
     case badResponse(Int)
     case apiError(String)
@@ -36,9 +36,15 @@ struct BookPollResponse: Decodable, Sendable {
     let created_at: String
 }
 
+struct ConversationMessage: Codable, Sendable {
+    let role: String
+    let content: String
+}
+
 struct AIQueryRequest: Encodable, Sendable {
     let absolute_index: Int
     let query: String
+    let messages: [ConversationMessage]
 }
 
 struct AIQueryResponse: Decodable, Sendable {
@@ -56,17 +62,23 @@ actor BackendService {
         URL(string: "http://192.168.29.149:8080")!
     }
 
-    private var apiKey: String {
-        "a4f650d7c48b738db606ac02e8643ecbbcfec0c8103bcfd527daafa7fa758342"
+    // Fetches a fresh (auto-refreshed) JWT from the active Supabase session.
+    // Throws BackendError.unauthenticated if no session exists.
+    private func accessToken() async throws -> String {
+        do {
+            return try await supabase.session.accessToken
+        } catch {
+            throw BackendError.unauthenticated
+        }
     }
 
-    private func makeRequest(path: String, method: String, body: Data? = nil) throws -> URLRequest {
+    private func makeRequest(path: String, method: String, body: Data? = nil) async throws -> URLRequest {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw BackendError.invalidURL
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(try await accessToken())", forHTTPHeaderField: "Authorization")
         if let body = body {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -94,7 +106,7 @@ actor BackendService {
 
     func getUploadURL(filename: String) async throws -> UploadURLResponse {
         let body = try JSONEncoder().encode(["filename": filename])
-        let request = try makeRequest(path: "/books/upload-url", method: "POST", body: body)
+        let request = try await makeRequest(path: "/books/upload-url", method: "POST", body: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         return try handleResponse(data, response)
@@ -124,7 +136,7 @@ actor BackendService {
         let reqBody = InitBookRequest(
             s3_key: s3Key, title: title, author: author, language: language ?? "en", content_hash: contentHash)
         let body = try JSONEncoder().encode(reqBody)
-        let request = try makeRequest(path: "/books", method: "POST", body: body)
+        let request = try await makeRequest(path: "/books", method: "POST", body: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let result: InitBookResponse = try handleResponse(data, response)
@@ -132,23 +144,22 @@ actor BackendService {
     }
 
     func startIngestion(bookID: UUID) async throws {
-        let request = try makeRequest(
+        let request = try await makeRequest(
             path: "/books/\(bookID.uuidString)/start-ingestion", method: "POST")
         let (data, response) = try await URLSession.shared.data(for: request)
-        // Just expect a 2xx response, no specific body parsing needed for completion
         let _: [String: String] = try handleResponse(data, response)
     }
 
     func pollProcessingStatus(bookID: UUID) async throws -> BookPollResponse {
-        let request = try makeRequest(path: "/books/\(bookID.uuidString)", method: "GET")
+        let request = try await makeRequest(path: "/books/\(bookID.uuidString)", method: "GET")
         let (data, response) = try await URLSession.shared.data(for: request)
         return try handleResponse(data, response)
     }
 
-    func queryBook(bookID: UUID, absoluteIndex: Int, query: String) async throws -> String {
-        let reqBody = AIQueryRequest(absolute_index: absoluteIndex, query: query)
+    func queryBook(bookID: UUID, absoluteIndex: Int, query: String, messages: [ConversationMessage] = []) async throws -> String {
+        let reqBody = AIQueryRequest(absolute_index: absoluteIndex, query: query, messages: messages)
         let body = try JSONEncoder().encode(reqBody)
-        let request = try makeRequest(
+        let request = try await makeRequest(
             path: "/books/\(bookID.uuidString)/query", method: "POST", body: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)

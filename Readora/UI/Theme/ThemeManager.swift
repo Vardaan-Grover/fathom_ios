@@ -36,7 +36,7 @@ final class ThemeManager: ObservableObject {
 
     // MARK: - Persistence
 
-    private static let userDefaultsKey = "readora.themeManager.colorSchemeOverride"
+    private static let userDefaultsKey = "fathom.themeManager.colorSchemeOverride"
 
     private func persistPreference() {
         switch colorSchemeOverride {

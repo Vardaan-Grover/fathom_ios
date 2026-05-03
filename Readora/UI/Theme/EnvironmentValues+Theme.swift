@@ -9,7 +9,7 @@ private struct AppThemeKey: EnvironmentKey {
 // MARK: - EnvironmentValues extension
 
 extension EnvironmentValues {
-    /// The active Readora design-token set.
+    /// The active Fathom design-token set.
     ///
     /// Declare in any view:
     /// ```swift

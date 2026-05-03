@@ -127,7 +127,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 935ACF472F597EE8004C6F3F /* Build configuration list for PBXProject "Readora" */;
+			buildConfigurationList = 935ACF472F597EE8004C6F3F /* Build configuration list for PBXProject "Fathom" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -384,7 +384,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		935ACF472F597EE8004C6F3F /* Build configuration list for PBXProject "Readora" */ = {
+		935ACF472F597EE8004C6F3F /* Build configuration list for PBXProject "Fathom" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				935ACF552F597EE9004C6F3F /* Debug */,

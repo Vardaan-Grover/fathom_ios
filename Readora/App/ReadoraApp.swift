@@ -1,7 +1,8 @@
 import SwiftUI
 
 @main
-struct ReadoraApp: App {
+struct FathomApp: App {
+    @StateObject private var authService = AuthService()
     @StateObject private var homeViewModel: HomeViewModel
     @StateObject private var libraryViewModel: LibraryViewModel
     @StateObject private var themeManager = ThemeManager()
@@ -11,7 +12,10 @@ struct ReadoraApp: App {
     init() {
         let container = AppContainer.live()
         bookRepository = container.bookRepo
-        _homeViewModel = StateObject(wrappedValue: HomeViewModel(bookRepository: container.bookRepo, categoryRepository: container.categoryRepo))
+        _homeViewModel = StateObject(wrappedValue: HomeViewModel(
+            bookRepository: container.bookRepo,
+            categoryRepository: container.categoryRepo
+        ))
         _libraryViewModel = StateObject(wrappedValue: LibraryViewModel(
             bookRepo: container.bookRepo,
             readerService: container.readerService,
@@ -23,13 +27,18 @@ struct ReadoraApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(
+            AuthFlowView(
                 homeViewModel: homeViewModel,
                 libraryViewModel: libraryViewModel,
                 bookRepository: bookRepository
             )
+            .environmentObject(authService)
+            .task { await authService.startListening() }
             .task { await homeViewModel.load() }
-            .themed(with: themeManager)  // ← Injects \.appTheme + preferredColorScheme
+            .onOpenURL { url in
+                Task { try? await authService.handleDeepLink(url) }
+            }
+            .themed(with: themeManager)
         }
     }
 }

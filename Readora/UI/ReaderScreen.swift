@@ -137,6 +137,7 @@ struct ReaderScreen: View {
                 }
             }
         }
+        .statusBarHidden(!isShowingBars)
         .sheet(isPresented: $isShowingSettings) {
             ReaderSettingsView(settings: $settings)
                 .onChange(of: settings) { _, newSettings in

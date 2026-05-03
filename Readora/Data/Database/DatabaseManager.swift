@@ -21,7 +21,7 @@ final class DatabaseManager {
             create: true
         )
 
-        let dbURL = appSupport.appendingPathComponent("readora.sqlite")
+        let dbURL = appSupport.appendingPathComponent("fathom.sqlite")
         AppLogger.log(tag: "Database", "SQLite located at: \(dbURL.path)")
 
         var config = Configuration()

@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - AppTheme
 
-/// The single source of truth for all design tokens in Readora.
+/// The single source of truth for all design tokens in Fathom.
 ///
 /// Usage in any SwiftUI view:
 /// ```swift
@@ -22,7 +22,7 @@ struct AppTheme {
 
     // MARK: Default
 
-    /// The canonical Readora theme. Extend this if you need palettes (e.g. high-contrast).
+    /// The canonical Fathom theme. Extend this if you need palettes (e.g. high-contrast).
     static let `default` = AppTheme(
         colors: .default,
         typography: .default,
@@ -41,11 +41,11 @@ extension AppTheme {
         // ── Backgrounds ──────────────────────────────────────────────────────
 
         /// Primary canvas: warm parchment in light, warm near-black in dark.
-        /// Backed by the `ReadoraBackground` Asset Catalog entry.
+        /// Backed by the `FathomBackground` Asset Catalog entry.
         let background: Color
 
         /// Elevated surface (cards, shelves, sheets).
-        /// Backed by the `ReadoraSurface` Asset Catalog entry.
+        /// Backed by the `FathomSurface` Asset Catalog entry.
         let surface: Color
 
         // ── Content ───────────────────────────────────────────────────────────
@@ -72,8 +72,8 @@ extension AppTheme {
         // MARK: Default
 
         static let `default` = Colors(
-            background:  Color("ReadoraBackground"),
-            surface:     Color("ReadoraSurface"),
+            background:  Color("FathomBackground"),
+            surface:     Color("FathomSurface"),
             primary:     Color(.label),
             secondary:   Color(.secondaryLabel),
             separator:   Color(.separator),
@@ -87,7 +87,7 @@ extension AppTheme {
 
 extension AppTheme {
 
-    /// A curated type scale for Readora. Uses Dynamic Type compatible `Font` values
+    /// A curated type scale for Fathom. Uses Dynamic Type compatible `Font` values
     /// so the system respects the user's Accessibility text-size preferences.
     struct Typography {
 

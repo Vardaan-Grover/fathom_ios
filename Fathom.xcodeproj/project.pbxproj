@@ -12,15 +12,29 @@
 		935ACF942F5A0A0D004C6F3F /* ReadiumStreamer in Frameworks */ = {isa = PBXBuildFile; productRef = 935ACF932F5A0A0D004C6F3F /* ReadiumStreamer */; };
 		935ACFCA2F5A1954004C6F3F /* ReadiumAdapterGCDWebServer in Frameworks */ = {isa = PBXBuildFile; productRef = 935ACFC92F5A1954004C6F3F /* ReadiumAdapterGCDWebServer */; };
 		938A27162F646CB4007716BC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 938A27152F646CB4007716BC /* GRDB */; };
+		93CE40E22FA7590A00EAEFAB /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = 93CE40E12FA7590A00EAEFAB /* Auth */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		935ACF4C2F597EE8004C6F3F /* Readora.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Readora.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		935ACF4C2F597EE8004C6F3F /* Fathom.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fathom.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		93CE40E42FA7594900EAEFAB /* Exceptions for "Readora" folder in "Fathom" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 935ACF4B2F597EE8004C6F3F /* Fathom */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		935ACF4E2F597EE8004C6F3F /* Readora */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				93CE40E42FA7594900EAEFAB /* Exceptions for "Readora" folder in "Fathom" target */,
+			);
 			path = Readora;
 			sourceTree = "<group>";
 		};
@@ -33,6 +47,7 @@
 			files = (
 				935ACF902F5A0A0D004C6F3F /* ReadiumNavigator in Frameworks */,
 				938A27162F646CB4007716BC /* GRDB in Frameworks */,
+				93CE40E22FA7590A00EAEFAB /* Auth in Frameworks */,
 				935ACFCA2F5A1954004C6F3F /* ReadiumAdapterGCDWebServer in Frameworks */,
 				935ACF942F5A0A0D004C6F3F /* ReadiumStreamer in Frameworks */,
 				935ACF922F5A0A0D004C6F3F /* ReadiumShared in Frameworks */,
@@ -54,7 +69,7 @@
 		935ACF4D2F597EE8004C6F3F /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				935ACF4C2F597EE8004C6F3F /* Readora.app */,
+				935ACF4C2F597EE8004C6F3F /* Fathom.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -69,9 +84,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		935ACF4B2F597EE8004C6F3F /* Readora */ = {
+		935ACF4B2F597EE8004C6F3F /* Fathom */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 935ACF572F597EE9004C6F3F /* Build configuration list for PBXNativeTarget "Readora" */;
+			buildConfigurationList = 935ACF572F597EE9004C6F3F /* Build configuration list for PBXNativeTarget "Fathom" */;
 			buildPhases = (
 				935ACF482F597EE8004C6F3F /* Sources */,
 				935ACF492F597EE8004C6F3F /* Frameworks */,
@@ -84,16 +99,17 @@
 			fileSystemSynchronizedGroups = (
 				935ACF4E2F597EE8004C6F3F /* Readora */,
 			);
-			name = Readora;
+			name = Fathom;
 			packageProductDependencies = (
 				935ACF8F2F5A0A0D004C6F3F /* ReadiumNavigator */,
 				935ACF912F5A0A0D004C6F3F /* ReadiumShared */,
 				935ACF932F5A0A0D004C6F3F /* ReadiumStreamer */,
 				935ACFC92F5A1954004C6F3F /* ReadiumAdapterGCDWebServer */,
 				938A27152F646CB4007716BC /* GRDB */,
+				93CE40E12FA7590A00EAEFAB /* Auth */,
 			);
 			productName = Readora;
-			productReference = 935ACF4C2F597EE8004C6F3F /* Readora.app */;
+			productReference = 935ACF4C2F597EE8004C6F3F /* Fathom.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -123,13 +139,14 @@
 			packageReferences = (
 				935ACF8E2F5A0A0D004C6F3F /* XCRemoteSwiftPackageReference "swift-toolkit" */,
 				938A27142F646CB4007716BC /* XCRemoteSwiftPackageReference "GRDB" */,
+				93CE40E02FA7590A00EAEFAB /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 935ACF4D2F597EE8004C6F3F /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				935ACF4B2F597EE8004C6F3F /* Readora */,
+				935ACF4B2F597EE8004C6F3F /* Fathom */,
 			);
 		};
 /* End PBXProject section */
@@ -284,6 +301,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Readora/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -300,7 +318,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
 				MARKETING_VERSION = 1.0;
 				"OTHER_LDFLAGS[arch=*]" = "";
-				PRODUCT_BUNDLE_IDENTIFIER = com.Readora.Readora;
+				PRODUCT_BUNDLE_IDENTIFIER = com.Fathom.Fathom;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -330,6 +348,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Readora/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -345,7 +364,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.Readora.Readora;
+				PRODUCT_BUNDLE_IDENTIFIER = com.Fathom.Fathom;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -374,7 +393,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		935ACF572F597EE9004C6F3F /* Build configuration list for PBXNativeTarget "Readora" */ = {
+		935ACF572F597EE9004C6F3F /* Build configuration list for PBXNativeTarget "Fathom" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				935ACF582F597EE9004C6F3F /* Debug */,
@@ -400,6 +419,14 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 7.0.0;
+			};
+		};
+		93CE40E02FA7590A00EAEFAB /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -429,6 +456,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 938A27142F646CB4007716BC /* XCRemoteSwiftPackageReference "GRDB" */;
 			productName = GRDB;
+		};
+		93CE40E12FA7590A00EAEFAB /* Auth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 93CE40E02FA7590A00EAEFAB /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Auth;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

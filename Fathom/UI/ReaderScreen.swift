@@ -11,14 +11,14 @@ struct ReaderScreen: View {
     var ingestionStatus: PreprocessingStatus = .pending
     var onEnableAI: () -> Void = {}
 
-    @State private var commands = NavigatorCommands()
+    @StateObject private var commands = NavigatorCommands()
 
     @State private var isShowingBars = true
     @State private var isShowingSettings = false
     @State private var isShowingAIChats = false
     @State private var isShowingAIProcessingAlert = false
     @State private var isShowingTOC = false
-    @State private var pendingTOCLocator: ReadiumShared.Locator? = nil
+    @State private var pendingTOCLocatorJSON: String? = nil
     @State private var isActionButtonPresented = false
     @State private var settings: ReaderSettings = ReaderSettingsStore.shared.load()
     @State private var currentPage: Int = 0
@@ -165,9 +165,9 @@ struct ReaderScreen: View {
                     }
                 }
                 .sheet(isPresented: $isShowingTOC, onDismiss: {
-                    guard let locator = pendingTOCLocator else { return }
-                    pendingTOCLocator = nil
-                    Task { @MainActor in await commands.goToLocator?(locator) }
+                    guard let json = pendingTOCLocatorJSON else { return }
+                    pendingTOCLocatorJSON = nil
+                    Task { @MainActor in await commands.goToLocatorJSON?(json) }
                 }) {
                     TableOfContentsSheet(
                         bookID: bookID,
@@ -184,7 +184,7 @@ struct ReaderScreen: View {
                             if let roLink = publication.readingOrder.first(where: {
                                 $0.url().isEquivalentTo(hrefToMatch)
                             }), let mediaType = roLink.mediaType {
-                                pendingTOCLocator = Locator(
+                                let locator = Locator(
                                     href: roLink.url(),
                                     mediaType: mediaType,
                                     title: link.title ?? roLink.title,
@@ -193,6 +193,7 @@ struct ReaderScreen: View {
                                         progression: fragment == nil ? 0.0 : nil
                                     )
                                 )
+                                pendingTOCLocatorJSON = locator.jsonString
                             }
                         }
                     )

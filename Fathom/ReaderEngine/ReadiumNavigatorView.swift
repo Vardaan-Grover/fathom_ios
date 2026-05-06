@@ -1,18 +1,19 @@
 import SwiftUI
-
+import Combine
 #if os(iOS)
     import UIKit
     import ReadiumShared
     import ReadiumNavigator
     import ReadiumAdapterGCDWebServer
 
-    final class NavigatorCommands {
-        var goLeft: (() async -> Void)?
-        var goRight: (() async -> Void)?
-        var goToLocator: ((ReadiumShared.Locator) async -> Void)?
-        var onTap: ((CGPoint, CGSize) -> Void)?
-        var onExplain: ((String, String) -> Void)?
-        var onAddNote: ((String, String) -> Void)?
+    @MainActor
+    final class NavigatorCommands: ObservableObject {
+        var goLeft: (@MainActor () async -> Void)?
+        var goRight: (@MainActor () async -> Void)?
+        var goToLocatorJSON: (@MainActor (String) async -> Void)?
+        var onTap: (@MainActor (CGPoint, CGSize) -> Void)?
+        var onExplain: (@MainActor (String, String) -> Void)?
+        var onAddNote: (@MainActor (String, String) -> Void)?
     }
 
     final class ReaderContainerViewController: UIViewController,
@@ -390,14 +391,18 @@ import SwiftUI
             AppLogger.log(tag: "ReadiumNavigatorView", "Successfully initialized EPUBNavigatorViewController.")
             navigator.delegate = context.coordinator
 
-            commands?.goLeft = { [weak navigator] in
-                await navigator?.goLeft(options: NavigatorGoOptions.animated)
+            commands?.goLeft = { @MainActor [weak navigator] in
+                guard let navigator = navigator else { return }
+                await navigator.goLeft(options: NavigatorGoOptions.animated)
             }
-            commands?.goRight = { [weak navigator] in
-                await navigator?.goRight(options: NavigatorGoOptions.animated)
+            commands?.goRight = { @MainActor [weak navigator] in
+                guard let navigator = navigator else { return }
+                await navigator.goRight(options: NavigatorGoOptions.animated)
             }
-            commands?.goToLocator = { [weak navigator] locator in
-                await navigator?.go(to: locator)
+            commands?.goToLocatorJSON = { @MainActor [weak navigator] json in
+                guard let navigator = navigator else { return }
+                guard let locator = try? Locator(jsonString: json) else { return }
+                await navigator.go(to: locator)
             }
 
             let tap = UITapGestureRecognizer(

@@ -9,6 +9,8 @@ final class BookDetailsViewModel: ObservableObject {
     @Published var totalProgression: Double? = nil
     @Published var otherBooksByAuthor: [HomeBook] = []
     @Published var isLoading = true
+    @Published var isEnablingAI = false
+    @Published var enableAIError: String? = nil
 
     private let bookID: UUID
     private let bookRepository: BookRepository
@@ -52,5 +54,83 @@ final class BookDetailsViewModel: ObservableObject {
     var progressText: String {
         guard let p = totalProgression else { return "—" }
         return "\(Int(p * 100))%"
+    }
+
+    func enableAI() async {
+        guard var current = book else { return }
+        guard let contentHash = current.contentHash else {
+            enableAIError = "Book content hash missing. Please re-import the book."
+            return
+        }
+        guard let localURL = current.localURL else {
+            enableAIError = "Local file not found."
+            return
+        }
+
+        isEnablingAI = true
+        enableAIError = nil
+
+        do {
+            let backendService = BackendService.shared
+
+            // Flow C: same upload/register flow as Flow B, from book settings.
+            let uploadInfo = try await backendService.getUploadURL(filename: localURL.lastPathComponent)
+            let response = try await backendService.initBook(
+                s3Key: uploadInfo.s3_key,
+                title: current.title,
+                author: current.author,
+                language: current.language,
+                contentHash: contentHash
+            )
+
+            current.aiEnabled = true
+            current.backendBookID = response.book_id
+
+            if response.duplicate {
+                switch response.status {
+                case "ready":
+                    current.preprocessingStatus = .completed
+                case "failed":
+                    try await backendService.startIngestion(bookID: response.book_id)
+                    current.preprocessingStatus = .inProgress
+                default:
+                    current.preprocessingStatus = .inProgress
+                }
+            } else {
+                try await backendService.uploadEPUB(uploadURL: uploadInfo.upload_url, fileURL: localURL)
+                try await backendService.startIngestion(bookID: response.book_id)
+                current.preprocessingStatus = .inProgress
+            }
+
+            await bookRepository.updateBook(current)
+            book = current
+
+            if current.preprocessingStatus == .inProgress {
+                while true {
+                    try await Task.sleep(nanoseconds: 3_000_000_000)
+                    let pollResponse = try await backendService.pollProcessingStatus(bookID: response.book_id)
+                    switch pollResponse.status {
+                    case "ready":
+                        current.preprocessingStatus = .completed
+                        await bookRepository.updateBook(current)
+                        book = current
+                        isEnablingAI = false
+                        return
+                    case "failed":
+                        current.preprocessingStatus = .failed
+                        await bookRepository.updateBook(current)
+                        book = current
+                        isEnablingAI = false
+                        return
+                    default:
+                        break
+                    }
+                }
+            }
+        } catch {
+            AppLogger.logError(tag: "BookDetailsViewModel", error)
+            enableAIError = "Failed to enable AI. Please try again."
+        }
+        isEnablingAI = false
     }
 }

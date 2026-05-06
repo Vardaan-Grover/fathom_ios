@@ -27,6 +27,8 @@ struct RootView: View {
     @State private var activeTab: CustomTab = .library
     @State private var showImporter = false
     @State private var showShelfSheet = false
+    
+    @Environment(\.showToast) private var showToast
 
     var body: some View {
         TabView(selection: $activeTab) {
@@ -50,8 +52,16 @@ struct RootView: View {
         ) { result in
             guard let url = try? result.get().first else { return }
             Task {
-                await libraryViewModel.importBook(from: url)
-                await homeViewModel.load()
+                do {
+                    try await libraryViewModel.importBook(from: url)
+                    await homeViewModel.load()
+                } catch {
+                    if let localizedError = error as? LocalizedError, let message = localizedError.errorDescription {
+                        showToast(Toast(title: message, duration: 3, placementOffset: -72, symbol: "exclamationmark.triangle"))
+                    } else {
+                        showToast(Toast(title: "Failed to import book", duration: 3, placementOffset: -72, symbol: "exclamationmark.triangle"))
+                    }
+                }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {

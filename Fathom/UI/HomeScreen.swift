@@ -175,7 +175,21 @@ struct HomeScreen: View {
         }
         .fullScreenCover(item: $readerBook) { book in
             if let url = book.localURL {
-                ReaderScreen(bookFileURL: url, bookTitle: book.title, bookID: book.id)
+                ReaderScreen(
+                    bookFileURL: url,
+                    bookTitle: book.title,
+                    bookID: book.id,
+                    backendBookID: book.backendBookID,
+                    aiEnabled: book.aiEnabled,
+                    ingestionStatus: book.preprocessingStatus,
+                    onEnableAI: {
+                        readerBook = nil
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 350_000_000)
+                            selectedBook = SelectedBook(id: book.id)
+                        }
+                    }
+                )
             }
         }
     }

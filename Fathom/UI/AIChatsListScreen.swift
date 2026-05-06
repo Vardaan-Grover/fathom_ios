@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AIChatsListScreen: View {
     let bookID: UUID
+    var backendBookID: UUID? = nil
     let bookTitle: String
 
     @State private var threads: [AIThread] = []
@@ -21,17 +22,20 @@ struct AIChatsListScreen: View {
         }
         .onAppear { reload() }
         .fullScreenCover(item: $selectedThread) { thread in
-            AICompanionScreen(
-                bookID: bookID,
-                selectedText: thread.passageText,
-                bookTitle: bookTitle,
-                threadID: thread.id,
-                onDismiss: {
-                    selectedThread = nil
-                    reload()
-                }
-            )
-            .environment(\.appTheme, theme)
+            if let backendID = backendBookID {
+                AICompanionScreen(
+                    bookID: bookID,
+                    backendBookID: backendID,
+                    selectedText: thread.passageText,
+                    bookTitle: bookTitle,
+                    threadID: thread.id,
+                    onDismiss: {
+                        selectedThread = nil
+                        reload()
+                    }
+                )
+                .environment(\.appTheme, theme)
+            }
         }
     }
 

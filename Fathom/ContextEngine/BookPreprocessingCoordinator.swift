@@ -53,8 +53,12 @@ actor BookPreprocessingCoordinator {
             processingBook.aiAnalysisProgress = 0.50
             try await saveBookStatus(processingBook)
 
-            AppLogger.log(tag: "Preprocessing", "⏳ Polling backend for ingestion status...")
-            try await waitForBackendReady(bookID: book.id)
+            if let backendID = book.backendBookID {
+                AppLogger.log(tag: "Preprocessing", "⏳ Polling backend for AI ingestion status...")
+                try await waitForBackendReady(bookID: backendID)
+            } else {
+                AppLogger.log(tag: "Preprocessing", "ℹ️ AI disabled — skipping backend polling")
+            }
 
             processingBook.aiAnalysisProgress = 1.0
             processingBook.preprocessingStatus = .completed

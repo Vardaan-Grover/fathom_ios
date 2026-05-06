@@ -38,6 +38,7 @@ final actor InMemoryCategoryRepository: CategoryRepository {
 protocol BookRepository {
     func listBooks() async -> [Book]
     func addBook(_ book: Book) async
+    func updateBook(_ book: Book) async
     func deleteBook(_ book: Book) async
 }
 
@@ -51,7 +52,12 @@ final actor InMemoryBookRepository: BookRepository {
     }
 
     func addBook(_ book: Book) async { books.append(book) }
-    
+
+    func updateBook(_ book: Book) async {
+        guard let idx = books.firstIndex(where: { $0.id == book.id }) else { return }
+        books[idx] = book
+    }
+
     func deleteBook(_ book: Book) async {
         books.removeAll { $0.id == book.id }
     }
@@ -84,7 +90,13 @@ final actor JSONBookRepository: BookRepository {
         books.append(book)
         save()
     }
-    
+
+    func updateBook(_ book: Book) async {
+        guard let idx = books.firstIndex(where: { $0.id == book.id }) else { return }
+        books[idx] = book
+        save()
+    }
+
     func deleteBook(_ book: Book) async {
         books.removeAll { $0.id == book.id }
         save()

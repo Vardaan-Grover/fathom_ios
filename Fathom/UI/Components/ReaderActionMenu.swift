@@ -3,8 +3,12 @@ import SwiftUI
 struct ReaderActionMenu: View {
     @Binding var isPresented: Bool
     @Binding var settings: ReaderSettings
+    var aiEnabled: Bool = true
+    var ingestionReady: Bool = true
+    var hasBackendBookID: Bool = true
     var onOpenSettings: () -> Void
     var onOpenAIChats: () -> Void = {}
+    var onOpenTOC: () -> Void = {}
 
     private var fg: Color { settings.colorTheme.foregroundColor }
     private var bg: Color { settings.colorTheme.backgroundColor }
@@ -29,6 +33,18 @@ struct ReaderActionMenu: View {
         GlassEffectContainer(spacing: 10) {
             VStack(spacing: 10) {
                 CustomButton(
+                    title: "Table of Contents",
+                    symbol: "list.bullet",
+                    isPresented: $isPresented,
+                    foregroundColor: fg,
+                    backgroundColor: bg
+                ) {
+                    isPresented = false
+                    onOpenTOC()
+                }
+                .frame(width: 250, height: 45)
+
+                CustomButton(
                     title: "Search",
                     symbol: "magnifyingglass",
                     isPresented: $isPresented,
@@ -38,6 +54,7 @@ struct ReaderActionMenu: View {
                     isPresented = false
                 }
                 .frame(width: 250, height: 45)
+
 
                 CustomButton(
                     title: "Themes & Settings",
@@ -66,13 +83,16 @@ struct ReaderActionMenu: View {
                     ) {
                         settings.fontSize = min(2.5, settings.fontSize + 0.1)
                     }
-                    CustomSectionButton(
-                        symbol: "sparkles",
-                        isPresented: $isPresented,
-                        foregroundColor: fg, backgroundColor: bg
-                    ) {
-                        isPresented = false
-                        onOpenAIChats()
+                    if hasBackendBookID {
+                        CustomSectionButton(
+                            symbol: "sparkles",
+                            isPresented: $isPresented,
+                            foregroundColor: fg, backgroundColor: bg
+                        ) {
+                            isPresented = false
+                            onOpenAIChats()
+                        }
+                        .opacity(aiEnabled ? 1.0 : 0.35)
                     }
                     CustomSectionButton(
                         symbol: "bookmark",

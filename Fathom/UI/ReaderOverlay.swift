@@ -30,11 +30,11 @@ struct ReaderOverlay: View {
     private var topBar: some View {
         ZStack {
             Text(bookTitle)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(textColor)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(textColor.opacity(isActive ? 0.9 : 0.4))
                 .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.horizontal, isScrolling ? 16 : 0)
+                .truncationMode(.tail)
+                .padding(.horizontal, isScrolling ? 14 : 0)
                 .padding(.vertical, isScrolling ? 6 : 0)
                 .background(
                     Group {
@@ -44,6 +44,7 @@ struct ReaderOverlay: View {
                         }
                     }
                 )
+                .padding(.horizontal, 65)
                 .frame(maxWidth: .infinity)
                 .opacity(isScrolling && !isActive ? 0 : 1)
 
@@ -51,25 +52,26 @@ struct ReaderOverlay: View {
                 HStack {
                     Button(action: onDismiss) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 15, weight: .medium))
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(textColor)
-                            .frame(width: 44, height: 44)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }
+                    .background(
+                        Group {
+                            if isScrolling {
+                                Circle()
+                                    .glassEffect(.regular)
+                            }
+                        }
+                    )
                     Spacer()
                 }
-                .background(
-                    Group {
-                        if isScrolling {
-                            Capsule()
-                                .glassEffect(.regular)
-                        }
-                    }
-                )
                 .opacity(isScrolling && !isActive ? 0 : 1)
-                .padding(.leading, 32)
+                .padding(.leading, 24)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
     }
 
     private var bottomBar: some View {
@@ -77,7 +79,7 @@ struct ReaderOverlay: View {
             if !pageLabel.isEmpty {
                 Text(pageLabel)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(textColor)
+                    .foregroundStyle(textColor.opacity(isActive ? 0.9 : 0.4))
                     .padding(.horizontal, isScrolling ? 14 : 0)
                     .padding(.vertical, isScrolling ? 6 : 10)
                     .background(

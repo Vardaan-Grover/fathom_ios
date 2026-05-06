@@ -19,6 +19,9 @@ struct Book: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
     var importDate: Date = Date()
     var preprocessingStatus: PreprocessingStatus = .pending
     var aiAnalysisProgress: Float = 0.0
+    var aiEnabled: Bool = false
+    var backendBookID: UUID? = nil
+    var contentHash: String? = nil
 
     var estimatedPageCount: Int? = nil
     var estimatedReadingTimeMinutes: Int? = nil

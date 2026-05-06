@@ -1,4 +1,5 @@
 import Foundation
+import Auth
 
 enum BackendError: Error {
     case invalidURL
@@ -59,7 +60,7 @@ actor BackendService {
     static let shared = BackendService()
 
     private var baseURL: URL {
-        URL(string: "http://192.168.29.149:8080")!
+        URL(string: "http://192.168.29.227:8080")!
     }
 
     // Fetches a fresh (auto-refreshed) JWT from the active Supabase session.
@@ -130,24 +131,26 @@ actor BackendService {
         }
     }
 
-    func initBook(s3Key: String, title: String, author: String?, language: String?, contentHash: String) async throws
-        -> InitBookResponse
-    {
+    func initBook(s3Key: String, title: String, author: String?, language: String?, contentHash: String) async throws -> InitBookResponse {
         let reqBody = InitBookRequest(
-            s3_key: s3Key, title: title, author: author, language: language ?? "en", content_hash: contentHash)
+            s3_key: s3Key, title: title, author: author, language: language ?? "en",
+            content_hash: contentHash)
         let body = try JSONEncoder().encode(reqBody)
         let request = try await makeRequest(path: "/books", method: "POST", body: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        let result: InitBookResponse = try handleResponse(data, response)
-        return result
+        return try handleResponse(data, response)
     }
 
     func startIngestion(bookID: UUID) async throws {
         let request = try await makeRequest(
             path: "/books/\(bookID.uuidString)/start-ingestion", method: "POST")
         let (data, response) = try await URLSession.shared.data(for: request)
-        let _: [String: String] = try handleResponse(data, response)
+        AppLogger.logNetworkResponse(response, data: data)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw BackendError.badResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
     }
 
     func pollProcessingStatus(bookID: UUID) async throws -> BookPollResponse {

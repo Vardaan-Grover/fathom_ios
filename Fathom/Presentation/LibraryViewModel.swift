@@ -60,12 +60,37 @@ final class LibraryViewModel: ObservableObject {
         )
     }
 
-    func importBook(from url: URL) async {
+    enum ImportError: Error, LocalizedError {
+        case duplicateBook
+        
+        var errorDescription: String? {
+            switch self {
+            case .duplicateBook:
+                return "This book is already in your library."
+            }
+        }
+    }
+
+    func importBook(from url: URL) async throws {
         do {
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
 
             isLoading = true
+            
+            // Check for duplicate book early by hashing the incoming file directly
+            let hashString = try await Task.detached {
+                let fileData = try Data(contentsOf: url)
+                let hashDigest = SHA256.hash(data: fileData)
+                return hashDigest.compactMap { String(format: "%02x", $0) }.joined()
+            }.value
+            // Fetch all books dynamically to ensure we aren't checking a stale/unloaded in-memory array
+            let allBooks = await bookRepo.listBooks()
+            if allBooks.contains(where: { $0.contentHash == hashString }) {
+                isLoading = false
+                throw ImportError.duplicateBook
+            }
+
             let localURL = try BookFileStore.copyIntoAppLibrary(from: url)
             pendingLocalURL = localURL
 
@@ -75,8 +100,8 @@ final class LibraryViewModel: ObservableObject {
             isLoading = false
 
             // Show the customization sheet and wait for the user to confirm or cancel.
-            // Original EPUB metadata is preserved on the struct so the backend always
-            // receives what the file actually contains.
+            // Original EPUB metadata is preserved so the backend always receives what
+            // the file actually contains.
             let placeholderID = UUID()
             let customization = BookCustomization(
                 id: placeholderID,
@@ -98,6 +123,9 @@ final class LibraryViewModel: ObservableObject {
             pendingCustomization = nil
             pendingLocalURL = nil
 
+            let aiEnabled = finalCustomization.enableAI
+            AppLogger.log(tag: "LibraryViewModel", "   AI enabled: \(aiEnabled)")
+
             isLoading = true
             defer { isLoading = false }
 
@@ -109,43 +137,8 @@ final class LibraryViewModel: ObservableObject {
                 AppLogger.log(tag: "LibraryViewModel", "   Cover saved: \(coverFilename!)")
             }
 
-            let backendService = BackendService.shared
-
-            AppLogger.log(tag: "LibraryViewModel", "3. Requesting upload URL...")
-            let uploadInfo = try await backendService.getUploadURL(
-                filename: localURL.lastPathComponent)
-
-            AppLogger.log(tag: "LibraryViewModel", "4. Computing SHA-256 hash of EPUB bytes...")
-            let fileData = try Data(contentsOf: localURL)
-            let hashDigest = SHA256.hash(data: fileData)
-            let hashString = hashDigest.compactMap { String(format: "%02x", $0) }.joined()
-
-            AppLogger.log(tag: "LibraryViewModel", "5. Initializing book record with hash: \(hashString)")
-            // Backend always receives the original EPUB metadata — user edits are local-only.
-            let backendBookResponse = try await backendService.initBook(
-                s3Key: uploadInfo.s3_key,
-                title: finalCustomization.originalTitle,
-                author: finalCustomization.originalAuthor,
-                language: finalCustomization.originalLanguage,
-                contentHash: hashString
-            )
-
-            if !backendBookResponse.duplicate {
-                AppLogger.log(tag: "LibraryViewModel", "6. New book detected. Uploading EPUB to R2...")
-                try await backendService.uploadEPUB(
-                    uploadURL: uploadInfo.upload_url, fileURL: localURL)
-
-                AppLogger.log(tag: "LibraryViewModel", "7. Triggering ingestion worker on Backend...")
-                try await backendService.startIngestion(bookID: backendBookResponse.book_id)
-            } else {
-                AppLogger.log(
-                    tag: "LibraryViewModel",
-                    "6 & 7. Duplicate detected. Skipping R2 upload and ingestion.")
-            }
-
-            // Local record uses the user's customized title/author/description/cover.
-            let book = Book(
-                id: backendBookResponse.book_id,
+            var book = Book(
+                id: UUID(),
                 title: finalCustomization.title,
                 author: finalCustomization.author.isEmpty ? nil : finalCustomization.author,
                 format: .epub,
@@ -155,6 +148,59 @@ final class LibraryViewModel: ObservableObject {
                 publisher: meta.publisher,
                 coverFilename: coverFilename
             )
+            book.contentHash = hashString
+
+            if !aiEnabled {
+                // Flow A: Just Read — store locally, no backend calls.
+                AppLogger.log(tag: "LibraryViewModel", "Flow A: Storing book locally, no backend.")
+                book.aiEnabled = false
+                book.backendBookID = nil
+                book.preprocessingStatus = .pending
+            } else {
+                // Flow B: Enable AI — upload to R2, register with backend, branch on response.
+                let backendService = BackendService.shared
+
+                AppLogger.log(tag: "LibraryViewModel", "Flow B: Requesting upload URL...")
+                let uploadInfo = try await backendService.getUploadURL(filename: localURL.lastPathComponent)
+
+                AppLogger.log(tag: "LibraryViewModel", "Initializing book record on backend...")
+                // Backend always receives original EPUB metadata — user edits are local-only.
+                let backendBookResponse = try await backendService.initBook(
+                    s3Key: uploadInfo.s3_key,
+                    title: finalCustomization.originalTitle,
+                    author: finalCustomization.originalAuthor,
+                    language: finalCustomization.originalLanguage,
+                    contentHash: hashString
+                )
+
+                book.aiEnabled = true
+                book.backendBookID = backendBookResponse.book_id
+
+                if backendBookResponse.duplicate {
+                    switch backendBookResponse.status {
+                    case "ready":
+                        // Branch 1: duplicate + ready → AI immediately available.
+                        AppLogger.log(tag: "LibraryViewModel", "Branch 1: duplicate + ready. Skipping upload and ingestion.")
+                        book.preprocessingStatus = .completed
+                    case "failed":
+                        // Branch 4: duplicate + failed → re-trigger ingestion, file already in R2.
+                        AppLogger.log(tag: "LibraryViewModel", "Branch 4: duplicate + failed. Re-triggering ingestion.")
+                        try await backendService.startIngestion(bookID: backendBookResponse.book_id)
+                        book.preprocessingStatus = .inProgress
+                    default:
+                        // Branch 2: duplicate + processing/pending → already enqueued, just poll.
+                        AppLogger.log(tag: "LibraryViewModel", "Branch 2: duplicate + \(backendBookResponse.status). Polling will begin.")
+                        book.preprocessingStatus = .inProgress
+                    }
+                } else {
+                    // Branch 3: new book → upload to R2, trigger ingestion.
+                    AppLogger.log(tag: "LibraryViewModel", "Branch 3: new book. Uploading EPUB to R2...")
+                    try await backendService.uploadEPUB(uploadURL: uploadInfo.upload_url, fileURL: localURL)
+                    AppLogger.log(tag: "LibraryViewModel", "Triggering ingestion...")
+                    try await backendService.startIngestion(bookID: backendBookResponse.book_id)
+                    book.preprocessingStatus = .inProgress
+                }
+            }
 
             AppLogger.log(tag: "LibraryViewModel", "Saving \(book.title) to local database.")
             await bookRepo.addBook(book)
@@ -170,6 +216,7 @@ final class LibraryViewModel: ObservableObject {
         } catch {
             isLoading = false
             AppLogger.logError(tag: "LibraryViewModel", error)
+            throw error
         }
     }
 

@@ -19,17 +19,20 @@ final class AICompanionViewModel: ObservableObject {
     @Published var isTyping = false
 
     private let bookID: UUID
+    private let queryBookID: UUID
     private let passageText: String
     private var threadID: UUID?
     private var conversationHistory: [ConversationMessage] = []
 
-    init(bookID: UUID, passageText: String, threadID: UUID? = nil) {
+    init(bookID: UUID, backendBookID: UUID, passageText: String, threadID: UUID? = nil) {
         self.bookID = bookID
+        self.queryBookID = backendBookID
         self.passageText = passageText
         self.threadID = threadID
 
         if let threadID,
-           let thread = AIThreadStore.shared.thread(id: threadID) {
+            let thread = AIThreadStore.shared.thread(id: threadID)
+        {
             self.messages = thread.messages.map { msg in
                 AICompanionMessage(isUser: msg.role == .user, text: msg.content)
             }
@@ -74,7 +77,7 @@ final class AICompanionViewModel: ObservableObject {
                     for: bookID, selectedText: passageText) ?? 0
             do {
                 let answer = try await BackendService.shared.queryBook(
-                    bookID: bookID, absoluteIndex: absoluteIndex, query: trimmed,
+                    bookID: queryBookID, absoluteIndex: absoluteIndex, query: trimmed,
                     messages: historySnapshot)
                 conversationHistory.append(ConversationMessage(role: "user", content: trimmed))
                 conversationHistory.append(ConversationMessage(role: "assistant", content: answer))
@@ -84,7 +87,8 @@ final class AICompanionViewModel: ObservableObject {
                         AICompanionMessage(isUser: false, text: answer, isStreaming: true))
                 }
                 if let threadID {
-                    let aiMsg = AIMessage(id: UUID(), role: .assistant, content: answer, createdAt: Date())
+                    let aiMsg = AIMessage(
+                        id: UUID(), role: .assistant, content: answer, createdAt: Date())
                     AIThreadStore.shared.appendMessage(aiMsg, toThreadID: threadID)
                 }
             } catch {
@@ -114,6 +118,7 @@ struct AICompanionScreen: View {
 
     init(
         bookID: UUID,
+        backendBookID: UUID,
         selectedText: String,
         bookTitle: String,
         threadID: UUID? = nil,
@@ -125,7 +130,8 @@ struct AICompanionScreen: View {
         self.onDismiss = onDismiss
         self._viewModel = StateObject(
             wrappedValue: AICompanionViewModel(
-                bookID: bookID, passageText: selectedText, threadID: threadID))
+                bookID: bookID, backendBookID: backendBookID, passageText: selectedText,
+                threadID: threadID))
     }
 
     var body: some View {
@@ -517,7 +523,9 @@ private struct GradientInputBar: View {
                 .background(
                     Circle().fill(
                         LinearGradient(
-                            colors: [Color(hex: "FF6EB4"), Color(hex: "7C86F0"), Color(hex: "4052E3")],
+                            colors: [
+                                Color(hex: "FF6EB4"), Color(hex: "7C86F0"), Color(hex: "4052E3"),
+                            ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -533,6 +541,7 @@ private struct GradientInputBar: View {
 #Preview("Empty State") {
     AICompanionScreen(
         bookID: UUID(),
+        backendBookID: UUID(),
         selectedText:
             "It was the best of times, it was the worst of times, it was the age of wisdom, it was the age of foolishness, it was the epoch of belief.",
         bookTitle: "A Tale of Two Cities",

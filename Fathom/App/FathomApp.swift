@@ -27,18 +27,20 @@ struct FathomApp: App {
 
     var body: some Scene {
         WindowGroup {
-            AuthFlowView(
-                homeViewModel: homeViewModel,
-                libraryViewModel: libraryViewModel,
-                bookRepository: bookRepository
-            )
-            .environmentObject(authService)
-            .task { await authService.startListening() }
-            .task { await homeViewModel.load() }
-            .onOpenURL { url in
-                Task { try? await authService.handleDeepLink(url) }
+            ToastRootView {
+                AuthFlowView(
+                    homeViewModel: homeViewModel,
+                    libraryViewModel: libraryViewModel,
+                    bookRepository: bookRepository
+                )
+                .environmentObject(authService)
+                .task { await authService.startListening() }
+                .task { await homeViewModel.load() }
+                .onOpenURL { url in
+                    Task { try? await authService.handleDeepLink(url) }
+                }
+                .themed(with: themeManager)
             }
-            .themed(with: themeManager)
         }
     }
 }

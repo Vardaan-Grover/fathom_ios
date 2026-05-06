@@ -9,6 +9,7 @@ import SwiftUI
     final class NavigatorCommands {
         var goLeft: (() async -> Void)?
         var goRight: (() async -> Void)?
+        var goToLocator: ((ReadiumShared.Locator) async -> Void)?
         var onTap: ((CGPoint, CGSize) -> Void)?
         var onExplain: ((String, String) -> Void)?
         var onAddNote: ((String, String) -> Void)?
@@ -21,6 +22,7 @@ import SwiftUI
         var onExplain: ((String, String) -> Void)?
         var onAddNote: ((String, String) -> Void)?
         var bookID: UUID = UUID()
+        var aiEnabled: Bool = true
         private(set) var navigator: EPUBNavigatorViewController?
         private var editMenuInteraction: UIEditMenuInteraction?
 
@@ -295,6 +297,7 @@ import SwiftUI
         var settings: ReaderSettings = ReaderSettings()
         var bookID: UUID = UUID()
         var aiQueryLocatorJSON: String? = nil
+        var aiEnabled: Bool = true
 
         class Coordinator: NSObject, EPUBNavigatorDelegate, UIGestureRecognizerDelegate {
             var onLocationChange: (Locator) -> Void
@@ -373,16 +376,18 @@ import SwiftUI
         }
 
         func makeUIViewController(context: Context) -> UIViewController {
-            guard
-                let navigator = try? EPUBNavigatorViewController(
+            let navigator: EPUBNavigatorViewController
+            do {
+                navigator = try EPUBNavigatorViewController(
                     publication: publication,
                     initialLocation: initialLocation,
-                    // config: config,
-                    httpServer: GCDHTTPServer(assetRetriever: ReadiumStack.shared.assetRetriever),
+                    httpServer: ReadiumStack.shared.httpServer
                 )
-            else {
-                return UIViewController()  // fallback
+            } catch {
+                AppLogger.logError(tag: "ReadiumNavigatorView", error)
+                return UIViewController()
             }
+            AppLogger.log(tag: "ReadiumNavigatorView", "Successfully initialized EPUBNavigatorViewController.")
             navigator.delegate = context.coordinator
 
             commands?.goLeft = { [weak navigator] in
@@ -390,6 +395,9 @@ import SwiftUI
             }
             commands?.goRight = { [weak navigator] in
                 await navigator?.goRight(options: NavigatorGoOptions.animated)
+            }
+            commands?.goToLocator = { [weak navigator] locator in
+                await navigator?.go(to: locator)
             }
 
             let tap = UITapGestureRecognizer(
@@ -404,6 +412,7 @@ import SwiftUI
             container.embed(navigator)
 
             container.bookID = bookID
+            container.aiEnabled = aiEnabled
 
             container.onExplain = { [commands] text, locatorJSON in
                 commands?.onExplain?(text, locatorJSON)

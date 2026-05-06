@@ -13,6 +13,8 @@ struct BookCustomizationSheet: View {
     @State private var description: String
     @State private var coverImageData: Data?
     @State private var photoItem: PhotosPickerItem?
+    @State private var enableAI: Bool = false
+    @State private var isAnimatingGradient: Bool = false
     @State private var didConfirm = false
 
     init(
@@ -27,16 +29,69 @@ struct BookCustomizationSheet: View {
         _author = State(initialValue: initial.author)
         _description = State(initialValue: initial.description)
         _coverImageData = State(initialValue: initial.coverImageData)
+        _enableAI = State(initialValue: initial.enableAI)
     }
 
     private var isTitleEmpty: Bool { title.allSatisfy(\.isWhitespace) }
 
     var body: some View {
-        VStack(spacing: 0) {
-            scrollContent
-            addButton
+        NavigationStack {
+            Form {
+                Section {
+                    coverPicker
+                }
+                .listRowBackground(Color.clear)
+
+                Section {
+                    aiChoiceCard
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+
+                Section("Book Details") {
+                    TextField("Title", text: $title)
+                    TextField("Author", text: $author)
+                    
+                    ZStack(alignment: .topLeading) {
+                        if description.isEmpty {
+                            Text("Description")
+                                .foregroundStyle(.tertiary)
+                                .padding(.top, 8)
+                                .padding(.leading, 4)
+                        }
+                        TextEditor(text: $description)
+                            .frame(minHeight: 300, maxHeight: 300)
+                    }
+                }
+            }
+            .navigationTitle("Add to Library")
+            .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom) {
+                VStack {
+                    Button {
+                        confirmAndDismiss()
+                    } label: {
+                        Label("Add to Library", systemImage: "plus.circle.fill")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(isTitleEmpty ? Color(.systemFill) : Color.accentColor)
+                            .foregroundStyle(isTitleEmpty ? Color.secondary : Color.white)
+                            .clipShape(Capsule())
+                    }
+                    .background {
+                        Capsule()
+                            .fill(isTitleEmpty ? Color(.systemFill) : Color.accentColor)
+                            .blur(radius: 12)
+                            .opacity(0.5)
+                    }
+                    .disabled(isTitleEmpty)
+                    .animation(.easeInOut(duration: 0.15), value: isTitleEmpty)
+                }
                 .padding(.horizontal, 24)
-                .padding(.top, 8)
+                .padding(.vertical, 12)
+                .background(Color.clear)
+            }
         }
         .onChange(of: photoItem) { _, newItem in
             Task {
@@ -50,33 +105,16 @@ struct BookCustomizationSheet: View {
         }
     }
 
-    // MARK: - Scroll content
-    private var scrollContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Text("Add to Library")
-                    .font(.title2.bold())
-                    .padding(.top, 4)
-
-                coverPicker
-
-                fieldSection(label: "Title") {
-                    TextField("Book title", text: $title)
-                        .customFieldStyle()
-                }
-
-                fieldSection(label: "Author") {
-                    TextField("Author name", text: $author)
-                        .customFieldStyle()
-                }
-
-                fieldSection(label: "Description") {
-                    descriptionEditor
-                }
-            }
-            .padding(24)
-            .padding(.bottom, 8)
-        }
+    private func confirmAndDismiss() {
+        didConfirm = true
+        var result = initial
+        result.title = title.trimmingCharacters(in: .whitespaces)
+        result.author = author.trimmingCharacters(in: .whitespaces)
+        result.description = description.trimmingCharacters(in: .whitespaces)
+        result.coverImageData = coverImageData
+        result.enableAI = enableAI
+        onConfirm(result)
+        dismiss()
     }
 
     // MARK: - Cover picker
@@ -85,7 +123,7 @@ struct BookCustomizationSheet: View {
         PhotosPicker(selection: $photoItem, matching: .images) {
             ZStack(alignment: .bottomTrailing) {
                 coverPreview
-                    .frame(width: 110, height: 154)
+                    .frame(width: 172, height: 220)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .shadow(color: .black.opacity(0.2), radius: 6, x: 1, y: 3)
 
@@ -114,73 +152,76 @@ struct BookCustomizationSheet: View {
         }
     }
 
-    // MARK: - Description editor
-
-    private var descriptionEditor: some View {
-        ZStack(alignment: .topLeading) {
-            if description.isEmpty {
-                Text("No description")
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 13)
+    // MARK: - AI Choice Card
+    private var aiChoiceCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(isOn: $enableAI.animation(.easeInOut)) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(enableAI ? Color.white.opacity(0.2) : Color.accentColor.opacity(0.12))
+                            .frame(width: 32, height: 32)
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(enableAI ? .white : Color.accentColor)
+                    }
+                    Text("Enable AI Companion")
+                        .font(.headline)
+                        .foregroundStyle(enableAI ? .white : .primary)
+                }
             }
-            TextEditor(text: $description)
-                .scrollContentBackground(.hidden)
-                .font(.body)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(minHeight: 90, maxHeight: 180)
-        }
-        .background(Color(.systemFill), in: RoundedRectangle(cornerRadius: 12))
-    }
+            .tint(.accentColor)
 
-    // MARK: - Add button
-
-    private var addButton: some View {
-        Button {
-            didConfirm = true
-            var result = initial
-            result.title = title.trimmingCharacters(in: .whitespaces)
-            result.author = author.trimmingCharacters(in: .whitespaces)
-            result.description = description.trimmingCharacters(in: .whitespaces)
-            result.coverImageData = coverImageData
-            onConfirm(result)
-            dismiss()
-        } label: {
-            Label("Add to Library", systemImage: "plus.circle.fill")
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(isTitleEmpty ? Color(.systemFill) : Color.accentColor)
-                .foregroundStyle(isTitleEmpty ? Color.secondary : Color.white)
-                .clipShape(Capsule())
-        }
-        .disabled(isTitleEmpty)
-        .animation(.easeInOut(duration: 0.15), value: isTitleEmpty)
-    }
-
-    // MARK: - Helpers
-
-    @ViewBuilder
-    private func fieldSection<Content: View>(
-        label: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label)
+            Text("The AI companion can answer your questions about characters, plot, and meaning as you read — without spoilers. Best for novels and literary fiction.")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
-            content()
+                .foregroundStyle(enableAI ? .white.opacity(0.9) : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(3)
         }
-    }
-}
-
-private extension View {
-    func customFieldStyle() -> some View {
-        self
-            .font(.body)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .background(Color(.systemFill), in: RoundedRectangle(cornerRadius: 12))
+        .padding(16)
+        .background {
+            ZStack {
+                if enableAI {
+                    if #available(iOS 18.0, *) {
+                        MeshGradient(
+                            width: 3,
+                            height: 3,
+                            points: [
+                                .init(0, 0), .init(0.5, 0), .init(1, 0),
+                                .init(0, 0.5), .init(isAnimatingGradient ? 0.2 : 0.8, isAnimatingGradient ? 0.7 : 0.3), .init(1, 0.5),
+                                .init(0, 1), .init(0.5, 1), .init(1, 1)
+                            ],
+                            colors: [
+                                .indigo, .purple, .blue,
+                                .purple, .blue, .indigo,
+                                .blue, .indigo, .purple
+                            ]
+                        )
+                        .onAppear {
+                            isAnimatingGradient = false
+                            withAnimation(.easeInOut(duration: 4.0).repeatForever(autoreverses: true)) {
+                                isAnimatingGradient = true
+                            }
+                        }
+                    } else {
+                        LinearGradient(
+                            colors: [Color.purple, Color.blue, Color.indigo, Color.purple],
+                            startPoint: isAnimatingGradient ? .topLeading : .bottomTrailing,
+                            endPoint: isAnimatingGradient ? .bottomTrailing : .topLeading
+                        )
+                        .onAppear {
+                            // Reset and animate each time it appears
+                            isAnimatingGradient = false
+                            withAnimation(.linear(duration: 4.0).repeatForever(autoreverses: true)) {
+                                isAnimatingGradient = true
+                            }
+                        }
+                    }
+                } else {
+                    Color(.systemFill)
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }

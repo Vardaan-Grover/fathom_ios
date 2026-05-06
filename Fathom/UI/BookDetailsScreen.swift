@@ -180,26 +180,107 @@ struct BookDetailsScreen: View {
     // MARK: - AI Status Chip
 
     private var aiStatusChip: some View {
-        let config = chipConfig(for: viewModel.book?.preprocessingStatus ?? .pending)
+        let aiEnabled = viewModel.book?.aiEnabled ?? false
+        let config = aiEnabled
+            ? chipConfig(for: viewModel.book?.preprocessingStatus ?? .pending)
+            : ChipConfig(label: "Basic Reading", icon: "doc.text", color: theme.colors.secondary)
 
-        return HStack(spacing: 6) {
-            if viewModel.book?.preprocessingStatus == .inProgress {
-                ProgressView(value: Double(viewModel.book?.aiAnalysisProgress ?? 0))
-                    .progressViewStyle(.circular)
-                    .frame(width: 12, height: 12)
-                    .tint(config.color)
-            } else {
-                Image(systemName: config.icon)
-                    .font(.system(size: 11, weight: .semibold))
+        return VStack(spacing: 10) {
+            HStack(spacing: 6) {
+                if aiEnabled && viewModel.book?.preprocessingStatus == .inProgress {
+                    ProgressView(value: Double(viewModel.book?.aiAnalysisProgress ?? 0))
+                        .progressViewStyle(.circular)
+                        .frame(width: 12, height: 12)
+                        .tint(config.color)
+                } else {
+                    Image(systemName: config.icon)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                Text(config.label)
+                    .font(theme.typography.subheadline)
             }
-            Text(config.label)
-                .font(theme.typography.subheadline)
+            .foregroundColor(config.color)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(config.color.opacity(0.12), in: Capsule())
+            .overlay(Capsule().stroke(config.color.opacity(0.3), lineWidth: 1))
+
+            // "Enable AI" call-to-action for Tier 1 books, or "Try Again" on failure
+            if !aiEnabled {
+                enableAIButton
+            } else if viewModel.book?.preprocessingStatus == .failed {
+                retryAIButton
+            }
+
+            // Error banner
+            if let errorMessage = viewModel.enableAIError {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 8)
+            }
         }
-        .foregroundColor(config.color)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(config.color.opacity(0.12), in: Capsule())
-        .overlay(Capsule().stroke(config.color.opacity(0.3), lineWidth: 1))
+    }
+
+    private var retryAIButton: some View {
+        Button {
+            Task { await viewModel.enableAI() }
+        } label: {
+            HStack(spacing: 6) {
+                if viewModel.isEnablingAI {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .frame(width: 14, height: 14)
+                        .tint(.white)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                Text(viewModel.isEnablingAI ? "Retrying…" : "Try Again")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(
+                Color(hex: "C0392B").opacity(viewModel.isEnablingAI ? 0.6 : 1),
+                in: Capsule()
+            )
+        }
+        .disabled(viewModel.isEnablingAI)
+        .animation(.easeInOut(duration: 0.15), value: viewModel.isEnablingAI)
+    }
+
+    private var enableAIButton: some View {
+        Button {
+            Task { await viewModel.enableAI() }
+        } label: {
+            HStack(spacing: 6) {
+                if viewModel.isEnablingAI {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .frame(width: 14, height: 14)
+                        .tint(.white)
+                } else {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                Text(viewModel.isEnablingAI ? "Enabling AI…" : "Enable AI Reading Companion")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(
+                viewModel.isEnablingAI
+                    ? Color.accentColor.opacity(0.6)
+                    : Color.accentColor,
+                in: Capsule()
+            )
+        }
+        .disabled(viewModel.isEnablingAI)
+        .animation(.easeInOut(duration: 0.15), value: viewModel.isEnablingAI)
     }
 
     private struct ChipConfig {
@@ -215,13 +296,13 @@ struct BookDetailsScreen: View {
                 label: "AI Ready", icon: "checkmark.circle.fill", color: Color(hex: "2A6B3E"))
         case .inProgress:
             return ChipConfig(
-                label: "Processing…", icon: "arrow.triangle.2.circlepath",
+                label: "AI Analysis in Progress…", icon: "arrow.triangle.2.circlepath",
                 color: theme.colors.shelfAccent)
         case .pending:
-            return ChipConfig(label: "Queued", icon: "clock", color: theme.colors.secondary)
+            return ChipConfig(label: "AI Queued", icon: "clock", color: theme.colors.secondary)
         case .failed:
             return ChipConfig(
-                label: "AI Unavailable", icon: "exclamationmark.triangle",
+                label: "AI Analysis Failed", icon: "exclamationmark.triangle",
                 color: Color(hex: "C0392B"))
         }
     }
@@ -349,6 +430,7 @@ struct BookDetailsScreen: View {
         }
 
         func addBook(_ book: Book) async {}
+        func updateBook(_ book: Book) async {}
         func deleteBook(_ book: Book) async {}
     }
 

@@ -61,7 +61,8 @@ struct ToastRootView<Content: View>: View {
 
             Text(toast.title)
                 .font(.body.weight(.semibold))
-                .lineLimit(1)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 0)
 
@@ -79,7 +80,8 @@ struct ToastRootView<Content: View>: View {
             }
         }
         .padding(.horizontal, 18)
-        .frame(height: 50)
+        .padding(.vertical, 12)
+        .frame(minHeight: 50)
         .clipShape(.capsule)
         .contentShape(.capsule)
         .glassEffect(.regular, in: .capsule)

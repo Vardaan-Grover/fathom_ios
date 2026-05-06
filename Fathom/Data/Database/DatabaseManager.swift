@@ -183,6 +183,26 @@ final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v6_add_ai_enabled") { db in
+            try db.alter(table: "books") { t in
+                t.add(column: "aiEnabled", .boolean).notNull().defaults(to: false)
+            }
+        }
+
+        migrator.registerMigration("v7_add_backend_book_id") { db in
+            try db.alter(table: "books") { t in
+                t.add(column: "backendBookID", .text)
+            }
+            // Existing AI-enabled books used book.id as the backend ID (old behavior).
+            try db.execute(sql: "UPDATE books SET backendBookID = id WHERE aiEnabled = 1")
+        }
+
+        migrator.registerMigration("v8_add_content_hash") { db in
+            try db.alter(table: "books") { t in
+                t.add(column: "contentHash", .text)
+            }
+        }
+
         return migrator
     }
 

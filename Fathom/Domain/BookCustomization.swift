@@ -13,4 +13,7 @@ struct BookCustomization: Identifiable {
     let originalTitle: String
     let originalAuthor: String?
     let originalLanguage: String?
+    
+    // AI Choice
+    var enableAI: Bool = false
 }

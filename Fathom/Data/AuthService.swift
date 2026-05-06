@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Auth
 
 // Global auth client — initialized once, shared across the app and backend layer.
@@ -9,7 +10,10 @@ let supabase = AuthClient(
         headers: [
             "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlndWV5bmJka3h3cnFwa252eGZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NzY5MjEsImV4cCI6MjA5MzM1MjkyMX0.e_JlRuHVuCIANNe0bECjaK_GLK26xcSZDNeLOgZBdNk"
         ],
-        flowType: .implicit
+        flowType: .implicit,
+        localStorage: KeychainLocalStorage(),
+        logger: nil,
+        emitLocalSessionAsInitialSession: true,
     )
 )
 

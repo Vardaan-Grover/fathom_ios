@@ -12,8 +12,8 @@
 	"argv": [
 		"/opt/homebrew/bin/xcode-build-server"
 	],
-	"workspace": "/Users/vardaan/Projects/Readora/readora_ios/Readora.xcodeproj/project.xcworkspace",
-	"build_root": "/Users/vardaan/Library/Developer/Xcode/DerivedData/Readora-brfznkauhldzmcagaltvvmwvrztf",
+	"workspace": "/Users/vardaan/Projects/fathom/fathom_ios/Fathom.xcodeproj/project.xcworkspace",
+	"build_root": "/Users/vardaan/Library/Developer/Xcode/DerivedData/Fathom-bkvdeihlrhmctlhldetlbfryqjce",
 	"scheme": "Fathom",
 	"kind": "xcode"
 }

@@ -35,6 +35,18 @@ final actor BookRepositorySQLite: BookRepository {
         }
     }
 
+    func updateBook(_ book: Book) async {
+        await withCheckedContinuation { continuation in
+            do {
+                try dbQueue.write { db in try book.update(db) }
+                continuation.resume()
+            } catch {
+                AppLogger.logError(tag: "BookRepository", error)
+                continuation.resume()
+            }
+        }
+    }
+
     func deleteBook(_ book: Book) async {
         await withCheckedContinuation { continuation in
             do {

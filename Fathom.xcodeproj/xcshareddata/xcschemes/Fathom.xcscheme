@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "935ACF4B2F597EE8004C6F3F"
-               BuildableName = "Fathom.app"
-               BlueprintName = "Fathom"
-               ReferencedContainer = "container:Fathom.xcodeproj">
+               BuildableName = "Readora.app"
+               BlueprintName = "Readora"
+               ReferencedContainer = "container:Readora.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -45,9 +45,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "935ACF4B2F597EE8004C6F3F"
-            BuildableName = "Fathom.app"
-            BlueprintName = "Fathom"
-            ReferencedContainer = "container:Fathom.xcodeproj">
+            BuildableName = "Readora.app"
+            BlueprintName = "Readora"
+            ReferencedContainer = "container:Readora.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <EnvironmentVariables>
@@ -69,9 +69,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "935ACF4B2F597EE8004C6F3F"
-            BuildableName = "Fathom.app"
-            BlueprintName = "Fathom"
-            ReferencedContainer = "container:Fathom.xcodeproj">
+            BuildableName = "Readora.app"
+            BlueprintName = "Readora"
+            ReferencedContainer = "container:Readora.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

@@ -16,16 +16,16 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		935ACF4C2F597EE8004C6F3F /* Fathom.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fathom.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		935ACF4C2F597EE8004C6F3F /* Readora.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Readora.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		93CE40E42FA7594900EAEFAB /* Exceptions for "Readora" folder in "Fathom" target */ = {
+		93CE40E42FA7594900EAEFAB /* Exceptions for "Readora" folder in "Readora" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 935ACF4B2F597EE8004C6F3F /* Fathom */;
+			target = 935ACF4B2F597EE8004C6F3F /* Readora */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -33,7 +33,7 @@
 		935ACF4E2F597EE8004C6F3F /* Readora */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				93CE40E42FA7594900EAEFAB /* Exceptions for "Readora" folder in "Fathom" target */,
+				93CE40E42FA7594900EAEFAB /* Exceptions for "Readora" folder in "Readora" target */,
 			);
 			path = Readora;
 			sourceTree = "<group>";
@@ -69,7 +69,7 @@
 		935ACF4D2F597EE8004C6F3F /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				935ACF4C2F597EE8004C6F3F /* Fathom.app */,
+				935ACF4C2F597EE8004C6F3F /* Readora.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -84,9 +84,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		935ACF4B2F597EE8004C6F3F /* Fathom */ = {
+		935ACF4B2F597EE8004C6F3F /* Readora */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 935ACF572F597EE9004C6F3F /* Build configuration list for PBXNativeTarget "Fathom" */;
+			buildConfigurationList = 935ACF572F597EE9004C6F3F /* Build configuration list for PBXNativeTarget "Readora" */;
 			buildPhases = (
 				935ACF482F597EE8004C6F3F /* Sources */,
 				935ACF492F597EE8004C6F3F /* Frameworks */,
@@ -99,7 +99,7 @@
 			fileSystemSynchronizedGroups = (
 				935ACF4E2F597EE8004C6F3F /* Readora */,
 			);
-			name = Fathom;
+			name = Readora;
 			packageProductDependencies = (
 				935ACF8F2F5A0A0D004C6F3F /* ReadiumNavigator */,
 				935ACF912F5A0A0D004C6F3F /* ReadiumShared */,
@@ -109,7 +109,7 @@
 				93CE40E12FA7590A00EAEFAB /* Auth */,
 			);
 			productName = Readora;
-			productReference = 935ACF4C2F597EE8004C6F3F /* Fathom.app */;
+			productReference = 935ACF4C2F597EE8004C6F3F /* Readora.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -127,7 +127,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 935ACF472F597EE8004C6F3F /* Build configuration list for PBXProject "Fathom" */;
+			buildConfigurationList = 935ACF472F597EE8004C6F3F /* Build configuration list for PBXProject "Readora" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -146,7 +146,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				935ACF4B2F597EE8004C6F3F /* Fathom */,
+				935ACF4B2F597EE8004C6F3F /* Readora */,
 			);
 		};
 /* End PBXProject section */
@@ -384,7 +384,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		935ACF472F597EE8004C6F3F /* Build configuration list for PBXProject "Fathom" */ = {
+		935ACF472F597EE8004C6F3F /* Build configuration list for PBXProject "Readora" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				935ACF552F597EE9004C6F3F /* Debug */,
@@ -393,7 +393,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		935ACF572F597EE9004C6F3F /* Build configuration list for PBXNativeTarget "Fathom" */ = {
+		935ACF572F597EE9004C6F3F /* Build configuration list for PBXNativeTarget "Readora" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				935ACF582F597EE9004C6F3F /* Debug */,

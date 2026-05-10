@@ -145,6 +145,33 @@ public struct VocabularySheetView: View {
         }
     }
 
+    // MARK: - No definition fallback
+
+    private var noDefinitionView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "character.book.closed")
+                .font(.system(size: 44, weight: .light))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color(hex: "FF6EB4"), Color(hex: "7C86F0")],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            Text("No definition found")
+                .font(.headline)
+                .foregroundStyle(.primary)
+            Text("Try a different spelling, or tap the pencil icon to look up another word.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 48)
+        .padding(.horizontal, 24)
+        .transition(.opacity)
+    }
+
     // MARK: - Content
 
     private var contentScrollView: some View {
@@ -158,14 +185,12 @@ public struct VocabularySheetView: View {
                         Spacer()
                     }
                     .transition(.opacity)
-                } else if let error = viewModel.error {
-                    Text(error)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 40)
-                        .frame(maxWidth: .infinity)
-                        .transition(.opacity)
+                } else if viewModel.error != nil {
+                    noDefinitionView
                 } else if let entry = viewModel.entry {
+                    if entry.entries.isEmpty {
+                        noDefinitionView
+                    }
                     ForEach(entry.entries, id: \.partOfSpeech) { dictEntry in
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 8) {

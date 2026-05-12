@@ -40,6 +40,7 @@ protocol BookRepository {
     func addBook(_ book: Book) async
     func updateBook(_ book: Book) async
     func deleteBook(_ book: Book) async
+    func touchLastReadAt(bookID: UUID) async
 }
 
 final actor InMemoryBookRepository: BookRepository {
@@ -60,6 +61,11 @@ final actor InMemoryBookRepository: BookRepository {
 
     func deleteBook(_ book: Book) async {
         books.removeAll { $0.id == book.id }
+    }
+
+    func touchLastReadAt(bookID: UUID) async {
+        guard let idx = books.firstIndex(where: { $0.id == bookID }) else { return }
+        books[idx].lastReadAt = Date()
     }
 }
 
@@ -99,6 +105,12 @@ final actor JSONBookRepository: BookRepository {
 
     func deleteBook(_ book: Book) async {
         books.removeAll { $0.id == book.id }
+        save()
+    }
+
+    func touchLastReadAt(bookID: UUID) async {
+        guard let idx = books.firstIndex(where: { $0.id == bookID }) else { return }
+        books[idx].lastReadAt = Date()
         save()
     }
 

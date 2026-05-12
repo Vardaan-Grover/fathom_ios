@@ -229,6 +229,12 @@ final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v11_add_last_read_at") { db in
+            try db.alter(table: "books") { t in
+                t.add(column: "lastReadAt", .datetime)
+            }
+        }
+
         return migrator
     }
 

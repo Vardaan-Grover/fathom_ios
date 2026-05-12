@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 private struct SelectedBook: Identifiable {
     let id: UUID
@@ -28,11 +29,26 @@ struct HomeScreen: View {
                     .padding(.top, 40)
 
                 Divider()
+                    .padding(.horizontal, 20)
 
                 if viewModel.isLoading {
                     ProgressView()
                         .padding(.top, 60)
                 } else {
+                    if let recentBook = viewModel.recentBook {
+                        RecentlyReadTile(
+                            book: recentBook,
+                            progress: viewModel.recentBookProgress,
+                            onTap: {
+                                guard let book = viewModel.recentFullBook, book.localURL != nil
+                                else { return }
+                                UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                                readerBook = book
+                            }
+                        )
+                        .padding(.horizontal, 20)
+                    }
+
                     let userShelves = viewModel.categories.filter { !$0.shelfColorHex.isEmpty }
 
                     ForEach(viewModel.categories) { category in
@@ -90,7 +106,6 @@ struct HomeScreen: View {
                 }
             }
             .padding(.bottom, 72)
-            .padding(.horizontal, 20)
         }
         .background(theme.colors.background)
         .sheet(item: $selectedBook) { selection in
@@ -99,6 +114,7 @@ struct HomeScreen: View {
                 bookRepository: bookRepository,
                 onStartReading: { book in
                     selectedBook = nil
+                    UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 350_000_000)
                         readerBook = book
@@ -190,6 +206,14 @@ struct HomeScreen: View {
                         }
                     }
                 )
+            }
+        }
+        .onChange(of: readerBook) { _, newBook in
+            if let book = newBook {
+                viewModel.recordOpened(book: book)
+            } else {
+                // Reload after reader dismissal so progress reflects latest position.
+                Task { await viewModel.load() }
             }
         }
     }

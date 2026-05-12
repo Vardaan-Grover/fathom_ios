@@ -432,6 +432,7 @@ struct BookDetailsScreen: View {
         func addBook(_ book: Book) async {}
         func updateBook(_ book: Book) async {}
         func deleteBook(_ book: Book) async {}
+        func touchLastReadAt(bookID: UUID) async {}
     }
 
     #Preview {

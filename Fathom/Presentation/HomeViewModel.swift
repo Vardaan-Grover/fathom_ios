@@ -1,10 +1,14 @@
 import SwiftUI
 import Combine
+import ReadiumShared
 
 @MainActor
 class HomeViewModel: ObservableObject {
     @Published var categories: [HomeCategory] = []
     @Published var isLoading = true
+    @Published var recentBook: HomeBook? = nil
+    @Published var recentBookProgress: Double = 0
+    @Published var recentFullBook: Book? = nil
 
     private let bookRepository: BookRepository
     private let categoryRepository: CategoryRepository
@@ -21,7 +25,25 @@ class HomeViewModel: ObservableObject {
         async let memberships = categoryRepository.listMemberships()
         let (fetchedBooks, fetchedCats, fetchedMemberships) = await (books, userCats, memberships)
         categories = Self.mapToCategories(fetchedBooks, userCategories: fetchedCats, memberships: fetchedMemberships)
+
+        if let mostRecent = fetchedBooks.filter({ $0.lastReadAt != nil }).max(by: { $0.lastReadAt! < $1.lastReadAt! }) {
+            recentFullBook = mostRecent
+            recentBook = Self.makeHomeBook(mostRecent)
+            recentBookProgress = ReadingStateStore.shared.loadLocator(forBookID: mostRecent.id)?.locations.totalProgression ?? 0
+        } else {
+            recentFullBook = nil
+            recentBook = nil
+            recentBookProgress = 0
+        }
+
         isLoading = false
+    }
+
+    func recordOpened(book: Book) {
+        recentFullBook = book
+        recentBook = Self.makeHomeBook(book)
+        recentBookProgress = ReadingStateStore.shared.loadLocator(forBookID: book.id)?.locations.totalProgression ?? 0
+        Task { await bookRepository.touchLastReadAt(bookID: book.id) }
     }
 
     // Synchronous optimistic updates — callers can wrap these in withAnimation directly.

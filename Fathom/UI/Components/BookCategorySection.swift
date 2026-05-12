@@ -77,7 +77,10 @@ struct BookCategorySection: View {
                                 onToggleCategoryMembership?(book.id, categoryID)
                             }
                         )
-                        .onTapGesture { onBookTap?(book.id) }
+                        .onTapGesture {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            onBookTap?(book.id)
+                        }
                         .transition(
                             .asymmetric(
                                 insertion: .move(edge: .bottom).combined(with: .opacity),
@@ -85,12 +88,13 @@ struct BookCategorySection: View {
                             ))
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 36)
                 .padding(.top, bookTopPadding)
                 .padding(.bottom, bookBottomPadding)
             }
 
             shelfBand
+                .padding(.horizontal, 20)
         }
         .frame(height: sectionHeight)
     }

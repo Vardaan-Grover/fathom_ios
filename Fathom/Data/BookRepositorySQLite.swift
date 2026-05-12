@@ -9,9 +9,9 @@ final actor BookRepositorySQLite: BookRepository {
     }
 
     func listBooks() async -> [Book] {
-        await withCheckedContinuation {continuation in 
+        await withCheckedContinuation { continuation in
             do {
-                let books = try dbQueue.read {db in 
+                let books = try dbQueue.read { db in
                     try Book.fetchAll(db)
                 }
                 continuation.resume(returning: books)
@@ -52,6 +52,30 @@ final actor BookRepositorySQLite: BookRepository {
             do {
                 try dbQueue.write { db in
                     _ = try book.delete(db)
+                }
+                continuation.resume()
+            } catch {
+                AppLogger.logError(tag: "BookRepository", error)
+                continuation.resume()
+            }
+        }
+    }
+
+    func touchLastReadAt(bookID: UUID) async {
+        await withCheckedContinuation { continuation in
+            do {
+                try dbQueue.write { db in
+                    if var book = try Book.fetchOne(db, key: bookID) {
+                        book.lastReadAt = Date()
+                        try book.update(db)
+                    } else if var book = try Book.fetchOne(db, key: bookID.uuidString) {
+                        book.lastReadAt = Date()
+                        try book.update(db)
+                    } else {
+                        AppLogger.log(
+                            tag: "BookRepository",
+                            "Failed to find book to touch lastReadAt for \(bookID)")
+                    }
                 }
                 continuation.resume()
             } catch {

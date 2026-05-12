@@ -25,6 +25,7 @@ struct Book: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
 
     var estimatedPageCount: Int? = nil
     var estimatedReadingTimeMinutes: Int? = nil
+    var lastReadAt: Date? = nil
 
     var localURL: URL? {
         guard let filename = localFilename else { return nil }

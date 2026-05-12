@@ -59,6 +59,7 @@ struct ParagraphIndexer {
 
         if junkExact.contains(lower) { return true }
         if lower.hasPrefix("chapter ") && trimmed.count < 24 { return true }  // heading-only fragments
+        if lower.hasPrefix("part ") && trimmed.count < 20 { return true }
         if lower.contains("all rights reserved") { return true }
         if lower.contains("copyright") && trimmed.count < 120 { return true }
         if lower.contains("www.") && trimmed.count < 120 { return true }
@@ -73,6 +74,11 @@ struct ParagraphIndexer {
         "contents",
         "table of contents",
         "project gutenberg",
-        "gutenberg"
+        "gutenberg",
+        "introduction",
+        "preface",
+        "foreword",
+        "acknowledgements",
+        "acknowledgments"
     ]
 }

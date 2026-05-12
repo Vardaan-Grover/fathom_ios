@@ -1,0 +1,49 @@
+{
+  "fill" : "automatic",
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "Untitled (4).png",
+          "name" : "Untitled (4)",
+          "position-specializations" : [
+            {
+              "value" : {
+                "scale" : 2.5,
+                "translation-in-points" : [
+                  0,
+                  -28.750000000000114
+                ]
+              }
+            },
+            {
+              "idiom" : "square",
+              "value" : {
+                "scale" : 2.3,
+                "translation-in-points" : [
+                  0,
+                  -28.750000000000114
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

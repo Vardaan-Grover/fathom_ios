@@ -223,6 +223,12 @@ final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v10_add_chapter_href") { db in
+            try db.alter(table: "chapters") { t in
+                t.add(column: "href", .text)
+            }
+        }
+
         return migrator
     }
 

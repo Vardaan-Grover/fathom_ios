@@ -25,65 +25,157 @@ actor NarrativeContextStore {
         }
     }
 
-    func getAbsoluteIndex(for bookID: UUID, selectedText: String) async -> Int? {
+    func getAbsoluteIndex(for bookID: UUID, selectedText: String, locatorJSON: String?) async -> Int? {
         let probe = Self.matchingProbe(from: selectedText)
         guard !probe.isEmpty else {
-            AppLogger.log(tag: "NarrativeContextStore", "❌ probe is empty, selectedText was: \(selectedText.prefix(100))")
+            AppLogger.log(tag: "NarrativeContextStore", "❌ probe is empty")
             return nil
         }
 
-        let escapedRaw = selectedText.prefix(120).replacingOccurrences(of: "\n", with: "⏎").replacingOccurrences(of: "\r", with: "⏎")
-        AppLogger.log(tag: "NarrativeContextStore", "📝 raw (\\n→⏎): \"\(escapedRaw)\"")
         AppLogger.log(tag: "NarrativeContextStore", "🔍 probe: \"\(probe.prefix(120))\"")
+        if AppLogger.isEnabled {
+            let probeHex = probe.unicodeScalars.map { String(format: "U+%04X", $0.value) }.joined(separator: " ")
+            AppLogger.log(tag: "NarrativeContextStore", "🔍 probe hex: \(probeHex)")
+        }
 
+        guard let hint = locatorJSON.flatMap({ Self.parseLocatorHint(from: $0) }),
+              let href = hint.href else {
+            AppLogger.log(tag: "NarrativeContextStore", "❌ no locator href, cannot resolve absoluteIndex")
+            return nil
+        }
+
+        let result = await chapterRestrictedSearch(
+            bookID: bookID, href: href, probe: probe, progression: hint.progression)
+        AppLogger.log(
+            tag: "NarrativeContextStore",
+            result != nil ? "✅ chapter match: \(result!)" : "❌ no match in chapter")
+        return result
+    }
+
+    // MARK: - Locator parsing
+
+    private struct LocatorHint {
+        let href: String?
+        let progression: Double?
+    }
+
+    private static func parseLocatorHint(from json: String) -> LocatorHint? {
+        guard let data = json.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        let href = obj["href"] as? String
+        let locations = obj["locations"] as? [String: Any]
+        return LocatorHint(
+            href: href,
+            progression: locations?["progression"] as? Double
+        )
+    }
+
+    private static func normalizeHref(_ href: String) -> String {
+        href.hasPrefix("/") ? String(href.dropFirst()) : href
+    }
+
+    // MARK: - Chapter-restricted search
+
+    private func chapterRestrictedSearch(
+        bookID: UUID, href: String, probe: String, progression: Double?
+    ) async -> Int? {
+        let normalizedHref = Self.normalizeHref(href)
         do {
             return try await dbQueue.read { db in
+                // Log a sample of stored hrefs to compare against the locator's href
                 if AppLogger.isEnabled {
-                    let totalCount = try Int.fetchOne(
+                    let storedHrefs = try Row.fetchAll(
                         db,
-                        sql: "SELECT COUNT(*) FROM paragraphs WHERE bookID = ?",
+                        sql: "SELECT href FROM chapters WHERE bookID = ? LIMIT 3",
                         arguments: [bookID]
-                    ) ?? 0
-                    AppLogger.log(tag: "NarrativeContextStore", "📦 paragraphs in DB for book: \(totalCount)")
+                    ).map { ($0["href"] as String?) ?? "NULL" }
+                    AppLogger.log(tag: "NarrativeContextStore", "🔎 looking for href: \"\(normalizedHref)\"")
+                    AppLogger.log(tag: "NarrativeContextStore", "🗂 stored hrefs sample: \(storedHrefs)")
+                }
 
-                    if totalCount > 0 {
-                        let sample = try Row.fetchAll(
-                            db,
-                            sql: "SELECT absoluteIndex, text FROM paragraphs WHERE bookID = ? ORDER BY absoluteIndex ASC LIMIT 3",
-                            arguments: [bookID]
-                        )
-                        for row in sample {
-                            let idx: Int = row["absoluteIndex"]
-                            let txt: String = row["text"]
-                            AppLogger.log(tag: "NarrativeContextStore", "  sample[\(idx)]: \"\(txt.prefix(80))\"")
-                        }
+                guard let chapterRow = try Row.fetchOne(
+                    db,
+                    sql: "SELECT id FROM chapters WHERE bookID = ? AND href = ?",
+                    arguments: [bookID, normalizedHref]
+                ) else {
+                    AppLogger.log(tag: "NarrativeContextStore", "❌ no chapter found for href: \(normalizedHref)")
+                    return nil
+                }
+
+                let chapterID: UUID = chapterRow["id"]
+
+                if AppLogger.isEnabled {
+                    let globalCount = try Int.fetchOne(
+                        db,
+                        sql: "SELECT COUNT(*) FROM paragraphs WHERE bookID = ? AND text LIKE ?",
+                        arguments: [bookID, "%\(probe)%"]
+                    ) ?? 0
+                    AppLogger.log(tag: "NarrativeContextStore", "🧪 global LIKE count: \(globalCount)")
+
+                    let chapterOnlyCount = try Int.fetchOne(
+                        db,
+                        sql: "SELECT COUNT(*) FROM paragraphs WHERE chapterID = ? AND text LIKE ?",
+                        arguments: [chapterID, "%\(probe)%"]
+                    ) ?? 0
+                    AppLogger.log(tag: "NarrativeContextStore", "🧪 chapter LIKE count: \(chapterOnlyCount)")
+
+                    let testRows = try Row.fetchAll(
+                        db,
+                        sql: "SELECT absoluteIndex FROM paragraphs WHERE chapterID = ? AND text LIKE ?",
+                        arguments: [chapterID, "%\(probe)%"]
+                    )
+                    AppLogger.log(tag: "NarrativeContextStore", "🧪 test fetchAll count: \(testRows.count)")
+                    if let first = testRows.first {
+                        AppLogger.log(tag: "NarrativeContextStore", "🧪 test first absoluteIndex: \(first["absoluteIndex"] as Int? ?? -1)")
                     }
                 }
 
-                let row = try Row.fetchOne(
+                let rows = try Row.fetchAll(
                     db,
-                    sql: """
-                        SELECT absoluteIndex
-                        FROM paragraphs
-                        WHERE bookID = ? AND text LIKE ?
-                        ORDER BY absoluteIndex ASC
-                        LIMIT 1
-                        """,
-                    arguments: [bookID, "%\(probe)%"]
+                    sql: "SELECT absoluteIndex, indexInChapter FROM paragraphs WHERE chapterID = ? AND text LIKE ? ORDER BY absoluteIndex ASC",
+                    arguments: [chapterID, "%\(probe)%"]
                 )
+                AppLogger.log(tag: "NarrativeContextStore", "🧪 main rows.count: \(rows.count)")
 
-                if let result: Int = row?["absoluteIndex"] {
-                    AppLogger.log(tag: "NarrativeContextStore", "✅ matched absoluteIndex: \(result)")
-                    return result
-                } else {
-                    AppLogger.log(tag: "NarrativeContextStore", "❌ no match found for probe")
-                    return nil
+                if AppLogger.isEnabled {
+                    let totalInChapter = try Int.fetchOne(
+                        db,
+                        sql: "SELECT COUNT(*) FROM paragraphs WHERE chapterID = ?",
+                        arguments: [chapterID]
+                    ) ?? 0
+                    AppLogger.log(tag: "NarrativeContextStore", "📖 paragraphs in chapter: \(totalInChapter)")
+                    let sampleRows = try Row.fetchAll(
+                        db,
+                        sql: "SELECT text FROM paragraphs WHERE chapterID = ? LIMIT 3",
+                        arguments: [chapterID]
+                    )
+                    for (i, r) in sampleRows.enumerated() {
+                        let t = (r["text"] as String?) ?? ""
+                        AppLogger.log(tag: "NarrativeContextStore", "  para[\(i)]: \"\(t.prefix(80))\"")
+                        let hex = t.unicodeScalars.prefix(40).map { String(format: "U+%04X", $0.value) }.joined(separator: " ")
+                        AppLogger.log(tag: "NarrativeContextStore", "  para[\(i)] hex: \(hex)")
+                    }
                 }
+                guard !rows.isEmpty else { return nil }
+                if rows.count == 1 { return rows[0]["absoluteIndex"] as Int? }
+
+                if let progression {
+                    let totalInChapter = try Int.fetchOne(
+                        db,
+                        sql: "SELECT COUNT(*) FROM paragraphs WHERE chapterID = ?",
+                        arguments: [chapterID]
+                    ) ?? 1
+                    let estimatedIndex = Int(progression * Double(totalInChapter))
+                    return rows.min(by: {
+                        abs(($0["indexInChapter"] as Int? ?? 0) - estimatedIndex) <
+                        abs(($1["indexInChapter"] as Int? ?? 0) - estimatedIndex)
+                    })?["absoluteIndex"] as Int?
+                }
+
+                return rows[0]["absoluteIndex"] as Int?
             }
-        } catch {
-            AppLogger.log(tag: "NarrativeContextStore", "❌ DB error: \(error)")
-            return nil
-        }
+        } catch { return nil }
     }
 
     // MARK: - Text normalization
@@ -118,8 +210,8 @@ actor NarrativeContextStore {
             .map { normalize($0) }
             .filter { $0.count > 10 }
 
-        if lines.count > 1, let lastLine = lines.last {
-            return lastLine
+        if lines.count > 1, let firstLine = lines.first {
+            return firstLine
         }
 
         let normalized = normalize(text)

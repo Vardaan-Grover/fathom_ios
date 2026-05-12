@@ -25,7 +25,8 @@ struct DefaultContextEngine: ContextEngine {
 
         let absoluteIndex = await contextStore.getAbsoluteIndex(
             for: passage.bookID,
-            selectedText: passage.selectedText
+            selectedText: passage.selectedText,
+            locatorJSON: nil
         )
 
         let readingPositionHint: String?

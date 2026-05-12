@@ -60,7 +60,7 @@ actor BackendService {
     static let shared = BackendService()
 
     private var baseURL: URL {
-        URL(string: "http://192.168.29.149:8080")!
+        URL(string: "http://192.168.29.216:8080")!
     }
 
     // Fetches a fresh (auto-refreshed) JWT from the active Supabase session.

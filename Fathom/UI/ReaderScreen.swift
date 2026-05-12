@@ -332,6 +332,7 @@ struct ReaderScreen: View {
                     bookID: bookID,
                     backendBookID: backendID,
                     selectedText: text,
+                    locatorJSON: aiSelectedLocatorJSON,
                     bookTitle: bookTitle,
                     onDismiss: {
                         aiSelectedText = nil

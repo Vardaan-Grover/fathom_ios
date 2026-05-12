@@ -18,7 +18,8 @@ struct DefaultAIChatService: AIChatService {
         let absoluteIndex =
             await NarrativeContextStore.shared.getAbsoluteIndex(
                 for: bookID,
-                selectedText: passageText
+                selectedText: passageText,
+                locatorJSON: nil
             ) ?? 0
 
         // The user's query is the last message; everything before it is conversation history

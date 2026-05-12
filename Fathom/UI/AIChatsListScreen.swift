@@ -27,6 +27,7 @@ struct AIChatsListScreen: View {
                     bookID: bookID,
                     backendBookID: backendID,
                     selectedText: thread.passageText,
+                    locatorJSON: thread.locatorJSON,
                     bookTitle: bookTitle,
                     threadID: thread.id,
                     onDismiss: {

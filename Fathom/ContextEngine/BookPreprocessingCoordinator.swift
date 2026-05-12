@@ -111,6 +111,7 @@ actor BookPreprocessingCoordinator {
             }
 
             let chapterID = UUID()
+            let hrefString = "\(link.href)"
 
             let extraction = try ParagraphIndexer.extractParagraphs(
                 from: html,
@@ -122,6 +123,7 @@ actor BookPreprocessingCoordinator {
             try await persistChapterAndParagraphs(
                 bookID: bookID,
                 chapterID: chapterID,
+                href: hrefString,
                 indexInBook: chapterIndex,
                 title: link.title ?? "Chapter \(chapterIndex + 1)",
                 paragraphs: extraction.paragraphs
@@ -137,6 +139,7 @@ actor BookPreprocessingCoordinator {
     private func persistChapterAndParagraphs(
         bookID: UUID,
         chapterID: UUID,
+        href: String?,
         indexInBook: Int,
         title: String?,
         paragraphs: [NarrativeParagraph]
@@ -148,6 +151,7 @@ actor BookPreprocessingCoordinator {
                 id: chapterID,
                 bookID: bookID,
                 indexInBook: indexInBook,
+                href: href,
                 title: title,
                 startParagraphID: nil,
                 endParagraphID: nil

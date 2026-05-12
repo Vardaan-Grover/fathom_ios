@@ -30,7 +30,8 @@ struct BackendAIClient: AIClient {
         let absoluteIndex =
             await NarrativeContextStore.shared.getAbsoluteIndex(
                 for: context.bookID,
-                selectedText: context.selectedText
+                selectedText: context.selectedText,
+                locatorJSON: nil
             ) ?? 0
 
         let query = "Explain this passage: \"\(context.selectedText)\""

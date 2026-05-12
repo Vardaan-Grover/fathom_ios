@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIconFile</key>
-	<string>FathomIcon</string>
+	<string>FathomIcon3</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

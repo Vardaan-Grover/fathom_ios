@@ -21,13 +21,15 @@ final class AICompanionViewModel: ObservableObject {
     private let bookID: UUID
     private let queryBookID: UUID
     private let passageText: String
+    private let locatorJSON: String?
     private var threadID: UUID?
     private var conversationHistory: [ConversationMessage] = []
 
-    init(bookID: UUID, backendBookID: UUID, passageText: String, threadID: UUID? = nil) {
+    init(bookID: UUID, backendBookID: UUID, passageText: String, locatorJSON: String?, threadID: UUID? = nil) {
         self.bookID = bookID
         self.queryBookID = backendBookID
         self.passageText = passageText
+        self.locatorJSON = locatorJSON
         self.threadID = threadID
 
         if let threadID,
@@ -48,7 +50,7 @@ final class AICompanionViewModel: ObservableObject {
                 id: UUID(),
                 bookID: bookID,
                 passageText: passageText,
-                locatorJSON: nil,
+                locatorJSON: locatorJSON,
                 chapterTitle: nil,
                 createdAt: Date(),
                 messages: []
@@ -74,7 +76,7 @@ final class AICompanionViewModel: ObservableObject {
         Task {
             let absoluteIndex =
                 await NarrativeContextStore.shared.getAbsoluteIndex(
-                    for: bookID, selectedText: passageText) ?? 0
+                    for: bookID, selectedText: passageText, locatorJSON: locatorJSON) ?? 0
             do {
                 let answer = try await BackendService.shared.queryBook(
                     bookID: queryBookID, absoluteIndex: absoluteIndex, query: trimmed,
@@ -120,6 +122,7 @@ struct AICompanionScreen: View {
         bookID: UUID,
         backendBookID: UUID,
         selectedText: String,
+        locatorJSON: String?,
         bookTitle: String,
         threadID: UUID? = nil,
         onDismiss: @escaping () -> Void
@@ -131,7 +134,7 @@ struct AICompanionScreen: View {
         self._viewModel = StateObject(
             wrappedValue: AICompanionViewModel(
                 bookID: bookID, backendBookID: backendBookID, passageText: selectedText,
-                threadID: threadID))
+                locatorJSON: locatorJSON, threadID: threadID))
     }
 
     var body: some View {
@@ -544,6 +547,7 @@ private struct GradientInputBar: View {
         backendBookID: UUID(),
         selectedText:
             "It was the best of times, it was the worst of times, it was the age of wisdom, it was the age of foolishness, it was the epoch of belief.",
+        locatorJSON: nil,
         bookTitle: "A Tale of Two Cities",
         onDismiss: {}
     )

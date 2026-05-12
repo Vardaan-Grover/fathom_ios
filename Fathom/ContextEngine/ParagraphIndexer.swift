@@ -18,7 +18,7 @@ struct ParagraphIndexer {
 
         var seen = Set<String>()
         for node in pNodes {
-            let text = try node.text().trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = Self.normalizeText(try node.text())
 
             if text.isEmpty || isLikelyJunk(text) { continue }
 
@@ -39,6 +39,16 @@ struct ParagraphIndexer {
         }
 
         return (paragraphs: paragraphs, currentAbsoluteIndex)
+    }
+
+    private nonisolated static func normalizeText(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\u{00AD}", with: "")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private nonisolated static func isLikelyJunk(_ text: String) -> Bool {

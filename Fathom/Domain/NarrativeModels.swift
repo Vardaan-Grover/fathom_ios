@@ -14,6 +14,7 @@ struct NarrativeChapter: Codable, FetchableRecord, PersistableRecord, Identifiab
     var id: UUID
     var bookID: UUID
     var indexInBook: Int
+    var href: String?
     var title: String?
     var startParagraphID: Int64?
     var endParagraphID: Int64?

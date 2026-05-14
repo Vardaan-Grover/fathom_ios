@@ -12,9 +12,15 @@ struct ReaderActionMenu: View {
     var aiEnabled: Bool = true
     var ingestionReady: Bool = true
     var hasBackendBookID: Bool = true
+    var isCurrentPageBookmarked: Bool = false
     var onOpenSettings: () -> Void
     var onOpenAIChats: () -> Void = {}
     var onOpenTOC: () -> Void = {}
+    var onOpenSearch: () -> Void = {}
+    var onOpenNotes: () -> Void = {}
+    var onOpenHighlights: () -> Void = {}
+    var onOpenBookmarks: () -> Void = {}
+    var onBookmark: () -> Void = {}
     var onScrubReleased: (Double) -> Void = { _ in }
 
     private var fg: Color { settings.colorTheme.foregroundColor }
@@ -62,6 +68,19 @@ struct ReaderActionMenu: View {
                     backgroundColor: bg
                 ) {
                     isPresented = false
+                    onOpenSearch()
+                }
+                .frame(width: 250, height: 45)
+
+                CustomButton(
+                    title: "Bookmarks",
+                    symbol: "bookmark.fill",
+                    isPresented: $isPresented,
+                    foregroundColor: fg,
+                    backgroundColor: bg
+                ) {
+                    isPresented = false
+                    onOpenBookmarks()
                 }
                 .frame(width: 250, height: 45)
 
@@ -78,20 +97,6 @@ struct ReaderActionMenu: View {
                 .frame(width: 250, height: 45)
 
                 HStack(spacing: 10) {
-                    CustomSectionButton(
-                        symbol: "textformat.size.smaller",
-                        isPresented: $isPresented,
-                        foregroundColor: fg, backgroundColor: bg
-                    ) {
-                        settings.fontSize = max(0.5, settings.fontSize - 0.1)
-                    }
-                    CustomSectionButton(
-                        symbol: "textformat.size.larger",
-                        isPresented: $isPresented,
-                        foregroundColor: fg, backgroundColor: bg
-                    ) {
-                        settings.fontSize = min(2.5, settings.fontSize + 0.1)
-                    }
                     if hasBackendBookID {
                         CustomSectionButton(
                             symbol: "sparkles",
@@ -104,10 +109,31 @@ struct ReaderActionMenu: View {
                         .opacity(aiEnabled ? 1.0 : 0.35)
                     }
                     CustomSectionButton(
-                        symbol: "bookmark",
+                        symbol: "highlighter",
                         isPresented: $isPresented,
                         foregroundColor: fg, backgroundColor: bg
-                    )
+                    ) {
+                        isPresented = false
+                        onOpenHighlights()
+                    }
+                    CustomSectionButton(
+                        symbol: "note.text",
+                        isPresented: $isPresented,
+                        foregroundColor: fg, backgroundColor: bg
+                    ) {
+                        isPresented = false
+                        onOpenNotes()
+                    }
+                    CustomSectionButton(
+                        symbol: isCurrentPageBookmarked ? "bookmark.fill" : "bookmark",
+                        isPresented: $isPresented,
+                        foregroundColor: isCurrentPageBookmarked
+                            ? Color(red: 0.78, green: 0.08, blue: 0.15) : fg,
+                        backgroundColor: bg
+                    ) {
+                        isPresented = false
+                        onBookmark()
+                    }
                 }
                 .font(.title3)
                 .fontWeight(.medium)

@@ -56,14 +56,13 @@ struct ReaderSettingsView: View {
                     .padding(.bottom, 16)
                 }
             }
-            .background(settings.colorTheme.backgroundColor.ignoresSafeArea())
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
             // Hide standard nav bar since we made a custom header
             .navigationBarHidden(true)
         }
-        .environment(\.colorScheme, settings.colorTheme.isDark ? .dark : .light)
         .presentationDragIndicator(.visible)
         .presentationDetents([.fraction(0.6)])
-        .presentationBackground(settings.colorTheme.backgroundColor)
+        .presentationBackground(Color(.systemGroupedBackground))
     }
 
     // MARK: - Top Segmented Row

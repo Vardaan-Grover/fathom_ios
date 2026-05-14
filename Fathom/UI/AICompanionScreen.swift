@@ -507,7 +507,7 @@ private struct GradientInputBar: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 22))
             .borderBeam(
-                border: .primary,
+                border: Color(UIColor.tertiarySystemBackground),
                 // beam: [Color(hex: "FF6EB4"), Color(hex: "7C86F0"), Color(hex: "4052E3")],
                 beam: [.green, .blue, .pink, .orange, .indigo],
                 beamBlur: 8,

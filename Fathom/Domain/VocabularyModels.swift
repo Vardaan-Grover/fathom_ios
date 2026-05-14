@@ -66,7 +66,7 @@ public struct DictionaryLicense: Codable, Equatable {
 
 // MARK: - Local Database Models
 
-public struct SavedWord: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecord {
+public struct SavedWord: Identifiable, Equatable, Hashable, Codable, FetchableRecord, PersistableRecord {
     public static let databaseTableName: String = "saved_words"
 
     public let id: UUID

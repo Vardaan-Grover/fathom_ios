@@ -11,20 +11,20 @@ struct RecentlyReadTile: View {
         Button(action: onTap) {
             ZStack(alignment: .leading) {
                 meshBackground
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
 
-                HStack(spacing: 14) {
+                HStack(spacing: 12) {
                     coverView
                     infoView
                     Spacer(minLength: 0)
                 }
-                .padding(14)
+                .padding(12)
             }
         }
         .buttonStyle(.plain)
-        .frame(height: 120)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 5)
+        .frame(height: 112)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
         .task { await loadColors() }
     }
 
@@ -59,11 +59,11 @@ struct RecentlyReadTile: View {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: 62, height: 88)
+                    .frame(width: 56, height: 80)
                     .clipped()
             } else {
                 (book.coverColor ?? Color.accentColor)
-                    .frame(width: 62, height: 88)
+                    .frame(width: 56, height: 80)
                     .overlay(
                         LinearGradient(
                             colors: [.black.opacity(0.28), .clear],
@@ -75,39 +75,39 @@ struct RecentlyReadTile: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 5))
-        .shadow(color: .black.opacity(0.35), radius: 8, x: 2, y: 4)
+        .shadow(color: .black.opacity(0.35), radius: 6, x: 2, y: 3)
     }
 
     // MARK: - Info
 
     private var infoView: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 3) {
             Text("Continue Reading")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.6))
                 .tracking(0.8)
                 .textCase(.uppercase)
 
             Text(book.title)
-                .font(.system(size: 15, weight: .bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.white)
                 .lineLimit(2)
 
             Text(book.author)
-                .font(.system(size: 12, weight: .regular))
+                .font(.system(size: 11, weight: .regular))
                 .foregroundStyle(.white.opacity(0.72))
                 .lineLimit(1)
 
-            Spacer(minLength: 4)
+            Spacer(minLength: 2)
 
             progressView
         }
     }
 
     private var progressView: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("\(Int((progress * 100).rounded()))%")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.8))
 
             GeometryReader { geo in

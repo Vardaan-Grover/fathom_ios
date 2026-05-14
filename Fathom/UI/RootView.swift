@@ -24,11 +24,27 @@ struct RootView: View {
     @ObservedObject var libraryViewModel: LibraryViewModel
     let bookRepository: BookRepository
 
+    @StateObject private var vocabularyTabViewModel: VocabularyTabViewModel
+
     @State private var activeTab: CustomTab = .library
     @State private var showImporter = false
     @State private var showShelfSheet = false
-    
+
     @Environment(\.showToast) private var showToast
+
+    init(
+        homeViewModel: HomeViewModel,
+        libraryViewModel: LibraryViewModel,
+        bookRepository: BookRepository,
+        vocabularyRepo: VocabularyRepository
+    ) {
+        self.homeViewModel = homeViewModel
+        self.libraryViewModel = libraryViewModel
+        self.bookRepository = bookRepository
+        _vocabularyTabViewModel = StateObject(
+            wrappedValue: VocabularyTabViewModel(vocabularyRepo: vocabularyRepo)
+        )
+    }
 
     var body: some View {
         TabView(selection: $activeTab) {
@@ -37,7 +53,7 @@ struct RootView: View {
                     .toolbarVisibility(.hidden, for: .tabBar)
             }
             Tab(value: .vocabulary) {
-                Text("Vocabulary")
+                VocabularyTabView(viewModel: vocabularyTabViewModel)
                     .toolbarVisibility(.hidden, for: .tabBar)
             }
             Tab(value: .settings) {
@@ -85,6 +101,19 @@ struct RootView: View {
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .vocabularyJumpToBook)) { note in
+            guard let bookID = note.userInfo?["bookID"] as? UUID else { return }
+            let locatorJSON = note.userInfo?["locatorJSON"] as? String
+            activeTab = .library
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                NotificationCenter.default.post(
+                    name: .homeScreenOpenReader,
+                    object: nil,
+                    userInfo: ["bookID": bookID, "locatorJSON": locatorJSON as Any]
+                )
+            }
         }
     }
 

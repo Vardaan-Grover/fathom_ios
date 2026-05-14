@@ -7,6 +7,7 @@ struct AuthFlowView: View {
     let homeViewModel: HomeViewModel
     let libraryViewModel: LibraryViewModel
     let bookRepository: BookRepository
+    let vocabularyRepo: VocabularyRepository
 
     @State private var sentEmail: String? = nil
 
@@ -19,7 +20,8 @@ struct AuthFlowView: View {
                 RootView(
                     homeViewModel: homeViewModel,
                     libraryViewModel: libraryViewModel,
-                    bookRepository: bookRepository
+                    bookRepository: bookRepository,
+                    vocabularyRepo: vocabularyRepo
                 )
                 .transition(.opacity)
             } else {

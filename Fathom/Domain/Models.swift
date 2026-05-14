@@ -156,7 +156,7 @@ extension ReaderColorTheme {
     }
 
     var dimColor: Color {
-        isDark ? .white.opacity(0.15) : .black.opacity(0.25)
+        isDark ? .black.opacity(0.45) : .black.opacity(0.35)
     }
 
     var displayName: String {
@@ -211,15 +211,17 @@ enum HighlightColor: String, Codable, CaseIterable {
     case green
     case blue
     case pink
+    case indigo
 }
 
 extension HighlightColor {
     var uiColor: UIColor {
         switch self {
-        case .yellow: return UIColor.systemYellow.withAlphaComponent(0.4)
-        case .green: return UIColor.systemGreen.withAlphaComponent(0.4)
-        case .blue: return UIColor.systemBlue.withAlphaComponent(0.4)
-        case .pink: return UIColor.systemPink.withAlphaComponent(0.4)
+        case .yellow: return UIColor(red: 1.00, green: 0.90, blue: 0.30, alpha: 1.0)
+        case .green:  return UIColor(red: 0.45, green: 0.90, blue: 0.55, alpha: 1.0)
+        case .blue:   return UIColor(red: 0.45, green: 0.75, blue: 1.00, alpha: 1.0)
+        case .pink:   return UIColor(red: 1.00, green: 0.60, blue: 0.75, alpha: 1.0)
+        case .indigo: return UIColor(red: 0.65, green: 0.60, blue: 1.00, alpha: 1.0)
         }
     }
 }
@@ -231,17 +233,89 @@ extension HighlightColor {
         case .green: return .green
         case .blue: return .blue
         case .pink: return .pink
+        case .indigo: return Color(.systemIndigo)
         }
     }
+
+    /// Colors available for plain text highlights (excludes note-only indigo).
+    static var highlightCases: [HighlightColor] { [.yellow, .green, .blue, .pink] }
 }
 
-struct Highlight: Identifiable, Codable {
+struct Highlight: Identifiable, Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "highlights"
+
     let id: UUID
     let bookID: UUID
     let locatorJSON: String
     let text: String
     let createdAt: Date
     var color: HighlightColor
+}
+
+struct Note: Identifiable, Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "notes"
+
+    let id: UUID
+    let bookID: UUID
+    let locatorJSON: String
+    let selectedText: String
+    var noteContent: String
+    let createdAt: Date
+    var chapterTitle: String?
+    var pageNumber: Int?
+    var highlightColor: HighlightColor
+
+    init(
+        id: UUID = UUID(),
+        bookID: UUID,
+        locatorJSON: String,
+        selectedText: String,
+        noteContent: String = "",
+        createdAt: Date = Date(),
+        chapterTitle: String? = nil,
+        pageNumber: Int? = nil,
+        highlightColor: HighlightColor = .indigo
+    ) {
+        self.id = id
+        self.bookID = bookID
+        self.locatorJSON = locatorJSON
+        self.selectedText = selectedText
+        self.noteContent = noteContent
+        self.createdAt = createdAt
+        self.chapterTitle = chapterTitle
+        self.pageNumber = pageNumber
+        self.highlightColor = highlightColor
+    }
+}
+
+struct Bookmark: Identifiable, Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "bookmarks"
+
+    let id: UUID
+    let bookID: UUID
+    let locatorJSON: String
+    let progression: Double
+    var chapterTitle: String?
+    var pageNumber: Int?
+    let createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        bookID: UUID,
+        locatorJSON: String,
+        progression: Double,
+        chapterTitle: String? = nil,
+        pageNumber: Int? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.bookID = bookID
+        self.locatorJSON = locatorJSON
+        self.progression = progression
+        self.chapterTitle = chapterTitle
+        self.pageNumber = pageNumber
+        self.createdAt = createdAt
+    }
 }
 
 enum AIMessageRole: String, Codable {

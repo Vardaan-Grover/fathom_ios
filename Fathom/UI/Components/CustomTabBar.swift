@@ -73,6 +73,6 @@ struct CustomTabBar<TabItemView: View>: UIViewRepresentable {
         aiClient: container.aiClient,
         preprocessingCoordinator: container.preprocessingCoordinator
     )
-    RootView(homeViewModel: homeVM, libraryViewModel: libraryVM, bookRepository: container.bookRepo)
+    RootView(homeViewModel: homeVM, libraryViewModel: libraryVM, bookRepository: container.bookRepo, vocabularyRepo: container.vocabularyRepo)
         .task { await homeVM.load() }
 }

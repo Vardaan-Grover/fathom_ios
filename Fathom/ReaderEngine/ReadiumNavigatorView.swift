@@ -15,7 +15,9 @@ import SwiftUI
         var onTap: (@MainActor (CGPoint, CGSize) -> Void)?
         var onExplain: (@MainActor (String, String) -> Void)?
         var onAddNote: (@MainActor (String, String) -> Void)?
+        var onEditNote: (@MainActor (UUID, String, String) -> Void)?
         var onDefine: (@MainActor (String, String) -> Void)?
+        var applySearchHighlight: (@MainActor (String) -> Void)?
     }
 
     final class ReaderContainerViewController: UIViewController,
@@ -24,9 +26,12 @@ import SwiftUI
     {
         var onExplain: ((String, String) -> Void)?
         var onAddNote: ((String, String) -> Void)?
+        var onEditNote: ((UUID, String, String) -> Void)?
         var onDefine: ((String, String) -> Void)?
         var bookID: UUID = UUID()
         var aiEnabled: Bool = true
+        private(set) var pendingNoteID: UUID?
+        private(set) var pendingHighlightID: UUID?
         private(set) var navigator: EPUBNavigatorViewController?
         private var editMenuInteraction: UIEditMenuInteraction?
 
@@ -51,6 +56,7 @@ import SwiftUI
             pendingText = text
             pendingLocatorJSON = locatorJSON
             pendingIsSingleWord = text.split(whereSeparator: \.isWhitespace).count == 1
+            pendingNoteID = nil  // fresh selection: not a note tap
 
             // Convert to self.view coordinates and store for targetRectFor delegate
             lastSelectionRect = navView.convert(frame, to: view)
@@ -91,25 +97,63 @@ import SwiftUI
             suggestedActions: [UIMenuElement]
         ) -> UIMenu? {
 
+            let isTappingDecoration = pendingNoteID != nil || pendingHighlightID != nil
+
+            // "Highlight" behavior:
+            // - fresh selection    → add a new highlight (color picker)
+            // - note tap           → change the note's highlight color
+            // - highlight tap      → change color or remove via HighlightMenuView
             let highlightAction = UIAction(
                 title: "Highlight", image: UIImage(systemName: "highlighter")
             ) { [weak self] _ in
                 guard let self else { return }
-                navigator?.clearSelection()
-                showColorPicker(text: pendingText, locatorJSON: pendingLocatorJSON)
+                if let noteID = pendingNoteID {
+                    let currentColor = NoteStore.shared
+                        .notes(forBookID: bookID)
+                        .first(where: { $0.id == noteID })?.highlightColor ?? .indigo
+                    showNoteColorPicker(for: noteID, currentColor: currentColor)
+                } else if let highlightID = pendingHighlightID {
+                    showExistingHighlightColorPicker(for: highlightID)
+                } else {
+                    navigator?.clearSelection()
+                    showColorPicker(text: pendingText, locatorJSON: pendingLocatorJSON)
+                }
             }
 
-            let addNoteAction = UIAction(
-                title: "Add Note", image: UIImage(systemName: "square.and.pencil")
-            ) { [weak self] _ in
-                guard let self else { return }
-                let text = pendingText
-                let locatorJSON = pendingLocatorJSON
-                navigator?.clearSelection()
-                onAddNote?(text, locatorJSON)
+            // "Add Note" ↔ "Edit Note" depending on context
+            let noteAction: UIAction
+            if let noteID = pendingNoteID {
+                noteAction = UIAction(
+                    title: "Edit Note", image: UIImage(systemName: "square.and.pencil")
+                ) { [weak self] _ in
+                    guard let self else { return }
+                    let capturedID = noteID
+                    let text = pendingText
+                    let locatorJSON = pendingLocatorJSON
+                    pendingNoteID = nil
+                    onEditNote?(capturedID, text, locatorJSON)
+                }
+            } else {
+                noteAction = UIAction(
+                    title: "Add Note", image: UIImage(systemName: "square.and.pencil")
+                ) { [weak self] _ in
+                    guard let self else { return }
+                    let text = pendingText
+                    let locatorJSON = pendingLocatorJSON
+                    // If adding a note on top of a standalone highlight, remove the
+                    // highlight — the note decoration replaces it visually.
+                    if let highlightID = pendingHighlightID {
+                        HighlightStore.shared.delete(id: highlightID)
+                        applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
+                        pendingHighlightID = nil
+                    } else {
+                        navigator?.clearSelection()
+                    }
+                    onAddNote?(text, locatorJSON)
+                }
             }
 
-            // Lead action depends on selection length: Define for single words, Ask AI for phrases
+            // Lead action: Define for single words, Ask AI for phrases.
             let leadAction: UIAction
             if pendingIsSingleWord {
                 leadAction = UIAction(
@@ -118,7 +162,9 @@ import SwiftUI
                     guard let self else { return }
                     let term = pendingText
                     let locatorJSON = pendingLocatorJSON
-                    navigator?.clearSelection()
+                    if !isTappingDecoration { navigator?.clearSelection() }
+                    pendingNoteID = nil
+                    pendingHighlightID = nil
                     onDefine?(term, locatorJSON)
                 }
             } else {
@@ -128,7 +174,9 @@ import SwiftUI
                     guard let self else { return }
                     let text = pendingText
                     let locatorJSON = pendingLocatorJSON
-                    navigator?.clearSelection()
+                    if !isTappingDecoration { navigator?.clearSelection() }
+                    pendingNoteID = nil
+                    pendingHighlightID = nil
                     onExplain?(text, locatorJSON)
                 }
             }
@@ -136,7 +184,7 @@ import SwiftUI
             // Primary group: visible immediately in the pill
             let primaryGroup = UIMenu(
                 options: .displayInline,
-                children: [leadAction, highlightAction, addNoteAction])
+                children: [leadAction, highlightAction, noteAction])
 
             // Secondary group: Copy and Share appear behind the > chevron
             let copyAction = UIAction(
@@ -235,7 +283,7 @@ import SwiftUI
                 let locator = try? Locator(jsonString: locatorJSON)
             {
                 // Vibrant purple that is distinct from the standard highlight colors
-                let aiTint = UIColor(red: 0.48, green: 0.53, blue: 0.94, alpha: 0.55)
+                let aiTint = UIColor(red: 0.48, green: 0.53, blue: 0.94, alpha: 1.0)
                 let decoration = Decoration(
                     id: "ai_query_highlight",
                     locator: locator,
@@ -247,6 +295,19 @@ import SwiftUI
             }
         }
 
+        func applyTemporarySearchHighlight(locatorJSON: String) {
+            guard let navigator, let locator = try? Locator(jsonString: locatorJSON) else { return }
+            let yellow = UIColor.systemYellow.withAlphaComponent(0.55)
+            navigator.apply(
+                decorations: [Decoration(id: "search_result", locator: locator, style: .highlight(tint: yellow))],
+                in: "search_result"
+            )
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(2.5))
+                self?.navigator?.apply(decorations: [], in: "search_result")
+            }
+        }
+
         func setupHighlightInteractions() {
             guard let navigator = navigator else { return }
             navigator.observeDecorationInteractions(inGroup: "highlights") { [weak self] event in
@@ -255,19 +316,146 @@ import SwiftUI
                 }
                 showHighlightMenu(for: highlightID, at: event.point)
             }
+
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleHighlightsDidChange(_:)),
+                name: HighlightStore.didChangeNotification,
+                object: nil
+            )
+        }
+
+        @objc private func handleHighlightsDidChange(_ notification: Notification) {
+            guard let changedBookID = notification.object as? UUID,
+                  changedBookID == bookID
+            else { return }
+            applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
+        }
+
+        func applyNoteHighlights(_ notes: [Note]) {
+            guard let navigator = navigator else { return }
+
+            // Background highlight using the note's chosen color
+            let highlights: [Decoration] = notes.compactMap { note in
+                guard let locator = try? Locator(jsonString: note.locatorJSON) else { return nil }
+                return Decoration(
+                    id: note.id.uuidString,
+                    locator: locator,
+                    style: .highlight(tint: note.highlightColor.uiColor)
+                )
+            }
+            navigator.apply(decorations: highlights, in: "note_highlights")
+
+            // Underline tinted to match each note's highlight color
+            let underlines: [Decoration] = notes.compactMap { note in
+                guard let locator = try? Locator(jsonString: note.locatorJSON) else { return nil }
+                return Decoration(
+                    id: "\(note.id.uuidString)_ul",
+                    locator: locator,
+                    style: .underline(tint: note.highlightColor.uiColor)
+                )
+            }
+            navigator.apply(decorations: underlines, in: "note_underlines")
+        }
+
+        func setupNoteInteractions() {
+            guard let navigator = navigator else { return }
+            navigator.observeDecorationInteractions(inGroup: "note_highlights") { [weak self] event in
+                guard let self, let noteID = UUID(uuidString: event.decoration.id) else { return }
+                showNoteMenu(for: noteID, at: event.point)
+            }
+
+            // Observe NoteStore writes and reapply decorations immediately on the main thread.
+            // This bypasses SwiftUI's updateUIViewController timing entirely.
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleNotesDidChange(_:)),
+                name: NoteStore.didChangeNotification,
+                object: nil
+            )
+        }
+
+        @objc private func handleNotesDidChange(_ notification: Notification) {
+            guard let changedBookID = notification.object as? UUID,
+                  changedBookID == bookID
+            else { return }
+            applyNoteHighlights(NoteStore.shared.notes(forBookID: bookID))
+        }
+
+        private func showNoteMenu(for noteID: UUID, at navigatorPoint: CGPoint?) {
+            guard let note = NoteStore.shared.notes(forBookID: bookID).first(where: { $0.id == noteID })
+            else { return }
+
+            pendingText = note.selectedText
+            pendingLocatorJSON = note.locatorJSON
+            pendingIsSingleWord = note.selectedText.split(whereSeparator: \.isWhitespace).count == 1
+            pendingNoteID = noteID
+
+            if let pt = navigatorPoint, let navView = navigator?.view {
+                let converted = navView.convert(pt, to: view)
+                lastSelectionRect = CGRect(x: converted.x, y: converted.y, width: 1, height: 1)
+            }
+
+            presentMenu()
+        }
+
+        private func showNoteColorPicker(for noteID: UUID, currentColor: HighlightColor) {
+            let content = NoteHighlightColorPickerView(
+                currentColor: currentColor,
+                onSelect: { [weak self] color in
+                    guard let self else { return }
+                    NoteStore.shared.updateHighlightColor(id: noteID, color: color)
+                    applyNoteHighlights(NoteStore.shared.notes(forBookID: bookID))
+                }
+            )
+
+            let host = UIHostingController(rootView: content)
+            host.modalPresentationStyle = .popover
+            // 5 circles × 34pt + 4 gaps × 14pt + 2 × 12pt padding
+            host.preferredContentSize = CGSize(width: 258, height: 58)
+
+            if let popover = host.popoverPresentationController {
+                popover.sourceView = view
+                popover.sourceRect = lastSelectionRect
+                popover.permittedArrowDirections = [.up, .down]
+                popover.delegate = self
+            }
+
+            present(host, animated: true)
         }
 
         private func showHighlightMenu(for highlightID: UUID, at navigatorPoint: CGPoint?) {
+            guard let highlight = HighlightStore.shared.highlights(forBookID: bookID)
+                .first(where: { $0.id == highlightID })
+            else { return }
+
+            pendingText = highlight.text
+            pendingLocatorJSON = highlight.locatorJSON
+            pendingIsSingleWord = highlight.text.split(whereSeparator: \.isWhitespace).count == 1
+            pendingHighlightID = highlightID
+            pendingNoteID = nil
+
+            if let pt = navigatorPoint, let navView = navigator?.view {
+                let converted = navView.convert(pt, to: view)
+                lastSelectionRect = CGRect(x: converted.x, y: converted.y, width: 1, height: 1)
+            }
+
+            presentMenu()
+        }
+
+        private func showExistingHighlightColorPicker(for highlightID: UUID) {
             let content = HighlightMenuView(
                 onChangeColor: { [weak self] color in
                     guard let self else { return }
                     HighlightStore.shared.updateColor(id: highlightID, color: color)
                     applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
+                    pendingHighlightID = nil
                 },
                 onRemove: { [weak self] in
                     guard let self else { return }
                     HighlightStore.shared.delete(id: highlightID)
                     applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
+                    pendingHighlightID = nil
                 }
             )
 
@@ -277,13 +465,7 @@ import SwiftUI
 
             if let popover = host.popoverPresentationController {
                 popover.sourceView = view
-                let anchorPoint: CGPoint
-                if let pt = navigatorPoint, let navView = navigator?.view {
-                    anchorPoint = navView.convert(pt, to: view)
-                } else {
-                    anchorPoint = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
-                }
-                popover.sourceRect = CGRect(x: anchorPoint.x, y: anchorPoint.y, width: 0, height: 0)
+                popover.sourceRect = lastSelectionRect
                 popover.permittedArrowDirections = [.up, .down]
                 popover.delegate = self
             }
@@ -302,6 +484,7 @@ import SwiftUI
         var bookID: UUID = UUID()
         var aiQueryLocatorJSON: String? = nil
         var aiEnabled: Bool = true
+        var notesVersion: Int = 0
 
         class Coordinator: NSObject, EPUBNavigatorDelegate, UIGestureRecognizerDelegate {
             var onLocationChange: (Locator) -> Void
@@ -383,9 +566,18 @@ import SwiftUI
         func makeUIViewController(context: Context) -> UIViewController {
             let navigator: EPUBNavigatorViewController
             do {
+                let config = EPUBNavigatorViewController.Configuration(
+                    decorationTemplates: HTMLDecorationTemplate.defaultTemplates(
+                        lineWeight: 2,
+                        cornerRadius: 5,
+                        alpha: 0.55,
+                        experimentalPositioning: true
+                    )
+                )
                 navigator = try EPUBNavigatorViewController(
                     publication: publication,
                     initialLocation: initialLocation,
+                    config: config,
                     httpServer: ReadiumStack.shared.httpServer
                 )
             } catch {
@@ -431,12 +623,21 @@ import SwiftUI
             container.onAddNote = { [commands] text, locatorJSON in
                 commands?.onAddNote?(text, locatorJSON)
             }
+            container.onEditNote = { [commands] noteID, text, locatorJSON in
+                commands?.onEditNote?(noteID, text, locatorJSON)
+            }
             container.onDefine = { [commands] text, locatorJSON in
                 commands?.onDefine?(text, locatorJSON)
             }
 
+            commands?.applySearchHighlight = { [weak container] locatorJSON in
+                container?.applyTemporarySearchHighlight(locatorJSON: locatorJSON)
+            }
+
             container.applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
+            container.applyNoteHighlights(NoteStore.shared.notes(forBookID: bookID))
             container.setupHighlightInteractions()
+            container.setupNoteInteractions()
 
             context.coordinator.container = container
 
@@ -480,6 +681,7 @@ import SwiftUI
             }
 
             container.applyAIQueryHighlight(locatorJSON: aiQueryLocatorJSON)
+            container.applyNoteHighlights(NoteStore.shared.notes(forBookID: bookID))
         }
     }
 #endif

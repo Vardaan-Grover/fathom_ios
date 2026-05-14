@@ -235,6 +235,50 @@ final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v12_add_notes") { db in
+            // highlightColor added in v13; keep this migration unchanged so
+            // existing installs that already ran v12 don't lose data.
+            try db.create(table: "notes") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("bookID", .text).notNull().indexed().references("books", onDelete: .cascade)
+                t.column("locatorJSON", .text).notNull()
+                t.column("selectedText", .text).notNull()
+                t.column("noteContent", .text).notNull().defaults(to: "")
+                t.column("createdAt", .datetime).notNull().indexed()
+                t.column("chapterTitle", .text)
+                t.column("pageNumber", .integer)
+            }
+        }
+
+        migrator.registerMigration("v13_add_note_highlight_color") { db in
+            try db.alter(table: "notes") { t in
+                t.add(column: "highlightColor", .text).notNull().defaults(to: "indigo")
+            }
+        }
+
+        migrator.registerMigration("v14_create_highlights") { db in
+            try db.create(table: "highlights") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("bookID", .text).notNull().indexed().references("books", onDelete: .cascade)
+                t.column("locatorJSON", .text).notNull()
+                t.column("text", .text).notNull()
+                t.column("createdAt", .datetime).notNull().indexed()
+                t.column("color", .text).notNull().defaults(to: "yellow")
+            }
+        }
+
+        migrator.registerMigration("v15_create_bookmarks") { db in
+            try db.create(table: "bookmarks") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("bookID", .text).notNull().indexed().references("books", onDelete: .cascade)
+                t.column("locatorJSON", .text).notNull()
+                t.column("progression", .double).notNull()
+                t.column("chapterTitle", .text)
+                t.column("pageNumber", .integer)
+                t.column("createdAt", .datetime).notNull().indexed()
+            }
+        }
+
         return migrator
     }
 

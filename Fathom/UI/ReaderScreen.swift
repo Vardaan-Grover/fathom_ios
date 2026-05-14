@@ -20,10 +20,24 @@ struct ReaderScreen: View {
     @State private var isShowingAIProcessingAlert = false
     @State private var isShowingTOC = false
     @State private var pendingTOCLocatorJSON: String? = nil
+    @State private var isShowingNotesList = false
+    @State private var pendingNotesListLocatorJSON: String? = nil
+    @State private var isShowingHighlightsList = false
+    @State private var pendingHighlightsLocatorJSON: String? = nil
+    @State private var isShowingBookmarksList = false
+    @State private var pendingBookmarksLocatorJSON: String? = nil
+    @State private var bookmarks: [Bookmark] = []
+    @State private var parsedBookmarkLocators: [ParsedBookmarkLocator] = []
 
     // Vocabulary State
     @State private var definedWord: String?
     @State private var definedLocatorJSON: String?
+
+    // Note State
+    @State private var pendingNoteText: String?
+    @State private var pendingNoteLocatorJSON: String?
+    @State private var pendingEditNote: Note?
+    @State private var notesVersion: Int = 0
 
     @State private var isActionButtonPresented = false
     @State private var settings: ReaderSettings = ReaderSettingsStore.shared.load()
@@ -33,6 +47,9 @@ struct ReaderScreen: View {
     @State private var currentProgression: Double = 0.0
     @State private var currentLocator: Locator?
     @StateObject private var navigationHistory = ReaderNavigationHistory()
+    @StateObject private var searchState = BookSearchState()
+    @State private var isShowingSearch = false
+    @State private var pendingSearchLocatorJSON: String? = nil
     @State private var isScrubbing: Bool = false
     @State private var scrubTargetProgression: Double = 0.0
     @StateObject private var loader = PublicationLoader()
@@ -44,19 +61,25 @@ struct ReaderScreen: View {
 
     private var aiReady: Bool { aiEnabled && ingestionStatus == .completed }
 
-    // Current chapter title derived from the table of contents and positions.
-    // Mirrors the logic used in the scrub preview so the shown chapter matches
-    // what the TOC and scrub preview display.
+    private var isCurrentPageBookmarked: Bool {
+        bookmarkOnCurrentPage(
+            parsedLocators: parsedBookmarkLocators,
+            currentLocator: currentLocator,
+            currentProgression: currentProgression,
+            positions: positions,
+            isScrolling: settings.layout == .scrolling
+        )
+    }
+
     private var chapterTitle: String? {
-        // Prefer TOC-derived titles when available so the UI matches TableOfContentsSheet
         guard !tableOfContents.isEmpty else { return currentLocator?.title }
 
         let prog = currentLocator?.locations.totalProgression ?? currentProgression
 
         var markers: [(prog: Double, title: String)] = []
-        for link in tableOfContents {
-            guard let title = link.title, !title.isEmpty else { continue }
-            let linkHref = "\(link.href)".components(separatedBy: "#").first ?? "\(link.href)"
+        for entry in flattenedTOCEntries(tableOfContents) {
+            guard !entry.breadcrumbTitle.isEmpty else { continue }
+            let linkHref = "\(entry.link.href)".components(separatedBy: "#").first ?? "\(entry.link.href)"
             let linkFilename = linkHref.split(separator: "/").last.map(String.init) ?? linkHref
 
             let match =
@@ -67,7 +90,7 @@ struct ReaderScreen: View {
                 })
 
             if let pos = match, let p = pos.locations.totalProgression {
-                markers.append((prog: p, title: title))
+                markers.append((prog: p, title: entry.breadcrumbTitle))
             }
         }
 
@@ -140,15 +163,27 @@ struct ReaderScreen: View {
                     settings: settings,
                     bookID: bookID,
                     aiQueryLocatorJSON: aiSelectedText != nil ? aiSelectedLocatorJSON : nil,
-                    aiEnabled: aiEnabled && backendBookID != nil
+                    aiEnabled: aiEnabled && backendBookID != nil,
+                    notesVersion: notesVersion
                 )
                 .ignoresSafeArea()
                 .task {
                     if let links = try? await publication.tableOfContents().get() {
                         self.tableOfContents = links
+                        self.searchState.tableOfContents = links
                     }
+                    self.searchState.publication = publication
+                }
+                .onReceive(
+                    NotificationCenter.default.publisher(for: BookmarkStore.didChangeNotification)
+                ) { notification in
+                    guard let changedID = notification.object as? UUID, changedID == bookID else { return }
+                    bookmarks = BookmarkStore.shared.bookmarks(forBookID: bookID)
+                    parsedBookmarkLocators = parseBookmarkLocators(bookmarks)
                 }
                 .onAppear {
+                    bookmarks = BookmarkStore.shared.bookmarks(forBookID: bookID)
+                    parsedBookmarkLocators = parseBookmarkLocators(bookmarks)
                     commands.onExplain = { text, locatorJSON in
                         guard aiEnabled && backendBookID != nil else { return }
                         if ingestionStatus == .completed {
@@ -162,9 +197,18 @@ struct ReaderScreen: View {
                         definedLocatorJSON = locatorJSON
                         definedWord = text
                     }
+                    commands.onAddNote = { text, locatorJSON in
+                        pendingNoteLocatorJSON = locatorJSON
+                        pendingNoteText = text
+                    }
+                    commands.onEditNote = { noteID, _, _ in
+                        pendingEditNote = NoteStore.shared
+                            .notes(forBookID: bookID)
+                            .first(where: { $0.id == noteID })
+                    }
                     commands.onTap = { point, size in
-                        let leftEdge = size.width * 0.2
-                        let rightEdge = size.width * 0.8
+                        let leftEdge = size.width * 0.1
+                        let rightEdge = size.width * 0.9
                         if point.x < leftEdge {
                             Task { await commands.goLeft?() }
                         } else if point.x > rightEdge {
@@ -185,7 +229,6 @@ struct ReaderScreen: View {
                                     settings.colorTheme.dimColor.opacity(
                                         isActionButtonPresented ? 1 : 0)
                                 )
-                                .blur(radius: 20)
                                 .ignoresSafeArea()
                                 .allowsHitTesting(isActionButtonPresented)
                                 .onTapGesture { isActionButtonPresented = false }
@@ -217,6 +260,7 @@ struct ReaderScreen: View {
                                 aiEnabled: aiEnabled,
                                 ingestionReady: aiReady,
                                 hasBackendBookID: backendBookID != nil,
+                                isCurrentPageBookmarked: isCurrentPageBookmarked,
                                 onOpenSettings: { isShowingSettings = true },
                                 onOpenAIChats: {
                                     if aiReady {
@@ -229,6 +273,11 @@ struct ReaderScreen: View {
                                     }
                                 },
                                 onOpenTOC: { isShowingTOC = true },
+                                onOpenSearch: { isShowingSearch = true },
+                                onOpenNotes: { isShowingNotesList = true },
+                                onOpenHighlights: { isShowingHighlightsList = true },
+                                onOpenBookmarks: { isShowingBookmarksList = true },
+                                onBookmark: { handleBookmarkToggle() },
                                 onScrubReleased: { targetProgression in
                                     handleScrubReleased(progression: targetProgression)
                                 }
@@ -237,6 +286,16 @@ struct ReaderScreen: View {
                             .allowsHitTesting(isShowingBars)
                         }
 
+                        // Bookmark corner ribbon (paginated) / side-rail markers (scroll)
+                        BookmarkVisualOverlay(
+                            bookmarks: bookmarks,
+                            parsedLocators: parsedBookmarkLocators,
+                            positions: positions,
+                            currentLocator: currentLocator,
+                            currentProgression: currentProgression,
+                            isScrolling: settings.layout == .scrolling,
+                            isShowingBars: isShowingBars
+                        )
                     }
                 }
                 .sheet(
@@ -276,6 +335,81 @@ struct ReaderScreen: View {
                                 )
                                 pendingTOCLocatorJSON = locator.jsonString
                             }
+                        }
+                    )
+                }
+                .sheet(
+                    isPresented: $isShowingNotesList,
+                    onDismiss: {
+                        guard let json = pendingNotesListLocatorJSON else { return }
+                        pendingNotesListLocatorJSON = nil
+                        if let currentLocator = currentLocator {
+                            navigationHistory.push(currentLocator)
+                        }
+                        Task { @MainActor in await commands.goToLocatorJSON?(json) }
+                    }
+                ) {
+                    NotesListView(
+                        bookID: bookID,
+                        onSelect: { locatorJSON in
+                            pendingNotesListLocatorJSON = locatorJSON
+                        }
+                    )
+                }
+                .sheet(
+                    isPresented: $isShowingHighlightsList,
+                    onDismiss: {
+                        guard let json = pendingHighlightsLocatorJSON else { return }
+                        pendingHighlightsLocatorJSON = nil
+                        if let currentLocator = currentLocator {
+                            navigationHistory.push(currentLocator)
+                        }
+                        Task { @MainActor in await commands.goToLocatorJSON?(json) }
+                    }
+                ) {
+                    HighlightsListView(
+                        bookID: bookID,
+                        onSelect: { locatorJSON in
+                            pendingHighlightsLocatorJSON = locatorJSON
+                        }
+                    )
+                }
+                .sheet(
+                    isPresented: $isShowingBookmarksList,
+                    onDismiss: {
+                        guard let json = pendingBookmarksLocatorJSON else { return }
+                        pendingBookmarksLocatorJSON = nil
+                        if let currentLocator = currentLocator {
+                            navigationHistory.push(currentLocator)
+                        }
+                        Task { @MainActor in await commands.goToLocatorJSON?(json) }
+                    }
+                ) {
+                    BookmarksListView(
+                        bookID: bookID,
+                        onSelect: { locatorJSON in
+                            pendingBookmarksLocatorJSON = locatorJSON
+                        }
+                    )
+                }
+                .sheet(
+                    isPresented: $isShowingSearch,
+                    onDismiss: {
+                        guard let json = pendingSearchLocatorJSON else { return }
+                        pendingSearchLocatorJSON = nil
+                        if let currentLocator = currentLocator {
+                            navigationHistory.push(currentLocator)
+                        }
+                        Task { @MainActor in
+                            await commands.goToLocatorJSON?(json)
+                            commands.applySearchHighlight?(json)
+                        }
+                    }
+                ) {
+                    SearchBookView(
+                        state: searchState,
+                        onSelect: { locatorJSON in
+                            pendingSearchLocatorJSON = locatorJSON
                         }
                     )
                 }
@@ -321,6 +455,59 @@ struct ReaderScreen: View {
                 )
             }
         }
+        .sheet(
+            isPresented: Binding(
+                get: { pendingNoteText != nil || pendingEditNote != nil },
+                set: {
+                    if !$0 {
+                        pendingNoteText = nil
+                        pendingNoteLocatorJSON = nil
+                        pendingEditNote = nil
+                    }
+                }
+            )
+        ) {
+            if let existing = pendingEditNote {
+                NoteSheetView(
+                    selectedText: existing.selectedText,
+                    locatorJSON: existing.locatorJSON,
+                    bookID: bookID,
+                    chapterTitle: existing.chapterTitle,
+                    pageNumber: existing.pageNumber,
+                    settings: settings,
+                    existingNote: existing,
+                    onSave: { updated in
+                        NoteStore.shared.update(updated)
+                        pendingEditNote = nil
+                        notesVersion += 1
+                    },
+                    onDelete: {
+                        NoteStore.shared.delete(id: existing.id)
+                        pendingEditNote = nil
+                    },
+                    onDismiss: { pendingEditNote = nil }
+                )
+            } else if let text = pendingNoteText {
+                NoteSheetView(
+                    selectedText: text,
+                    locatorJSON: pendingNoteLocatorJSON ?? "",
+                    bookID: bookID,
+                    chapterTitle: chapterTitle,
+                    pageNumber: currentPage > 0 ? currentPage : nil,
+                    settings: settings,
+                    onSave: { note in
+                        NoteStore.shared.add(note)
+                        pendingNoteText = nil
+                        pendingNoteLocatorJSON = nil
+                        notesVersion += 1
+                    },
+                    onDismiss: {
+                        pendingNoteText = nil
+                        pendingNoteLocatorJSON = nil
+                    }
+                )
+            }
+        }
         .fullScreenCover(
             isPresented: Binding(
                 get: { aiSelectedText != nil && aiEnabled && backendBookID != nil },
@@ -343,6 +530,21 @@ struct ReaderScreen: View {
         }
     }
 }
+extension ReaderScreen {
+    func handleBookmarkToggle() {
+        guard let locator = currentLocator, let locatorJSON = locator.jsonString else { return }
+        let added = BookmarkStore.shared.toggle(
+            bookID: bookID,
+            progression: currentProgression,
+            locatorJSON: locatorJSON,
+            chapterTitle: chapterTitle,
+            pageNumber: currentPage > 0 ? currentPage : nil
+        )
+        let generator = UIImpactFeedbackGenerator(style: added ? .medium : .light)
+        generator.impactOccurred()
+    }
+}
+
 extension ReaderScreen {
     func handleScrubReleased(progression: Double) {
         guard totalPages > 0, !positions.isEmpty else { return }
@@ -387,18 +589,12 @@ struct ScrubPreviewPopover: View {
 
     private var chapterTitle: String? {
         guard !positions.isEmpty else { return nil }
-
-        // Use only the top-level TOC entries — the same set that TableOfContentsSheet
-        // displays — so the shown title always matches what the reader sees in the TOC.
         guard !tableOfContents.isEmpty else { return projectedLocator?.title }
 
-        // For each TOC entry find the totalProgression of the first position whose
-        // spine item matches. Falling back to filename-only comparison handles the
-        // common case where position hrefs and TOC hrefs have different base paths.
         var markers: [(prog: Double, title: String)] = []
-        for link in tableOfContents {
-            guard let title = link.title, !title.isEmpty else { continue }
-            let linkHref = "\(link.href)".components(separatedBy: "#").first ?? "\(link.href)"
+        for entry in flattenedTOCEntries(tableOfContents) {
+            guard !entry.breadcrumbTitle.isEmpty else { continue }
+            let linkHref = "\(entry.link.href)".components(separatedBy: "#").first ?? "\(entry.link.href)"
             let linkFilename = linkHref.split(separator: "/").last.map(String.init) ?? linkHref
 
             let match =
@@ -409,14 +605,13 @@ struct ScrubPreviewPopover: View {
                 })
 
             if let pos = match, let prog = pos.locations.totalProgression {
-                markers.append((prog: prog, title: title))
+                markers.append((prog: prog, title: entry.breadcrumbTitle))
             }
         }
 
         guard !markers.isEmpty else { return projectedLocator?.title }
         markers.sort { $0.prog < $1.prog }
 
-        // The current chapter is the last one whose start progression ≤ scrub position.
         return markers.last(where: { $0.prog <= progression })?.title ?? markers.first?.title
     }
 
@@ -480,5 +675,190 @@ final class ReaderNavigationHistory: ObservableObject {
 
     func clear() {
         history.removeAll()
+    }
+}
+
+// MARK: - Bookmark Locator Helpers
+
+struct ParsedBookmarkLocator {
+    let id: UUID
+    let href: String
+    let inChapterProg: Double
+    let totalProg: Double
+}
+
+/// Parse bookmark locators once; called only when the bookmarks array changes.
+private func parseBookmarkLocators(_ bookmarks: [Bookmark]) -> [ParsedBookmarkLocator] {
+    bookmarks.compactMap { b in
+        guard let loc = try? Locator(jsonString: b.locatorJSON) else { return nil }
+        return ParsedBookmarkLocator(
+            id: b.id,
+            href: "\(loc.href)",
+            inChapterProg: loc.locations.progression ?? 0,
+            totalProg: b.progression
+        )
+    }
+}
+
+/// Returns true if any parsed bookmark falls on the current rendered page.
+///
+/// Paginated mode: uses the positions array to determine the exact in-chapter
+/// progression range for the current page, then checks if any bookmark's
+/// in-chapter progression falls within that range. Self-corrects after font-size
+/// changes because both the stored progression and the current positions list
+/// use the same (pageIndex / totalPages) formula.
+///
+/// Scroll mode: matches by same chapter + in-chapter progression within 5%.
+private func bookmarkOnCurrentPage(
+    parsedLocators: [ParsedBookmarkLocator],
+    currentLocator: Locator?,
+    currentProgression: Double,
+    positions: [Locator],
+    isScrolling: Bool
+) -> Bool {
+    guard !parsedLocators.isEmpty else { return false }
+
+    guard let current = currentLocator else {
+        // No locator yet — tight totalProgression fallback
+        return parsedLocators.contains { abs($0.totalProg - currentProgression) <= 0.003 }
+    }
+
+    let currentHref = "\(current.href)"
+
+    if isScrolling {
+        // Scroll mode: same chapter + in-chapter progression within 5%
+        let currentProg = current.locations.progression ?? currentProgression
+        return parsedLocators.contains { b in
+            b.href == currentHref && abs(b.inChapterProg - currentProg) <= 0.05
+        }
+    }
+
+    // Paginated mode: range check using current positions list
+    let resourcePositions = positions.filter { "\($0.href)" == currentHref }
+    guard !resourcePositions.isEmpty,
+          let idx = resourcePositions.firstIndex(where: {
+              $0.locations.position == current.locations.position
+          }) else {
+        // Positions not yet loaded or page not found — tight fallback
+        return parsedLocators.contains { abs($0.totalProg - currentProgression) <= 0.003 }
+    }
+
+    let rangeStart = resourcePositions[idx].locations.progression ?? 0.0
+    let rangeEnd = idx + 1 < resourcePositions.count
+        ? (resourcePositions[idx + 1].locations.progression ?? 1.0)
+        : 1.0
+
+    return parsedLocators.contains { b in
+        b.href == currentHref &&
+        b.inChapterProg >= rangeStart &&
+        b.inChapterProg < rangeEnd
+    }
+}
+
+// MARK: - Bookmark Visual Overlay
+
+struct BookmarkVisualOverlay: View {
+    let bookmarks: [Bookmark]
+    let parsedLocators: [ParsedBookmarkLocator]
+    let positions: [Locator]
+    let currentLocator: Locator?
+    let currentProgression: Double
+    let isScrolling: Bool
+    let isShowingBars: Bool
+
+    private static let crimson = Color(red: 0.78, green: 0.08, blue: 0.15)
+
+    private var isBookmarked: Bool {
+        bookmarkOnCurrentPage(
+            parsedLocators: parsedLocators,
+            currentLocator: currentLocator,
+            currentProgression: currentProgression,
+            positions: positions,
+            isScrolling: isScrolling
+        )
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let topInset = proxy.safeAreaInsets.top
+            let yOffset = isShowingBars ? topInset : 0.0
+
+            Group {
+                if isScrolling {
+                    scrollContent(proxy: proxy, yOffset: yOffset)
+                } else {
+                    paginatedContent(yOffset: yOffset)
+                }
+            }
+            .animation(.spring(response: 0.4, dampingFraction: 0.75), value: isBookmarked)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func paginatedContent(yOffset: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Spacer()
+                if isBookmarked {
+                    BookmarkRibbonShape()
+                        .fill(Self.crimson)
+                        .frame(width: 18, height: 52)
+                        .shadow(color: .black.opacity(0.25), radius: 3, x: -1, y: 2)
+                        .padding(.trailing, 22)
+                        .offset(y: yOffset)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private func scrollContent(proxy: GeometryProxy, yOffset: CGFloat) -> some View {
+        ZStack {
+            // Side-rail mini markers at proportional positions along right edge
+            ForEach(bookmarks) { bookmark in
+                BookmarkRibbonShape()
+                    .fill(Self.crimson.opacity(0.65))
+                    .frame(width: 10, height: 20)
+                    .position(
+                        x: proxy.size.width - 6,
+                        y: max(10, proxy.size.height * bookmark.progression)
+                    )
+            }
+
+            // Full corner ribbon when near a bookmark
+            if isBookmarked {
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        Spacer()
+                        BookmarkRibbonShape()
+                            .fill(Self.crimson)
+                            .frame(width: 18, height: 52)
+                            .shadow(color: .black.opacity(0.25), radius: 3, x: -1, y: 2)
+                            .padding(.trailing, 22)
+                            .offset(y: yOffset)
+                    }
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+    }
+}
+
+struct BookmarkRibbonShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let notchDepth = rect.width * 0.42
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY - notchDepth))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }

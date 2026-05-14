@@ -216,6 +216,15 @@ struct HomeScreen: View {
                 Task { await viewModel.load() }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .homeScreenOpenReader)) { note in
+            guard let bookID = note.userInfo?["bookID"] as? UUID else { return }
+            Task {
+                let books = await bookRepository.listBooks()
+                guard let book = books.first(where: { $0.id == bookID }), book.localURL != nil
+                else { return }
+                await MainActor.run { readerBook = book }
+            }
+        }
     }
 
     // MARK: - Delete animation

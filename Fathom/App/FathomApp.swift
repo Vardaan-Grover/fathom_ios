@@ -8,10 +8,12 @@ struct FathomApp: App {
     @StateObject private var themeManager = ThemeManager()
 
     private let bookRepository: BookRepository
+    private let vocabularyRepo: VocabularyRepository
 
     init() {
         let container = AppContainer.live()
         bookRepository = container.bookRepo
+        vocabularyRepo = container.vocabularyRepo
         _homeViewModel = StateObject(wrappedValue: HomeViewModel(
             bookRepository: container.bookRepo,
             categoryRepository: container.categoryRepo
@@ -31,7 +33,8 @@ struct FathomApp: App {
                 AuthFlowView(
                     homeViewModel: homeViewModel,
                     libraryViewModel: libraryViewModel,
-                    bookRepository: bookRepository
+                    bookRepository: bookRepository,
+                    vocabularyRepo: vocabularyRepo
                 )
                 .environmentObject(authService)
                 .task { await authService.startListening() }

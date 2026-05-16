@@ -210,8 +210,8 @@ struct WordDetailView: View {
                 .font(.system(size: 15, design: .serif))
                 .lineSpacing(4)
 
-            if let chapter = word.chapter {
-                Text(chapter)
+            if let title = word.bookTitle {
+                Text(title)
                     .font(theme.typography.caption)
                     .foregroundStyle(theme.colors.secondary)
                     .padding(.top, 2)

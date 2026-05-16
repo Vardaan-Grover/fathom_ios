@@ -43,123 +43,137 @@ struct ReaderActionMenu: View {
 
     @ViewBuilder
     private var menuContent: some View {
-        GlassEffectContainer(spacing: 10) {
-            VStack(spacing: 10) {
-                ContentsScrubberButton(
-                    isScrubbing: $isScrubbing,
-                    scrubTargetProgression: $scrubTargetProgression,
-                    currentProgression: currentProgression,
-                    isPresented: $isPresented,
-                    foregroundColor: fg,
-                    backgroundColor: bg,
-                    onTapTOC: {
-                        isPresented = false
-                        onOpenTOC()
-                    },
-                    onScrubReleased: onScrubReleased
-                )
-                .frame(width: 250, height: 45)
-
-                CustomButton(
-                    title: "Search",
-                    symbol: "magnifyingglass",
-                    isPresented: $isPresented,
-                    foregroundColor: fg,
-                    backgroundColor: bg
-                ) {
-                    isPresented = false
-                    onOpenSearch()
-                }
-                .frame(width: 250, height: 45)
-
-                CustomButton(
-                    title: "Bookmarks",
-                    symbol: "bookmark.fill",
-                    isPresented: $isPresented,
-                    foregroundColor: fg,
-                    backgroundColor: bg
-                ) {
-                    isPresented = false
-                    onOpenBookmarks()
-                }
-                .frame(width: 250, height: 45)
-
-                CustomButton(
-                    title: "Themes & Settings",
-                    symbol: "textformat.size",
-                    isPresented: $isPresented,
-                    foregroundColor: fg,
-                    backgroundColor: bg
-                ) {
-                    isPresented = false
-                    onOpenSettings()
-                }
-                .frame(width: 250, height: 45)
-
-                HStack(spacing: 10) {
-                    if hasBackendBookID {
-                        CustomSectionButton(
-                            symbol: "sparkles",
-                            isPresented: $isPresented,
-                            foregroundColor: fg, backgroundColor: bg
-                        ) {
-                            isPresented = false
-                            onOpenAIChats()
-                        }
-                        .opacity(aiEnabled ? 1.0 : 0.35)
-                    }
-                    CustomSectionButton(
-                        symbol: "highlighter",
-                        isPresented: $isPresented,
-                        foregroundColor: fg, backgroundColor: bg
-                    ) {
-                        isPresented = false
-                        onOpenHighlights()
-                    }
-                    CustomSectionButton(
-                        symbol: "note.text",
-                        isPresented: $isPresented,
-                        foregroundColor: fg, backgroundColor: bg
-                    ) {
-                        isPresented = false
-                        onOpenNotes()
-                    }
-                    CustomSectionButton(
-                        symbol: isCurrentPageBookmarked ? "bookmark.fill" : "bookmark",
-                        isPresented: $isPresented,
-                        foregroundColor: isCurrentPageBookmarked
-                            ? Color(red: 0.78, green: 0.08, blue: 0.15) : fg,
+        menuButtonsContainer
+            // Overlay on the container (no transforms applied here, so coordinates are reliable).
+            // frame(height: 0, alignment: .bottom) reports zero height to layout so the menu never
+            // resizes, but the popover content renders upward past the frame boundary — above the menu.
+            .overlay(alignment: .top) {
+                if isScrubbing {
+                    ScrubPreviewPopover(
+                        progression: scrubTargetProgression,
+                        positions: positions,
+                        tableOfContents: tableOfContents,
+                        foregroundColor: fg,
                         backgroundColor: bg
+                    )
+                    .frame(width: 250)
+                    .padding(.bottom, 12)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(height: 0, alignment: .bottom)
+                    .transition(.opacity)
+                }
+            }
+            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isScrubbing)
+    }
+
+    @ViewBuilder
+    private var menuButtonsContainer: some View {
+        if #available(iOS 26, *) {
+            GlassEffectContainer(spacing: 10) {
+                menuButtons
+            }
+        } else {
+            menuButtons
+        }
+    }
+
+    @ViewBuilder
+    private var menuButtons: some View {
+        VStack(spacing: 10) {
+            ContentsScrubberButton(
+                isScrubbing: $isScrubbing,
+                scrubTargetProgression: $scrubTargetProgression,
+                currentProgression: currentProgression,
+                isPresented: $isPresented,
+                foregroundColor: fg,
+                backgroundColor: bg,
+                onTapTOC: {
+                    isPresented = false
+                    onOpenTOC()
+                },
+                onScrubReleased: onScrubReleased
+            )
+            .frame(width: 250, height: 45)
+
+            CustomButton(
+                title: "Search",
+                symbol: "magnifyingglass",
+                isPresented: $isPresented,
+                foregroundColor: fg,
+                backgroundColor: bg
+            ) {
+                isPresented = false
+                onOpenSearch()
+            }
+            .frame(width: 250, height: 45)
+
+            CustomButton(
+                title: "Bookmarks",
+                symbol: "bookmark.fill",
+                isPresented: $isPresented,
+                foregroundColor: fg,
+                backgroundColor: bg
+            ) {
+                isPresented = false
+                onOpenBookmarks()
+            }
+            .frame(width: 250, height: 45)
+
+            CustomButton(
+                title: "Themes & Settings",
+                symbol: "textformat.size",
+                isPresented: $isPresented,
+                foregroundColor: fg,
+                backgroundColor: bg
+            ) {
+                isPresented = false
+                onOpenSettings()
+            }
+            .frame(width: 250, height: 45)
+
+            HStack(spacing: 10) {
+                if hasBackendBookID {
+                    CustomSectionButton(
+                        symbol: "sparkles",
+                        isPresented: $isPresented,
+                        foregroundColor: fg, backgroundColor: bg
                     ) {
                         isPresented = false
-                        onBookmark()
+                        onOpenAIChats()
                     }
+                    .opacity(aiEnabled ? 1.0 : 0.35)
                 }
-                .font(.title3)
-                .fontWeight(.medium)
-                .frame(width: 250, height: 50)
-            }
-        }
-        // Overlay on GlassEffectContainer (no transforms applied here, so coordinates are reliable).
-        // frame(height: 0, alignment: .bottom) reports zero height to layout so the menu never
-        // resizes, but the popover content renders upward past the frame boundary — above the menu.
-        .overlay(alignment: .top) {
-            if isScrubbing {
-                ScrubPreviewPopover(
-                    progression: scrubTargetProgression,
-                    positions: positions,
-                    tableOfContents: tableOfContents,
-                    foregroundColor: fg,
+                CustomSectionButton(
+                    symbol: "highlighter",
+                    isPresented: $isPresented,
+                    foregroundColor: fg, backgroundColor: bg
+                ) {
+                    isPresented = false
+                    onOpenHighlights()
+                }
+                CustomSectionButton(
+                    symbol: "note.text",
+                    isPresented: $isPresented,
+                    foregroundColor: fg, backgroundColor: bg
+                ) {
+                    isPresented = false
+                    onOpenNotes()
+                }
+                CustomSectionButton(
+                    symbol: isCurrentPageBookmarked ? "bookmark.fill" : "bookmark",
+                    isPresented: $isPresented,
+                    foregroundColor: isCurrentPageBookmarked
+                        ? Color(red: 0.78, green: 0.08, blue: 0.15) : fg,
                     backgroundColor: bg
-                )
-                .frame(width: 250)
-                .padding(.bottom, 12)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(height: 0, alignment: .bottom)
-                .transition(.opacity)
+                ) {
+                    isPresented = false
+                    onBookmark()
+                }
             }
+            .font(.title3)
+            .fontWeight(.medium)
+            .frame(width: 250, height: 50)
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isScrubbing)
     }
 }
 

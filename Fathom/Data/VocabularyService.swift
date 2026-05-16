@@ -41,7 +41,7 @@ public class VocabularyService {
     public func fetchWord(
         _ word: String, language: String = "en", includeTranslations: Bool = false
     ) async throws -> DictionaryWordEntry {
-        guard let encodedWord = word.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+        guard let encodedWord = word.lowercased().addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
             let encodedLanguage = language.addingPercentEncoding(
                 withAllowedCharacters: .urlPathAllowed)
         else {

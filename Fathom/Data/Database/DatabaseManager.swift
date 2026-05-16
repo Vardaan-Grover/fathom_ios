@@ -279,6 +279,12 @@ final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v16_add_book_title_to_saved_words") { db in
+            try db.alter(table: "saved_words") { t in
+                t.add(column: "bookTitle", .text)
+            }
+        }
+
         return migrator
     }
 

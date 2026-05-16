@@ -16,7 +16,7 @@ import SwiftUI
         var onExplain: (@MainActor (String, String) -> Void)?
         var onAddNote: (@MainActor (String, String) -> Void)?
         var onEditNote: (@MainActor (UUID, String, String) -> Void)?
-        var onDefine: (@MainActor (String, String) -> Void)?
+        var onDefine: (@MainActor (String, String, String?) -> Void)?
         var applySearchHighlight: (@MainActor (String) -> Void)?
     }
 
@@ -27,7 +27,7 @@ import SwiftUI
         var onExplain: ((String, String) -> Void)?
         var onAddNote: ((String, String) -> Void)?
         var onEditNote: ((UUID, String, String) -> Void)?
-        var onDefine: ((String, String) -> Void)?
+        var onDefine: ((String, String, String?) -> Void)?
         var bookID: UUID = UUID()
         var aiEnabled: Bool = true
         private(set) var pendingNoteID: UUID?
@@ -49,12 +49,13 @@ import SwiftUI
         }
 
         // Called by Coordinator when text is selected
-        func showMenuForSelection(text: String, locatorJSON: String, at frame: CGRect) {
+        func showMenuForSelection(text: String, locatorJSON: String, contextSentence: String?, at frame: CGRect) {
             guard let navView = navigator?.view else { return }
 
             // Store BEFORE presenting — the delegate is called synchronously inside presentEditMenu
             pendingText = text
             pendingLocatorJSON = locatorJSON
+            pendingContextSentence = contextSentence
             pendingIsSingleWord = text.split(whereSeparator: \.isWhitespace).count == 1
             pendingNoteID = nil  // fresh selection: not a note tap
 
@@ -88,6 +89,7 @@ import SwiftUI
 
         private var pendingText: String = ""
         private var pendingLocatorJSON: String = ""
+        private var pendingContextSentence: String? = nil
         private var pendingIsSingleWord: Bool = false
         private var lastSelectionRect: CGRect = .zero
 
@@ -165,7 +167,7 @@ import SwiftUI
                     if !isTappingDecoration { navigator?.clearSelection() }
                     pendingNoteID = nil
                     pendingHighlightID = nil
-                    onDefine?(term, locatorJSON)
+                    onDefine?(term, locatorJSON, pendingContextSentence)
                 }
             } else {
                 leadAction = UIAction(
@@ -520,7 +522,16 @@ import SwiftUI
                     let frame = selection.frame
                 else { return false }
 
-                container?.showMenuForSelection(text: text, locatorJSON: locatorJSON, at: frame)
+                let before = selection.locator.text.before ?? ""
+                let after = selection.locator.text.after ?? ""
+                let contextSentence = (before + text + after).trimmingCharacters(in: .whitespacesAndNewlines)
+
+                container?.showMenuForSelection(
+                    text: text,
+                    locatorJSON: locatorJSON,
+                    contextSentence: contextSentence.isEmpty ? nil : contextSentence,
+                    at: frame
+                )
 
                 return false
             }
@@ -626,8 +637,8 @@ import SwiftUI
             container.onEditNote = { [commands] noteID, text, locatorJSON in
                 commands?.onEditNote?(noteID, text, locatorJSON)
             }
-            container.onDefine = { [commands] text, locatorJSON in
-                commands?.onDefine?(text, locatorJSON)
+            container.onDefine = { [commands] text, locatorJSON, contextSentence in
+                commands?.onDefine?(text, locatorJSON, contextSentence)
             }
 
             commands?.applySearchHighlight = { [weak container] locatorJSON in

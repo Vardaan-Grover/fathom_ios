@@ -83,6 +83,9 @@ struct RootView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             customTabBar
                 .padding(.horizontal, 20)
+                .blur(radius: vocabularyTabViewModel.isCardExpanded ? 8 : 0)
+                .allowsHitTesting(!vocabularyTabViewModel.isCardExpanded)
+                .animation(.spring(duration: 0.42, bounce: 0.05), value: vocabularyTabViewModel.isCardExpanded)
         }
         .sheet(isPresented: $showShelfSheet) {
             NewShelfSheet { name, colorHex in
@@ -118,42 +121,66 @@ struct RootView: View {
     }
 
     private var customTabBar: some View {
-        GlassEffectContainer(spacing: 10) {
-            HStack(spacing: 10) {
-                GeometryReader { proxy in
-                    CustomTabBar(size: proxy.size, activeTab: $activeTab) { tab in
-                        VStack(spacing: 3) {
-                            Image(systemName: tab.symbol)
-                                .font(.system(size: 24, weight: .bold))
-                            Text(tab.rawValue)
-                                .font(.system(size: 10, weight: .medium))
-                        }
-                        .symbolVariant(.fill)
-                        .frame(maxWidth: .infinity)
-                    }
-                    .glassEffect(.regular.interactive(), in: .capsule)
-                }
+        tabBarContainer
+            .frame(height: 60)
+    }
 
-                Menu {
-                    Button {
-                        showImporter = true
-                    } label: {
-                        Label("Add Book", systemImage: "book.badge.plus")
-                    }
-                    Button {
-                        showShelfSheet = true
-                    } label: {
-                        Label("Add Shelf", systemImage: "folder.badge.plus")
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .foregroundColor(.primary)
-                        .font(.system(size: 22, weight: .medium))
-                        .frame(width: 60, height: 60)
-                }
-                .glassEffect(.regular.interactive(), in: .capsule)
+    @ViewBuilder
+    private var tabBarContainer: some View {
+        if #available(iOS 26, *) {
+            GlassEffectContainer(spacing: 10) {
+                tabBarItems
             }
+        } else {
+            tabBarItems
         }
-        .frame(height: 60)
+    }
+
+    private var tabBarItems: some View {
+        HStack(spacing: 10) {
+            GeometryReader { proxy in
+                CustomTabBar(size: proxy.size, activeTab: $activeTab) { tab in
+                    VStack(spacing: 3) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 24, weight: .bold))
+                        Text(tab.rawValue)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .symbolVariant(.fill)
+                    .frame(maxWidth: .infinity)
+                }
+                .interactiveGlassEffect()
+            }
+
+            Menu {
+                Button {
+                    showImporter = true
+                } label: {
+                    Label("Add Book", systemImage: "book.badge.plus")
+                }
+                Button {
+                    showShelfSheet = true
+                } label: {
+                    Label("Add Shelf", systemImage: "folder.badge.plus")
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .foregroundColor(.primary)
+                    .font(.system(size: 22, weight: .medium))
+                    .frame(width: 60, height: 60)
+            }
+            .interactiveGlassEffect()
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func interactiveGlassEffect() -> some View {
+        if #available(iOS 26, *) {
+            self.glassEffect(.regular.interactive(), in: .capsule)
+        } else {
+            self.background(.ultraThinMaterial, in: .capsule)
+        }
     }
 }

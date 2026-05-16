@@ -9,19 +9,34 @@ public struct VocabularySheetView: View {
     @FocusState private var wordFieldFocused: Bool
 
     public var body: some View {
-        GlassEffectContainer(spacing: 0) {
-            VStack(spacing: 0) {
-                header
-                Divider()
-                inflectedFormBanner
-                contentScrollView
+        sheetContainer
+            .edgesIgnoringSafeArea(.bottom)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.automatic)
+            .presentationBackground(.clear)
+    }
+
+    @ViewBuilder
+    private var sheetContainer: some View {
+        if #available(iOS 26, *) {
+            GlassEffectContainer(spacing: 0) {
+                sheetContent
             }
-            .animation(.easeInOut(duration: 0.22), value: viewModel.suggestedRootWord)
+        } else {
+            sheetContent
         }
-        .edgesIgnoringSafeArea(.bottom)
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.automatic)
-        .presentationBackground(.clear)
+    }
+
+    private var sheetContent: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            inflectedFormBanner
+            contextualCard
+            contentScrollView
+        }
+        .animation(.easeInOut(duration: 0.22), value: viewModel.suggestedRootWord)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: viewModel.rankedDefinition?.sense.definition)
     }
 
     // MARK: - Header
@@ -88,6 +103,24 @@ public struct VocabularySheetView: View {
                 Spacer()
 
                 HStack(spacing: 20) {
+                    if viewModel.contextSentence != nil {
+                        Button {
+                            Task { await viewModel.rankContextually() }
+                        } label: {
+                            if viewModel.isRanking {
+                                ProgressView()
+                                    .scaleEffect(0.75)
+                                    .frame(width: 18, height: 18)
+                            } else {
+                                Image(systemName: "sparkles")
+                                    .font(.body)
+                                    .foregroundColor(viewModel.rankedDefinition != nil ? .accentColor : .secondary)
+                                    .contentTransition(.symbolEffect(.replace))
+                            }
+                        }
+                        .disabled(viewModel.isRanking || viewModel.entry == nil)
+                    }
+
                     Button {
                         viewModel.playPronunciation()
                     } label: {
@@ -121,7 +154,7 @@ public struct VocabularySheetView: View {
     private var inflectedFormBanner: some View {
         if let root = viewModel.suggestedRootWord {
             Button {
-                Task { await viewModel.lookUp(root) }
+                Task { await viewModel.lookUp(root, isInflectedForm: true) }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.turn.up.left")
@@ -143,6 +176,67 @@ public struct VocabularySheetView: View {
             Divider()
                 .transition(.opacity)
         }
+    }
+
+    // MARK: - Contextual definition card
+
+    @ViewBuilder
+    private var contextualCard: some View {
+        if let ranked = viewModel.rankedDefinition,
+           let sentence = viewModel.contextSentence {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(ranked.isHighConfidence ? "In this context" : "Possibly in this context", systemImage: "sparkles")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text(attributedSentence(sentence: sentence, word: viewModel.word))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .italic()
+                    .lineLimit(3)
+
+                Divider()
+
+                HStack(alignment: .top, spacing: 8) {
+                    Text(ranked.partOfSpeech.uppercased())
+                        .font(.caption.bold())
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.accentColor.opacity(0.1))
+                        .cornerRadius(6)
+
+                    Text(ranked.sense.definition)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                }
+            }
+            .padding(14)
+            .background {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(.ultraThinMaterial)
+            }
+            .borderBeam(
+                border: Color(UIColor.tertiarySystemBackground),
+                beam: ranked.isHighConfidence
+                    ? [Color(hex: "FF6EB4"), Color(hex: "7C86F0"), Color(hex: "4052E3")]
+                    : [Color(hex: "8E9AAF"), Color(hex: "B0B8C8"), Color(hex: "8E9AAF")],
+                beamBlur: ranked.isHighConfidence ? 6 : 10,
+                cornerRadius: 14
+            )
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    private func attributedSentence(sentence: String, word: String) -> AttributedString {
+        var attributed = AttributedString(sentence)
+        if let range = attributed.range(of: word, options: .caseInsensitive) {
+            attributed[range].font = .subheadline.bold().italic()
+            attributed[range].foregroundColor = .primary
+        }
+        return attributed
     }
 
     // MARK: - No definition fallback
@@ -211,31 +305,8 @@ public struct VocabularySheetView: View {
                                 }
                             }
 
-                            ForEach(Array(dictEntry.senses.enumerated()), id: \.offset) {
-                                index, sense in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(alignment: .top) {
-                                        Text("\(index + 1).")
-                                            .font(.subheadline.bold())
-                                            .foregroundColor(.secondary)
-
-                                        Text(sense.definition)
-                                            .font(.body)
-                                            .foregroundColor(.primary)
-                                    }
-
-                                    if let examples = sense.examples, !examples.isEmpty {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            ForEach(examples, id: \.self) { example in
-                                                Text("\"\(example)\"")
-                                                    .font(.subheadline)
-                                                    .foregroundColor(.secondary)
-                                                    .italic()
-                                                    .padding(.leading, 20)
-                                            }
-                                        }
-                                    }
-                                }
+                            ForEach(Array(dictEntry.senses.enumerated()), id: \.offset) { index, sense in
+                                senseRow(sense: sense, index: index)
                             }
                         }
                         .padding(.vertical, 8)
@@ -250,6 +321,45 @@ public struct VocabularySheetView: View {
             .padding()
             .animation(.easeInOut(duration: 0.25), value: viewModel.isLoading)
             .animation(.easeInOut(duration: 0.25), value: viewModel.word)
+        }
+    }
+
+    // MARK: - Sense row
+
+    @ViewBuilder
+    private func senseRow(sense: DictionarySense, index: Int) -> some View {
+        let isMatch = viewModel.rankedDefinition?.sense.definition == sense.definition
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top) {
+                Text("\(index + 1).")
+                    .font(.subheadline.bold())
+                    .foregroundColor(.secondary)
+
+                Text(sense.definition)
+                    .font(.body)
+                    .foregroundColor(.primary)
+
+                Spacer()
+
+                if isMatch {
+                    Image(systemName: "sparkles")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+
+            if let examples = sense.examples, !examples.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(examples, id: \.self) { example in
+                        Text("\"\(example)\"")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .italic()
+                            .padding(.leading, 20)
+                    }
+                }
+            }
         }
     }
 

@@ -47,7 +47,10 @@ struct ReaderOverlay: View {
                     .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
             }
-            .background(Group { if isScrolling { Circle().glassEffect(.regular) } })
+            .background(Group { if isScrolling {
+                if #available(iOS 26, *) { Circle().glassEffect(.regular) }
+                else { Circle().fill(.ultraThinMaterial) }
+            } })
             .opacity(isActive ? 1 : 0)
             .allowsHitTesting(isActive)
 
@@ -59,7 +62,10 @@ struct ReaderOverlay: View {
                 .truncationMode(.tail)
                 .padding(.horizontal, isScrolling ? 14 : 0)
                 .padding(.vertical, isScrolling ? 6 : 0)
-                .background(Group { if isScrolling { Capsule().glassEffect(.regular) } })
+                .background(Group { if isScrolling {
+                    if #available(iOS 26, *) { Capsule().glassEffect(.regular) }
+                    else { Capsule().fill(.ultraThinMaterial) }
+                } })
                 .frame(maxWidth: .infinity, alignment: .center)
                 .opacity(isScrolling && !isActive ? 0 : 1)
 
@@ -94,8 +100,11 @@ struct ReaderOverlay: View {
                     .background(
                         Group {
                             if isScrolling {
-                                Capsule()
-                                    .glassEffect(.regular)
+                                if #available(iOS 26, *) {
+                                    Capsule().glassEffect(.regular)
+                                } else {
+                                    Capsule().fill(.ultraThinMaterial)
+                                }
                             }
                         }
                     )

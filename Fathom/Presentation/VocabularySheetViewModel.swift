@@ -14,6 +14,8 @@ final class VocabularySheetViewModel: ObservableObject {
     @Published public var isSaved: Bool = false
     @Published public var suggestedRootWord: String?
     @Published public var canGoBack: Bool = false
+    @Published private(set) var rankedDefinition: RankedDefinition?
+    @Published private(set) var isRanking: Bool = false
     private var savedWordID: UUID?
 
     private struct WordSnapshot {
@@ -23,6 +25,8 @@ final class VocabularySheetViewModel: ObservableObject {
         let isSaved: Bool
         let savedWordID: UUID?
         let suggestedRootWord: String?
+        let contextSentence: String?
+        let surfaceWord: String
     }
     private var navigationStack: [WordSnapshot] = []
 
@@ -30,15 +34,20 @@ final class VocabularySheetViewModel: ObservableObject {
     private let repository: VocabularyRepository
 
     let bookID: UUID?
+    let bookTitle: String?
     let chapter: String?
     let pageNumber: Int?
     let locatorJSON: String?
-    let contextSentence: String?
+    private(set) var contextSentence: String?
+    // The exact surface form of the word as it appears in contextSentence (may differ
+    // from `word` when the user navigates to a root/lemma via the inflected-form banner).
+    private(set) var surfaceWord: String = ""
 
     public init(
         word: String,
         language: String = "en",
         bookID: UUID? = nil,
+        bookTitle: String? = nil,
         chapter: String? = nil,
         pageNumber: Int? = nil,
         locatorJSON: String? = nil,
@@ -47,8 +56,10 @@ final class VocabularySheetViewModel: ObservableObject {
         repository: VocabularyRepository  // Injected properly via Container
     ) {
         self.word = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.surfaceWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
         self.language = language
         self.bookID = bookID
+        self.bookTitle = bookTitle
         self.chapter = chapter
         self.pageNumber = pageNumber
         self.locatorJSON = locatorJSON
@@ -101,8 +112,24 @@ final class VocabularySheetViewModel: ObservableObject {
         isLoading = false
     }
 
+    public func rankContextually() async {
+        guard #available(iOS 17, *) else { return }
+        guard let sentence = contextSentence, let entry else { return }
+        guard !isRanking else { return }
+        isRanking = true
+        rankedDefinition = await ContextualRanker.shared.rank(
+            word: word,
+            surfaceWord: surfaceWord,
+            in: sentence,
+            entry: entry
+        )
+        isRanking = false
+    }
+
     /// Look up a new word, pushing the current state onto the navigation stack.
-    public func lookUp(_ newWord: String) async {
+    /// Pass `isInflectedForm: true` when navigating to a detected root word — the
+    /// original context sentence is still meaningful in that case.
+    public func lookUp(_ newWord: String, isInflectedForm: Bool = false) async {
         let trimmed = newWord.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.lowercased() != word.lowercased() else { return }
 
@@ -112,8 +139,17 @@ final class VocabularySheetViewModel: ObservableObject {
             error: error,
             isSaved: isSaved,
             savedWordID: savedWordID,
-            suggestedRootWord: suggestedRootWord
+            suggestedRootWord: suggestedRootWord,
+            contextSentence: contextSentence,
+            surfaceWord: surfaceWord
         ))
+
+        if !isInflectedForm {
+            contextSentence = nil
+            surfaceWord = trimmed  // arbitrary lookup — surface form is the new word itself
+        }
+        // isInflectedForm: keep surfaceWord — it still points to the word in contextSentence
+        rankedDefinition = nil
 
         withAnimation(.easeInOut(duration: 0.22)) {
             canGoBack = true
@@ -139,6 +175,9 @@ final class VocabularySheetViewModel: ObservableObject {
             isSaved = snapshot.isSaved
             savedWordID = snapshot.savedWordID
             suggestedRootWord = snapshot.suggestedRootWord
+            contextSentence = snapshot.contextSentence
+            surfaceWord = snapshot.surfaceWord
+            rankedDefinition = nil
             canGoBack = !navigationStack.isEmpty
         }
     }
@@ -187,6 +226,7 @@ final class VocabularySheetViewModel: ObservableObject {
                 entry: entry,
                 language: language,
                 bookID: bookID,
+                bookTitle: bookTitle,
                 chapter: chapter,
                 pageNumber: pageNumber,
                 locatorJSON: locatorJSON,

@@ -53,6 +53,8 @@ final class VocabularyTabViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var studySession: StudySession? = nil
     @Published var navigatedToWord: SavedWord? = nil
+    @Published var isCardExpanded: Bool = false
+    @Published var showAddWord: Bool = false
 
     private let vocabularyRepo: VocabularyRepository
     private var hasPlayedLoadHaptics = false
@@ -77,9 +79,7 @@ final class VocabularyTabViewModel: ObservableObject {
     var availableBooks: [BookFilterOption] {
         let uniqueIDs = Array(Set(allWords.compactMap(\.bookID)))
         return uniqueIDs.map { id in
-            let title = allWords.first(where: { $0.bookID == id })?.chapter
-                .flatMap { $0.components(separatedBy: " — ").first }
-                ?? "Unknown Book"
+            let title = allWords.first(where: { $0.bookID == id })?.bookTitle ?? "Unknown Book"
             return BookFilterOption(id: id, title: title)
         }
     }
@@ -113,6 +113,29 @@ final class VocabularyTabViewModel: ObservableObject {
 
     func dismissStudyMode() {
         studySession = nil
+    }
+
+    func addManualWord(word: String, entry: DictionaryWordEntry?, contextSentence: String?) async {
+        let partsOfSpeech = entry.map { e in
+            Set(e.entries.map(\.partOfSpeech)).sorted().joined(separator: ", ")
+        } ?? ""
+        let jsonData = entry.flatMap { try? JSONEncoder().encode($0) }
+        let context = contextSentence.flatMap { $0.isEmpty ? nil : $0 }
+
+        let newWord = SavedWord(
+            word: word,
+            language: "en",
+            partsOfSpeech: partsOfSpeech,
+            bookID: nil,
+            bookTitle: nil,
+            chapter: nil,
+            pageNumber: nil,
+            locatorJSON: nil,
+            contextSentence: context,
+            fullDictionaryJSON: jsonData
+        )
+        await vocabularyRepo.addSavedWord(newWord)
+        allWords.insert(newWord, at: 0)
     }
 
     // MARK: - Haptics

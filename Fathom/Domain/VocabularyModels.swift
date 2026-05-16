@@ -76,6 +76,7 @@ public struct SavedWord: Identifiable, Equatable, Hashable, Codable, FetchableRe
 
     // Book association
     public let bookID: UUID?
+    public let bookTitle: String?
     public let chapter: String?
     public let pageNumber: Int?
     public let locatorJSON: String?
@@ -94,6 +95,7 @@ public struct SavedWord: Identifiable, Equatable, Hashable, Codable, FetchableRe
         language: String,
         partsOfSpeech: String,
         bookID: UUID?,
+        bookTitle: String?,
         chapter: String?,
         pageNumber: Int?,
         locatorJSON: String?,
@@ -106,6 +108,7 @@ public struct SavedWord: Identifiable, Equatable, Hashable, Codable, FetchableRe
         self.language = language
         self.partsOfSpeech = partsOfSpeech
         self.bookID = bookID
+        self.bookTitle = bookTitle
         self.chapter = chapter
         self.pageNumber = pageNumber
         self.locatorJSON = locatorJSON
@@ -119,6 +122,7 @@ public struct SavedWord: Identifiable, Equatable, Hashable, Codable, FetchableRe
         entry: DictionaryWordEntry,
         language: String,
         bookID: UUID?,
+        bookTitle: String?,
         chapter: String?,
         pageNumber: Int?,
         locatorJSON: String?,
@@ -135,6 +139,7 @@ public struct SavedWord: Identifiable, Equatable, Hashable, Codable, FetchableRe
             language: language,
             partsOfSpeech: partsOfSpeechStr,
             bookID: bookID,
+            bookTitle: bookTitle,
             chapter: chapter,
             pageNumber: pageNumber,
             locatorJSON: locatorJSON,

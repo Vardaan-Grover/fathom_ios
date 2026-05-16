@@ -1,6 +1,6 @@
-import SwiftUI
 import Combine
 import ReadiumShared
+import SwiftUI
 
 @MainActor
 class HomeViewModel: ObservableObject {
@@ -13,7 +13,10 @@ class HomeViewModel: ObservableObject {
     private let bookRepository: BookRepository
     private let categoryRepository: CategoryRepository
 
-    init(bookRepository: BookRepository, categoryRepository: CategoryRepository = InMemoryCategoryRepository()) {
+    init(
+        bookRepository: BookRepository,
+        categoryRepository: CategoryRepository = InMemoryCategoryRepository()
+    ) {
         self.bookRepository = bookRepository
         self.categoryRepository = categoryRepository
     }
@@ -24,12 +27,17 @@ class HomeViewModel: ObservableObject {
         async let userCats = categoryRepository.listCategories()
         async let memberships = categoryRepository.listMemberships()
         let (fetchedBooks, fetchedCats, fetchedMemberships) = await (books, userCats, memberships)
-        categories = Self.mapToCategories(fetchedBooks, userCategories: fetchedCats, memberships: fetchedMemberships)
+        categories = Self.mapToCategories(
+            fetchedBooks, userCategories: fetchedCats, memberships: fetchedMemberships)
 
-        if let mostRecent = fetchedBooks.filter({ $0.lastReadAt != nil }).max(by: { $0.lastReadAt! < $1.lastReadAt! }) {
+        if let mostRecent = fetchedBooks.filter({ $0.lastReadAt != nil }).max(by: {
+            $0.lastReadAt! < $1.lastReadAt!
+        }) {
             recentFullBook = mostRecent
             recentBook = Self.makeHomeBook(mostRecent)
-            recentBookProgress = ReadingStateStore.shared.loadLocator(forBookID: mostRecent.id)?.locations.totalProgression ?? 0
+            recentBookProgress =
+                ReadingStateStore.shared.loadLocator(forBookID: mostRecent.id)?.locations
+                .totalProgression ?? 0
         } else {
             recentFullBook = nil
             recentBook = nil
@@ -42,7 +50,9 @@ class HomeViewModel: ObservableObject {
     func recordOpened(book: Book) {
         recentFullBook = book
         recentBook = Self.makeHomeBook(book)
-        recentBookProgress = ReadingStateStore.shared.loadLocator(forBookID: book.id)?.locations.totalProgression ?? 0
+        recentBookProgress =
+            ReadingStateStore.shared.loadLocator(forBookID: book.id)?.locations.totalProgression
+            ?? 0
         Task { await bookRepository.touchLastReadAt(bookID: book.id) }
     }
 
@@ -52,11 +62,13 @@ class HomeViewModel: ObservableObject {
     func createCategory(name: String, colorHex: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        let record = BookCategory(id: UUID(), name: trimmed, shelfColorHex: colorHex, createdAt: Date())
-        categories.append(HomeCategory(
-            id: record.id, name: trimmed, books: [],
-            shelfColor: Color(hex: colorHex), shelfColorHex: colorHex
-        ))
+        let record = BookCategory(
+            id: UUID(), name: trimmed, shelfColorHex: colorHex, createdAt: Date())
+        categories.append(
+            HomeCategory(
+                id: record.id, name: trimmed, books: [],
+                shelfColor: Color(hex: colorHex), shelfColorHex: colorHex
+            ))
         Task { await categoryRepository.addCategory(record) }
     }
 
@@ -85,14 +97,19 @@ class HomeViewModel: ObservableObject {
 
         if alreadyIn {
             categories[catIdx].books.removeAll { $0.id == bookID }
-            Task { await categoryRepository.removeBookFromCategory(bookID: bookID, categoryID: categoryID) }
+            Task {
+                await categoryRepository.removeBookFromCategory(
+                    bookID: bookID, categoryID: categoryID)
+            }
         } else {
             if let source = categories.flatMap(\.books).first(where: { $0.id == bookID }) {
                 var toAdd = source
                 toAdd.categoryIDs.insert(categoryID)
                 categories[catIdx].books.insert(toAdd, at: 0)
             }
-            Task { await categoryRepository.addBookToCategory(bookID: bookID, categoryID: categoryID) }
+            Task {
+                await categoryRepository.addBookToCategory(bookID: bookID, categoryID: categoryID)
+            }
         }
 
         // Keep categoryIDs in sync across every occurrence of this book (e.g. My Library row)
@@ -143,29 +160,32 @@ class HomeViewModel: ObservableObject {
         var result: [HomeCategory] = []
 
         if !books.isEmpty {
-            let libraryBooks = books
+            let libraryBooks =
+                books
                 .sorted { $0.importDate > $1.importDate }
                 .map { homeBook(from: $0) }
-            result.append(HomeCategory(
-                id: UUID(),
-                name: "My Library",
-                books: libraryBooks,
-                shelfColor: AppTheme.default.colors.shelfAccent,
-                shelfColorHex: ""
-            ))
+            result.append(
+                HomeCategory(
+                    id: UUID(),
+                    name: "My Library",
+                    books: libraryBooks,
+                    shelfColor: AppTheme.default.colors.shelfAccent,
+                    shelfColorHex: ""
+                ))
         }
 
         for cat in userCategories {
             let memberBooks = (categoryBookIDs[cat.id] ?? []).compactMap { id in
                 bookByID[id].map { homeBook(from: $0) }
             }
-            result.append(HomeCategory(
-                id: cat.id,
-                name: cat.name,
-                books: memberBooks,
-                shelfColor: Color(hex: cat.shelfColorHex),
-                shelfColorHex: cat.shelfColorHex
-            ))
+            result.append(
+                HomeCategory(
+                    id: cat.id,
+                    name: cat.name,
+                    books: memberBooks,
+                    shelfColor: Color(hex: cat.shelfColorHex),
+                    shelfColorHex: cat.shelfColorHex
+                ))
         }
 
         return result

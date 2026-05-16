@@ -32,6 +32,7 @@ struct ReaderScreen: View {
     // Vocabulary State
     @State private var definedWord: String?
     @State private var definedLocatorJSON: String?
+    @State private var definedContextSentence: String?
 
     // Note State
     @State private var pendingNoteText: String?
@@ -140,279 +141,7 @@ struct ReaderScreen: View {
                 }
 
             case .loaded(let publication):
-                ReadiumNavigatorView(
-                    publication: publication,
-                    initialLocation: ReadingStateStore.shared.loadLocator(forBookID: bookID),
-                    onLocationChange: { locator in
-                        ReadingStateStore.shared.saveLocator(locator, forBookID: bookID)
-                        currentLocator = locator
-                        if let page = locator.locations.position {
-                            currentPage = page
-                        } else if let prog = locator.locations.totalProgression, totalPages > 0 {
-                            currentPage = max(1, Int(prog * Double(totalPages)))
-                        }
-                        if let prog = locator.locations.totalProgression {
-                            currentProgression = prog
-                        }
-                    },
-                    onPositionsLoaded: { loadedPositions in
-                        positions = loadedPositions
-                        totalPages = loadedPositions.count
-                    },
-                    commands: commands,
-                    settings: settings,
-                    bookID: bookID,
-                    aiQueryLocatorJSON: aiSelectedText != nil ? aiSelectedLocatorJSON : nil,
-                    aiEnabled: aiEnabled && backendBookID != nil,
-                    notesVersion: notesVersion
-                )
-                .ignoresSafeArea()
-                .task {
-                    if let links = try? await publication.tableOfContents().get() {
-                        self.tableOfContents = links
-                        self.searchState.tableOfContents = links
-                    }
-                    self.searchState.publication = publication
-                }
-                .onReceive(
-                    NotificationCenter.default.publisher(for: BookmarkStore.didChangeNotification)
-                ) { notification in
-                    guard let changedID = notification.object as? UUID, changedID == bookID else { return }
-                    bookmarks = BookmarkStore.shared.bookmarks(forBookID: bookID)
-                    parsedBookmarkLocators = parseBookmarkLocators(bookmarks)
-                }
-                .onAppear {
-                    bookmarks = BookmarkStore.shared.bookmarks(forBookID: bookID)
-                    parsedBookmarkLocators = parseBookmarkLocators(bookmarks)
-                    commands.onExplain = { text, locatorJSON in
-                        guard aiEnabled && backendBookID != nil else { return }
-                        if ingestionStatus == .completed {
-                            aiSelectedLocatorJSON = locatorJSON
-                            aiSelectedText = text
-                        } else {
-                            isShowingAIProcessingAlert = true
-                        }
-                    }
-                    commands.onDefine = { text, locatorJSON in
-                        definedLocatorJSON = locatorJSON
-                        definedWord = text
-                    }
-                    commands.onAddNote = { text, locatorJSON in
-                        pendingNoteLocatorJSON = locatorJSON
-                        pendingNoteText = text
-                    }
-                    commands.onEditNote = { noteID, _, _ in
-                        pendingEditNote = NoteStore.shared
-                            .notes(forBookID: bookID)
-                            .first(where: { $0.id == noteID })
-                    }
-                    commands.onTap = { point, size in
-                        let leftEdge = size.width * 0.1
-                        let rightEdge = size.width * 0.9
-                        if point.x < leftEdge {
-                            Task { await commands.goLeft?() }
-                        } else if point.x > rightEdge {
-                            Task { await commands.goRight?() }
-                        } else {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                isShowingBars.toggle()
-                            }
-                        }
-                    }
-                }
-                .overlay {
-                    ZStack {
-                        // Main Bottom Trailing controls
-                        ZStack(alignment: .bottomTrailing) {
-                            Rectangle()
-                                .fill(
-                                    settings.colorTheme.dimColor.opacity(
-                                        isActionButtonPresented ? 1 : 0)
-                                )
-                                .ignoresSafeArea()
-                                .allowsHitTesting(isActionButtonPresented)
-                                .onTapGesture { isActionButtonPresented = false }
-                                .animation(
-                                    .smooth(duration: 0.5, extraBounce: 0),
-                                    value: isActionButtonPresented)
-
-                            ReaderOverlay(
-                                bookTitle: bookTitle,
-                                currentPage: currentPage,
-                                totalPages: totalPages,
-                                isActive: isShowingBars,
-                                foregroundColor: settings.colorTheme.foregroundColor,
-                                backgroundColor: settings.colorTheme.backgroundColor,
-                                isScrolling: settings.layout == .scrolling,
-                                onDismiss: { dismiss() },
-                                lastUndoJSON: navigationHistory.history.last,
-                                onUndo: handleUndo
-                            )
-
-                            ReaderActionMenu(
-                                isPresented: $isActionButtonPresented,
-                                settings: $settings,
-                                isScrubbing: $isScrubbing,
-                                scrubTargetProgression: $scrubTargetProgression,
-                                currentProgression: currentProgression,
-                                positions: positions,
-                                tableOfContents: tableOfContents,
-                                aiEnabled: aiEnabled,
-                                ingestionReady: aiReady,
-                                hasBackendBookID: backendBookID != nil,
-                                isCurrentPageBookmarked: isCurrentPageBookmarked,
-                                onOpenSettings: { isShowingSettings = true },
-                                onOpenAIChats: {
-                                    if aiReady {
-                                        isShowingAIChats = true
-                                    } else if aiEnabled {
-                                        isShowingAIProcessingAlert = true
-                                    } else {
-                                        dismiss()
-                                        onEnableAI()
-                                    }
-                                },
-                                onOpenTOC: { isShowingTOC = true },
-                                onOpenSearch: { isShowingSearch = true },
-                                onOpenNotes: { isShowingNotesList = true },
-                                onOpenHighlights: { isShowingHighlightsList = true },
-                                onOpenBookmarks: { isShowingBookmarksList = true },
-                                onBookmark: { handleBookmarkToggle() },
-                                onScrubReleased: { targetProgression in
-                                    handleScrubReleased(progression: targetProgression)
-                                }
-                            )
-                            .opacity(isShowingBars ? 1 : 0)
-                            .allowsHitTesting(isShowingBars)
-                        }
-
-                        // Bookmark corner ribbon (paginated) / side-rail markers (scroll)
-                        BookmarkVisualOverlay(
-                            bookmarks: bookmarks,
-                            parsedLocators: parsedBookmarkLocators,
-                            positions: positions,
-                            currentLocator: currentLocator,
-                            currentProgression: currentProgression,
-                            isScrolling: settings.layout == .scrolling,
-                            isShowingBars: isShowingBars
-                        )
-                    }
-                }
-                .sheet(
-                    isPresented: $isShowingTOC,
-                    onDismiss: {
-                        guard let json = pendingTOCLocatorJSON else { return }
-                        pendingTOCLocatorJSON = nil
-                        if let currentLocator = currentLocator {
-                            navigationHistory.push(currentLocator)
-                        }
-                        Task { @MainActor in await commands.goToLocatorJSON?(json) }
-                    }
-                ) {
-                    TableOfContentsSheet(
-                        bookID: bookID,
-                        bookTitle: bookTitle,
-                        publication: publication,
-                        currentPage: currentPage,
-                        totalPages: totalPages,
-                        currentLocator: ReadingStateStore.shared.loadLocator(forBookID: bookID),
-                        settings: settings,
-                        onSelect: { link in
-                            let tocURL = link.url()
-                            let fragment = tocURL.fragment
-                            let hrefToMatch = tocURL.removingFragment()
-                            if let roLink = publication.readingOrder.first(where: {
-                                $0.url().isEquivalentTo(hrefToMatch)
-                            }), let mediaType = roLink.mediaType {
-                                let locator = Locator(
-                                    href: roLink.url(),
-                                    mediaType: mediaType,
-                                    title: link.title ?? roLink.title,
-                                    locations: Locator.Locations(
-                                        fragments: fragment.map { [$0] } ?? [],
-                                        progression: fragment == nil ? 0.0 : nil
-                                    )
-                                )
-                                pendingTOCLocatorJSON = locator.jsonString
-                            }
-                        }
-                    )
-                }
-                .sheet(
-                    isPresented: $isShowingNotesList,
-                    onDismiss: {
-                        guard let json = pendingNotesListLocatorJSON else { return }
-                        pendingNotesListLocatorJSON = nil
-                        if let currentLocator = currentLocator {
-                            navigationHistory.push(currentLocator)
-                        }
-                        Task { @MainActor in await commands.goToLocatorJSON?(json) }
-                    }
-                ) {
-                    NotesListView(
-                        bookID: bookID,
-                        onSelect: { locatorJSON in
-                            pendingNotesListLocatorJSON = locatorJSON
-                        }
-                    )
-                }
-                .sheet(
-                    isPresented: $isShowingHighlightsList,
-                    onDismiss: {
-                        guard let json = pendingHighlightsLocatorJSON else { return }
-                        pendingHighlightsLocatorJSON = nil
-                        if let currentLocator = currentLocator {
-                            navigationHistory.push(currentLocator)
-                        }
-                        Task { @MainActor in await commands.goToLocatorJSON?(json) }
-                    }
-                ) {
-                    HighlightsListView(
-                        bookID: bookID,
-                        onSelect: { locatorJSON in
-                            pendingHighlightsLocatorJSON = locatorJSON
-                        }
-                    )
-                }
-                .sheet(
-                    isPresented: $isShowingBookmarksList,
-                    onDismiss: {
-                        guard let json = pendingBookmarksLocatorJSON else { return }
-                        pendingBookmarksLocatorJSON = nil
-                        if let currentLocator = currentLocator {
-                            navigationHistory.push(currentLocator)
-                        }
-                        Task { @MainActor in await commands.goToLocatorJSON?(json) }
-                    }
-                ) {
-                    BookmarksListView(
-                        bookID: bookID,
-                        onSelect: { locatorJSON in
-                            pendingBookmarksLocatorJSON = locatorJSON
-                        }
-                    )
-                }
-                .sheet(
-                    isPresented: $isShowingSearch,
-                    onDismiss: {
-                        guard let json = pendingSearchLocatorJSON else { return }
-                        pendingSearchLocatorJSON = nil
-                        if let currentLocator = currentLocator {
-                            navigationHistory.push(currentLocator)
-                        }
-                        Task { @MainActor in
-                            await commands.goToLocatorJSON?(json)
-                            commands.applySearchHighlight?(json)
-                        }
-                    }
-                ) {
-                    SearchBookView(
-                        state: searchState,
-                        onSelect: { locatorJSON in
-                            pendingSearchLocatorJSON = locatorJSON
-                        }
-                    )
-                }
+                loadedView(publication: publication)
             }
         }
         .statusBarHidden(!isShowingBars)
@@ -437,6 +166,7 @@ struct ReaderScreen: View {
                     if !$0 {
                         definedWord = nil
                         definedLocatorJSON = nil
+                        definedContextSentence = nil
                     }
                 }
             )
@@ -446,9 +176,11 @@ struct ReaderScreen: View {
                     viewModel: VocabularySheetViewModel(
                         word: word,
                         bookID: bookID,
+                        bookTitle: bookTitle,
                         chapter: chapterTitle,
                         pageNumber: currentPage > 0 ? currentPage : nil,
                         locatorJSON: definedLocatorJSON,
+                        contextSentence: definedContextSentence,
                         repository: VocabularyRepositorySQLite(
                             dbQueue: DatabaseManager.shared.dbQueue)
                     )
@@ -467,46 +199,7 @@ struct ReaderScreen: View {
                 }
             )
         ) {
-            if let existing = pendingEditNote {
-                NoteSheetView(
-                    selectedText: existing.selectedText,
-                    locatorJSON: existing.locatorJSON,
-                    bookID: bookID,
-                    chapterTitle: existing.chapterTitle,
-                    pageNumber: existing.pageNumber,
-                    settings: settings,
-                    existingNote: existing,
-                    onSave: { updated in
-                        NoteStore.shared.update(updated)
-                        pendingEditNote = nil
-                        notesVersion += 1
-                    },
-                    onDelete: {
-                        NoteStore.shared.delete(id: existing.id)
-                        pendingEditNote = nil
-                    },
-                    onDismiss: { pendingEditNote = nil }
-                )
-            } else if let text = pendingNoteText {
-                NoteSheetView(
-                    selectedText: text,
-                    locatorJSON: pendingNoteLocatorJSON ?? "",
-                    bookID: bookID,
-                    chapterTitle: chapterTitle,
-                    pageNumber: currentPage > 0 ? currentPage : nil,
-                    settings: settings,
-                    onSave: { note in
-                        NoteStore.shared.add(note)
-                        pendingNoteText = nil
-                        pendingNoteLocatorJSON = nil
-                        notesVersion += 1
-                    },
-                    onDismiss: {
-                        pendingNoteText = nil
-                        pendingNoteLocatorJSON = nil
-                    }
-                )
-            }
+            noteSheetContent
         }
         .fullScreenCover(
             isPresented: Binding(
@@ -530,6 +223,293 @@ struct ReaderScreen: View {
         }
     }
 }
+// MARK: - Loaded State View
+
+extension ReaderScreen {
+    // Split into two functions so the type-checker handles each in isolation.
+    // Swift overflows when inferring the type of 6+ chained .sheet modifiers
+    // stacked on a complex base — splitting the chain into base + sheets fixes it.
+
+    func loadedView(publication: Publication) -> some View {
+        navigatorCore(publication: publication)
+            .sheet(isPresented: $isShowingTOC, onDismiss: {
+                guard let json = pendingTOCLocatorJSON else { return }
+                pendingTOCLocatorJSON = nil
+                if let currentLocator { navigationHistory.push(currentLocator) }
+                Task { @MainActor in await commands.goToLocatorJSON?(json) }
+            }) {
+                TableOfContentsSheet(
+                    bookID: bookID,
+                    bookTitle: bookTitle,
+                    publication: publication,
+                    currentPage: currentPage,
+                    totalPages: totalPages,
+                    currentLocator: ReadingStateStore.shared.loadLocator(forBookID: bookID),
+                    settings: settings,
+                    onSelect: { link in
+                        let tocURL = link.url()
+                        let fragment = tocURL.fragment
+                        let hrefToMatch = tocURL.removingFragment()
+                        if let roLink = publication.readingOrder.first(where: {
+                            $0.url().isEquivalentTo(hrefToMatch)
+                        }), let mediaType = roLink.mediaType {
+                            let locator = Locator(
+                                href: roLink.url(),
+                                mediaType: mediaType,
+                                title: link.title ?? roLink.title,
+                                locations: Locator.Locations(
+                                    fragments: fragment.map { [$0] } ?? [],
+                                    progression: fragment == nil ? 0.0 : nil
+                                )
+                            )
+                            pendingTOCLocatorJSON = locator.jsonString
+                        }
+                    }
+                )
+            }
+            .sheet(isPresented: $isShowingNotesList, onDismiss: {
+                guard let json = pendingNotesListLocatorJSON else { return }
+                pendingNotesListLocatorJSON = nil
+                if let currentLocator { navigationHistory.push(currentLocator) }
+                Task { @MainActor in await commands.goToLocatorJSON?(json) }
+            }) {
+                NotesListView(bookID: bookID) { pendingNotesListLocatorJSON = $0 }
+            }
+            .sheet(isPresented: $isShowingHighlightsList, onDismiss: {
+                guard let json = pendingHighlightsLocatorJSON else { return }
+                pendingHighlightsLocatorJSON = nil
+                if let currentLocator { navigationHistory.push(currentLocator) }
+                Task { @MainActor in await commands.goToLocatorJSON?(json) }
+            }) {
+                HighlightsListView(bookID: bookID) { pendingHighlightsLocatorJSON = $0 }
+            }
+            .sheet(isPresented: $isShowingBookmarksList, onDismiss: {
+                guard let json = pendingBookmarksLocatorJSON else { return }
+                pendingBookmarksLocatorJSON = nil
+                if let currentLocator { navigationHistory.push(currentLocator) }
+                Task { @MainActor in await commands.goToLocatorJSON?(json) }
+            }) {
+                BookmarksListView(bookID: bookID) { pendingBookmarksLocatorJSON = $0 }
+            }
+            .sheet(isPresented: $isShowingSearch, onDismiss: {
+                guard let json = pendingSearchLocatorJSON else { return }
+                pendingSearchLocatorJSON = nil
+                if let currentLocator { navigationHistory.push(currentLocator) }
+                Task { @MainActor in
+                    await commands.goToLocatorJSON?(json)
+                    commands.applySearchHighlight?(json)
+                }
+            }) {
+                SearchBookView(state: searchState) { pendingSearchLocatorJSON = $0 }
+            }
+    }
+
+    func navigatorCore(publication: Publication) -> some View {
+        ReadiumNavigatorView(
+            publication: publication,
+            initialLocation: ReadingStateStore.shared.loadLocator(forBookID: bookID),
+            onLocationChange: onLocationChange,
+            onPositionsLoaded: { positions = $0; totalPages = $0.count },
+            commands: commands,
+            settings: settings,
+            bookID: bookID,
+            aiQueryLocatorJSON: aiSelectedText != nil ? aiSelectedLocatorJSON : nil,
+            aiEnabled: aiEnabled && backendBookID != nil,
+            notesVersion: notesVersion
+        )
+        .ignoresSafeArea()
+        .task {
+            if let links = try? await publication.tableOfContents().get() {
+                self.tableOfContents = links
+                self.searchState.tableOfContents = links
+            }
+            self.searchState.publication = publication
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: BookmarkStore.didChangeNotification)
+        ) { notification in
+            guard let changedID = notification.object as? UUID, changedID == bookID else { return }
+            bookmarks = BookmarkStore.shared.bookmarks(forBookID: bookID)
+            parsedBookmarkLocators = parseBookmarkLocators(bookmarks)
+        }
+        .onAppear { setupOnAppear() }
+        .overlay { readerOverlayContent }
+    }
+
+    func onLocationChange(_ locator: Locator) {
+        ReadingStateStore.shared.saveLocator(locator, forBookID: bookID)
+        currentLocator = locator
+        if let page = locator.locations.position {
+            currentPage = page
+        } else if let prog = locator.locations.totalProgression, totalPages > 0 {
+            currentPage = max(1, Int(prog * Double(totalPages)))
+        }
+        if let prog = locator.locations.totalProgression {
+            currentProgression = prog
+        }
+    }
+
+    func setupOnAppear() {
+        bookmarks = BookmarkStore.shared.bookmarks(forBookID: bookID)
+        parsedBookmarkLocators = parseBookmarkLocators(bookmarks)
+        commands.onExplain = { text, locatorJSON in
+            guard aiEnabled && backendBookID != nil else { return }
+            if ingestionStatus == .completed {
+                aiSelectedLocatorJSON = locatorJSON
+                aiSelectedText = text
+            } else {
+                isShowingAIProcessingAlert = true
+            }
+        }
+        commands.onDefine = { text, locatorJSON, contextSentence in
+            definedLocatorJSON = locatorJSON
+            definedWord = text
+            definedContextSentence = contextSentence
+        }
+        commands.onAddNote = { text, locatorJSON in
+            pendingNoteLocatorJSON = locatorJSON
+            pendingNoteText = text
+        }
+        commands.onEditNote = { noteID, _, _ in
+            pendingEditNote = NoteStore.shared
+                .notes(forBookID: bookID)
+                .first(where: { $0.id == noteID })
+        }
+        commands.onTap = { point, size in
+            let leftEdge = size.width * 0.1
+            let rightEdge = size.width * 0.9
+            if point.x < leftEdge {
+                Task { await commands.goLeft?() }
+            } else if point.x > rightEdge {
+                Task { await commands.goRight?() }
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) { isShowingBars.toggle() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    var readerOverlayContent: some View {
+        ZStack {
+            ZStack(alignment: .bottomTrailing) {
+                Rectangle()
+                    .fill(settings.colorTheme.dimColor.opacity(isActionButtonPresented ? 1 : 0))
+                    .ignoresSafeArea()
+                    .allowsHitTesting(isActionButtonPresented)
+                    .onTapGesture { isActionButtonPresented = false }
+                    .animation(.smooth(duration: 0.5, extraBounce: 0), value: isActionButtonPresented)
+
+                ReaderOverlay(
+                    bookTitle: bookTitle,
+                    currentPage: currentPage,
+                    totalPages: totalPages,
+                    isActive: isShowingBars,
+                    foregroundColor: settings.colorTheme.foregroundColor,
+                    backgroundColor: settings.colorTheme.backgroundColor,
+                    isScrolling: settings.layout == .scrolling,
+                    onDismiss: { dismiss() },
+                    lastUndoJSON: navigationHistory.history.last,
+                    onUndo: handleUndo
+                )
+
+                ReaderActionMenu(
+                    isPresented: $isActionButtonPresented,
+                    settings: $settings,
+                    isScrubbing: $isScrubbing,
+                    scrubTargetProgression: $scrubTargetProgression,
+                    currentProgression: currentProgression,
+                    positions: positions,
+                    tableOfContents: tableOfContents,
+                    aiEnabled: aiEnabled,
+                    ingestionReady: aiReady,
+                    hasBackendBookID: backendBookID != nil,
+                    isCurrentPageBookmarked: isCurrentPageBookmarked,
+                    onOpenSettings: { isShowingSettings = true },
+                    onOpenAIChats: {
+                        if aiReady {
+                            isShowingAIChats = true
+                        } else if aiEnabled {
+                            isShowingAIProcessingAlert = true
+                        } else {
+                            dismiss()
+                            onEnableAI()
+                        }
+                    },
+                    onOpenTOC: { isShowingTOC = true },
+                    onOpenSearch: { isShowingSearch = true },
+                    onOpenNotes: { isShowingNotesList = true },
+                    onOpenHighlights: { isShowingHighlightsList = true },
+                    onOpenBookmarks: { isShowingBookmarksList = true },
+                    onBookmark: { handleBookmarkToggle() },
+                    onScrubReleased: { handleScrubReleased(progression: $0) }
+                )
+                .opacity(isShowingBars ? 1 : 0)
+                .allowsHitTesting(isShowingBars)
+            }
+
+            BookmarkVisualOverlay(
+                bookmarks: bookmarks,
+                parsedLocators: parsedBookmarkLocators,
+                positions: positions,
+                currentLocator: currentLocator,
+                currentProgression: currentProgression,
+                isScrolling: settings.layout == .scrolling,
+                isShowingBars: isShowingBars
+            )
+        }
+    }
+}
+
+// MARK: - Note Sheet Content
+
+extension ReaderScreen {
+    @ViewBuilder
+    var noteSheetContent: some View {
+        if let existing = pendingEditNote {
+            NoteSheetView(
+                selectedText: existing.selectedText,
+                locatorJSON: existing.locatorJSON,
+                bookID: bookID,
+                chapterTitle: existing.chapterTitle,
+                pageNumber: existing.pageNumber,
+                settings: settings,
+                existingNote: existing,
+                onSave: { updated in
+                    NoteStore.shared.update(updated)
+                    pendingEditNote = nil
+                    notesVersion += 1
+                },
+                onDelete: {
+                    NoteStore.shared.delete(id: existing.id)
+                    pendingEditNote = nil
+                },
+                onDismiss: { pendingEditNote = nil }
+            )
+        } else if let text = pendingNoteText {
+            NoteSheetView(
+                selectedText: text,
+                locatorJSON: pendingNoteLocatorJSON ?? "",
+                bookID: bookID,
+                chapterTitle: chapterTitle,
+                pageNumber: currentPage > 0 ? currentPage : nil,
+                settings: settings,
+                onSave: { note in
+                    NoteStore.shared.add(note)
+                    pendingNoteText = nil
+                    pendingNoteLocatorJSON = nil
+                    notesVersion += 1
+                },
+                onDismiss: {
+                    pendingNoteText = nil
+                    pendingNoteLocatorJSON = nil
+                }
+            )
+        }
+    }
+}
+
+// MARK: - Bookmark Toggle
+
 extension ReaderScreen {
     func handleBookmarkToggle() {
         guard let locator = currentLocator, let locatorJSON = locator.jsonString else { return }

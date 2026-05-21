@@ -5,6 +5,7 @@ struct BookCustomizationSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let initial: BookCustomization
+    let isEditing: Bool
     var onConfirm: (BookCustomization) -> Void
     var onCancel: () -> Void
 
@@ -16,13 +17,16 @@ struct BookCustomizationSheet: View {
     @State private var enableAI: Bool = false
     @State private var isAnimatingGradient: Bool = false
     @State private var didConfirm = false
+    @State private var coverChanged = false
 
     init(
         initial: BookCustomization,
+        isEditing: Bool = false,
         onConfirm: @escaping (BookCustomization) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.initial = initial
+        self.isEditing = isEditing
         self.onConfirm = onConfirm
         self.onCancel = onCancel
         _title = State(initialValue: initial.title)
@@ -42,11 +46,13 @@ struct BookCustomizationSheet: View {
                 }
                 .listRowBackground(Color.clear)
 
-                Section {
-                    aiChoiceCard
+                if !isEditing {
+                    Section {
+                        aiChoiceCard
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
                 }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
 
                 Section("Book Details") {
                     TextField("Title", text: $title)
@@ -64,14 +70,14 @@ struct BookCustomizationSheet: View {
                     }
                 }
             }
-            .navigationTitle("Add to Library")
+            .navigationTitle(isEditing ? "Edit Book" : "Add to Library")
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
                 VStack {
                     Button {
                         confirmAndDismiss()
                     } label: {
-                        Label("Add to Library", systemImage: "plus.circle.fill")
+                        Label(isEditing ? "Save Changes" : "Add to Library", systemImage: isEditing ? "checkmark.circle.fill" : "plus.circle.fill")
                             .font(.body.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
@@ -97,6 +103,7 @@ struct BookCustomizationSheet: View {
             Task {
                 if let data = try? await newItem?.loadTransferable(type: Data.self) {
                     coverImageData = data
+                    coverChanged = true
                 }
             }
         }
@@ -113,6 +120,7 @@ struct BookCustomizationSheet: View {
         result.description = description.trimmingCharacters(in: .whitespaces)
         result.coverImageData = coverImageData
         result.enableAI = enableAI
+        result.isCoverChanged = coverChanged
         onConfirm(result)
         dismiss()
     }

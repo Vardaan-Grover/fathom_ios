@@ -26,6 +26,15 @@ struct ReaderActionMenu: View {
     private var fg: Color { settings.colorTheme.foregroundColor }
     private var bg: Color { settings.colorTheme.backgroundColor }
 
+    /// Slightly-lightened background for button surfaces on dark themes,
+    /// so buttons read as elevated above the reader canvas.
+    private var elevatedBg: Color {
+        guard settings.colorTheme.isDark else { return bg }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(bg).getRed(&r, green: &g, blue: &b, alpha: &a)
+        return Color(UIColor(red: min(r + 0.10, 1), green: min(g + 0.10, 1), blue: min(b + 0.10, 1), alpha: a))
+    }
+
     var body: some View {
         ReaderActionButton(
             animation: .smooth(duration: 0.3, extraBounce: 0),
@@ -35,7 +44,11 @@ struct ReaderActionMenu: View {
         } background: {
             Capsule()
                 .fill(bg)
-                .shadow(color: .gray.opacity(0.5), radius: 1)
+                .shadow(
+                    color: settings.colorTheme.isDark ? .black.opacity(0.55) : .black.opacity(0.2),
+                    radius: settings.colorTheme.isDark ? 10 : 4,
+                    y: 2
+                )
         }
         .padding(.trailing, 15)
         .padding(.bottom, 0)
@@ -74,6 +87,11 @@ struct ReaderActionMenu: View {
             }
         } else {
             menuButtons
+                .shadow(
+                    color: .black.opacity(settings.colorTheme.isDark ? 0.55 : 0.12),
+                    radius: 18,
+                    y: 6
+                )
         }
     }
 
@@ -86,7 +104,7 @@ struct ReaderActionMenu: View {
                 currentProgression: currentProgression,
                 isPresented: $isPresented,
                 foregroundColor: fg,
-                backgroundColor: bg,
+                backgroundColor: elevatedBg,
                 onTapTOC: {
                     isPresented = false
                     onOpenTOC()
@@ -100,7 +118,7 @@ struct ReaderActionMenu: View {
                 symbol: "magnifyingglass",
                 isPresented: $isPresented,
                 foregroundColor: fg,
-                backgroundColor: bg
+                backgroundColor: elevatedBg
             ) {
                 isPresented = false
                 onOpenSearch()
@@ -112,7 +130,7 @@ struct ReaderActionMenu: View {
                 symbol: "bookmark.fill",
                 isPresented: $isPresented,
                 foregroundColor: fg,
-                backgroundColor: bg
+                backgroundColor: elevatedBg
             ) {
                 isPresented = false
                 onOpenBookmarks()
@@ -124,7 +142,7 @@ struct ReaderActionMenu: View {
                 symbol: "textformat.size",
                 isPresented: $isPresented,
                 foregroundColor: fg,
-                backgroundColor: bg
+                backgroundColor: elevatedBg
             ) {
                 isPresented = false
                 onOpenSettings()
@@ -136,7 +154,7 @@ struct ReaderActionMenu: View {
                     CustomSectionButton(
                         symbol: "sparkles",
                         isPresented: $isPresented,
-                        foregroundColor: fg, backgroundColor: bg
+                        foregroundColor: fg, backgroundColor: elevatedBg
                     ) {
                         isPresented = false
                         onOpenAIChats()
@@ -146,7 +164,7 @@ struct ReaderActionMenu: View {
                 CustomSectionButton(
                     symbol: "highlighter",
                     isPresented: $isPresented,
-                    foregroundColor: fg, backgroundColor: bg
+                    foregroundColor: fg, backgroundColor: elevatedBg
                 ) {
                     isPresented = false
                     onOpenHighlights()
@@ -154,7 +172,7 @@ struct ReaderActionMenu: View {
                 CustomSectionButton(
                     symbol: "note.text",
                     isPresented: $isPresented,
-                    foregroundColor: fg, backgroundColor: bg
+                    foregroundColor: fg, backgroundColor: elevatedBg
                 ) {
                     isPresented = false
                     onOpenNotes()
@@ -164,7 +182,7 @@ struct ReaderActionMenu: View {
                     isPresented: $isPresented,
                     foregroundColor: isCurrentPageBookmarked
                         ? Color(red: 0.78, green: 0.08, blue: 0.15) : fg,
-                    backgroundColor: bg
+                    backgroundColor: elevatedBg
                 ) {
                     isPresented = false
                     onBookmark()

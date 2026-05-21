@@ -1,21 +1,51 @@
 import SwiftUI
 
 struct AddWordSheet: View {
-    let onSave: (String, DictionaryWordEntry?, String?) async -> Void
+    let onSave: @MainActor (String, DictionaryWordEntry?, String?) async -> Void
+    private let isEditMode: Bool
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appTheme) var theme
 
-    @State private var wordText = ""
-    @State private var lookedUpWord = ""   // only set on lookup commit — drives accent color
-    @State private var contextText = ""
-    @State private var definitions: [EditableDefinition] = []
-    @State private var lookupPhase: LookupPhase = .idle
+    @State private var wordText: String
+    @State private var lookedUpWord: String
+    @State private var contextText: String
+    @State private var definitions: [EditableDefinition]
+    @State private var lookupPhase: LookupPhase
     @State private var isSaving = false
     @State private var editingID: UUID? = nil
 
     @FocusState private var wordFocused: Bool
     @FocusState private var contextFocused: Bool
+
+    init(existingWord: SavedWord? = nil, initialWord: String = "", onSave: @escaping @MainActor (String, DictionaryWordEntry?, String?) async -> Void) {
+        self.onSave = onSave
+        self.isEditMode = existingWord != nil
+
+        if let word = existingWord {
+            _wordText = State(initialValue: word.word)
+            _lookedUpWord = State(initialValue: word.word.lowercased())
+            _contextText = State(initialValue: word.contextSentence ?? "")
+
+            var defs: [EditableDefinition] = []
+            if let data = word.fullDictionaryJSON,
+               let entry = try? JSONDecoder().decode(DictionaryWordEntry.self, from: data) {
+                for dictEntry in entry.entries {
+                    for sense in dictEntry.senses where !sense.definition.isEmpty {
+                        defs.append(EditableDefinition(partOfSpeech: dictEntry.partOfSpeech, text: sense.definition))
+                    }
+                }
+            }
+            _definitions = State(initialValue: defs)
+            _lookupPhase = State(initialValue: defs.isEmpty ? .idle : .done)
+        } else {
+            _wordText = State(initialValue: initialWord)
+            _lookedUpWord = State(initialValue: "")
+            _contextText = State(initialValue: "")
+            _definitions = State(initialValue: [])
+            _lookupPhase = State(initialValue: .idle)
+        }
+    }
 
     // MARK: - Types
 
@@ -48,7 +78,8 @@ struct AddWordSheet: View {
     private var selectedCount: Int { definitions.filter(\.isSelected).count }
 
     private var canSave: Bool {
-        !wordText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSaving
+        guard !wordText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isSaving else { return false }
+        return definitions.contains { $0.isSelected && !$0.text.isEmpty }
     }
 
     // Stable binding into the definitions array by ID, safe across reordering.
@@ -85,7 +116,7 @@ struct AddWordSheet: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(theme.colors.background)
-            .navigationTitle("Add Word")
+            .navigationTitle(isEditMode ? "Edit Word" : "Add Word")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -104,7 +135,14 @@ struct AddWordSheet: View {
                 }
             }
         }
-        .onAppear { wordFocused = true }
+        .onAppear {
+            if !isEditMode {
+                wordFocused = true
+                if !wordText.isEmpty {
+                    Task { await performLookup() }
+                }
+            }
+        }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationBackground(theme.colors.background)
@@ -429,7 +467,8 @@ struct AddWordSheet: View {
                     .font(.system(size: 14))
                     .italic()
                     .foregroundStyle(theme.colors.secondary.opacity(0.4))
-                    .padding(.top, 1)
+                    .padding(.top, 8)
+                    .padding(.leading, 5)
                     .allowsHitTesting(false)
             }
             TextEditor(text: binding.text)
@@ -473,7 +512,8 @@ struct AddWordSheet: View {
                             .font(.system(size: 14))
                             .italic()
                             .foregroundStyle(theme.colors.secondary.opacity(0.45))
-                            .padding(.top, 2)
+                            .padding(.top, 8)
+                            .padding(.leading, 5)
                             .allowsHitTesting(false)
                     }
                     TextEditor(text: $contextText)

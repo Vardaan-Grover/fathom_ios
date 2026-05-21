@@ -27,14 +27,15 @@ final class HighlightStore {
         var bookID: UUID?
         do {
             try dbQueue.write { db in
-                if let highlight = try Highlight.fetchOne(db, id: id) {
+                if var highlight = try Highlight.fetchOne(db, id: id) {
                     bookID = highlight.bookID
-                    _ = try Highlight.deleteOne(db, id: id)
+                    highlight.deletedAt = Date()
+                    try highlight.update(db)
                 }
             }
             if let bookID { notifyChange(bookID: bookID) }
         } catch {
-            AppLogger.log(tag: "HighlightStore", "Error deleting highlight: \(error)")
+            AppLogger.log(tag: "HighlightStore", "Error soft-deleting highlight: \(error)")
         }
     }
 
@@ -58,7 +59,7 @@ final class HighlightStore {
         do {
             return try dbQueue.read { db in
                 try Highlight
-                    .filter(Column("bookID") == bookID)
+                    .filter(Column("bookID") == bookID && Column("deletedAt") == nil)
                     .order(Column("createdAt").asc)
                     .fetchAll(db)
             }

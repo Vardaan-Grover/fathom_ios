@@ -8,6 +8,8 @@ protocol CategoryRepository {
     func listMemberships() async -> [BookCategoryMembership]
     func addBookToCategory(bookID: UUID, categoryID: UUID) async
     func removeBookFromCategory(bookID: UUID, categoryID: UUID) async
+    func reorderCategories(_ ids: [UUID]) async
+    func reorderBooksInCategory(categoryID: UUID, bookIDs: [UUID]) async
 }
 
 final actor InMemoryCategoryRepository: CategoryRepository {
@@ -32,6 +34,22 @@ final actor InMemoryCategoryRepository: CategoryRepository {
     }
     func removeBookFromCategory(bookID: UUID, categoryID: UUID) async {
         memberships.removeAll { $0.bookID == bookID && $0.categoryID == categoryID }
+    }
+
+    func reorderCategories(_ ids: [UUID]) async {
+        for (index, id) in ids.enumerated() {
+            if let i = categories.firstIndex(where: { $0.id == id }) {
+                categories[i].sortOrder = index
+            }
+        }
+    }
+
+    func reorderBooksInCategory(categoryID: UUID, bookIDs: [UUID]) async {
+        for (index, bookID) in bookIDs.enumerated() {
+            if let i = memberships.firstIndex(where: { $0.bookID == bookID && $0.categoryID == categoryID }) {
+                memberships[i].sortOrder = index
+            }
+        }
     }
 }
 

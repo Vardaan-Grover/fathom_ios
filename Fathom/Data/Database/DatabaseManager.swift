@@ -284,6 +284,47 @@ final class DatabaseManager {
                 t.add(column: "bookTitle", .text)
             }
         }
+        migrator.registerMigration("v17_add_sort_orders") { db in
+            // Guard against the column already existing (e.g. from a partial prior run)
+            let catColumns = try db.columns(in: "bookCategories").map(\.name)
+            if !catColumns.contains("sortOrder") {
+                try db.alter(table: "bookCategories") { t in
+                    t.add(column: "sortOrder", .integer).notNull().defaults(to: 0)
+                }
+                // Rank each shelf by createdAt ascending — pure SQL, no UUID decoding
+                try db.execute(sql: """
+                    UPDATE bookCategories
+                    SET sortOrder = (
+                        SELECT COUNT(*)
+                        FROM bookCategories b2
+                        WHERE b2.createdAt < bookCategories.createdAt
+                    )
+                    """)
+            }
+
+            let memColumns = try db.columns(in: "bookCategoryMemberships").map(\.name)
+            if !memColumns.contains("sortOrder") {
+                try db.alter(table: "bookCategoryMemberships") { t in
+                    t.add(column: "sortOrder", .integer).notNull().defaults(to: 0)
+                }
+                // Rank each membership within its category by addedAt descending — pure SQL
+                try db.execute(sql: """
+                    UPDATE bookCategoryMemberships
+                    SET sortOrder = (
+                        SELECT COUNT(*)
+                        FROM bookCategoryMemberships m2
+                        WHERE m2.categoryID = bookCategoryMemberships.categoryID
+                          AND m2.addedAt > bookCategoryMemberships.addedAt
+                    )
+                    """)
+            }
+        }
+
+        migrator.registerMigration("v18_add_pinned_at_to_saved_words") { db in
+            try db.alter(table: "saved_words") { t in
+                t.add(column: "pinnedAt", .datetime)
+            }
+        }
 
         return migrator
     }

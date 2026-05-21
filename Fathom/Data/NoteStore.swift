@@ -27,14 +27,15 @@ final class NoteStore {
         var bookID: UUID?
         do {
             try dbQueue.write { db in
-                if let note = try Note.fetchOne(db, id: id) {
+                if var note = try Note.fetchOne(db, id: id) {
                     bookID = note.bookID
-                    _ = try Note.deleteOne(db, id: id)
+                    note.deletedAt = Date()
+                    try note.update(db)
                 }
             }
             if let bookID { notifyChange(bookID: bookID) }
         } catch {
-            AppLogger.log(tag: "NoteStore", "Error deleting note: \(error)")
+            AppLogger.log(tag: "NoteStore", "Error soft-deleting note: \(error)")
         }
     }
 
@@ -85,7 +86,7 @@ final class NoteStore {
         do {
             return try dbQueue.read { db in
                 try Note
-                    .filter(Column("bookID") == bookID)
+                    .filter(Column("bookID") == bookID && Column("deletedAt") == nil)
                     .order(Column("createdAt").desc)
                     .fetchAll(db)
             }

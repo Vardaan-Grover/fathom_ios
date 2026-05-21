@@ -5,9 +5,12 @@ struct BookCategorySection: View {
     var onBookTap: ((UUID) -> Void)? = nil
     var onEdit: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
+    var onReorderBooks: (() -> Void)? = nil
     // All user-created shelves, so any book can be added to any of them.
     var userCategories: [HomeCategory] = []
     var onToggleCategoryMembership: ((UUID, UUID) -> Void)? = nil  // (bookID, categoryID)
+    var onEditBook: ((UUID) -> Void)? = nil
+    var onDeleteBook: ((UUID) -> Void)? = nil
 
     private let sectionHeight: CGFloat = 196
     private let shelfBandHeight: CGFloat = 72
@@ -37,8 +40,15 @@ struct BookCategorySection: View {
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
 
-                if onEdit != nil || onDelete != nil {
+                if onEdit != nil || onDelete != nil || onReorderBooks != nil {
                     Menu {
+                        if let onReorderBooks {
+                            Button {
+                                onReorderBooks()
+                            } label: {
+                                Label("Reorder Books", systemImage: "arrow.up.arrow.down")
+                            }
+                        }
                         if let onEdit {
                             Button {
                                 onEdit()
@@ -75,7 +85,9 @@ struct BookCategorySection: View {
                             userCategories: userCategories,
                             onToggleCategory: { categoryID in
                                 onToggleCategoryMembership?(book.id, categoryID)
-                            }
+                            },
+                            onEdit: onEditBook != nil ? { onEditBook?(book.id) } : nil,
+                            onDelete: onDeleteBook != nil ? { onDeleteBook?(book.id) } : nil
                         )
                         .onTapGesture {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()

@@ -31,6 +31,7 @@ struct RootView: View {
     @State private var showShelfSheet = false
 
     @Environment(\.showToast) private var showToast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         homeViewModel: HomeViewModel,
@@ -47,45 +48,73 @@ struct RootView: View {
     }
 
     var body: some View {
-        TabView(selection: $activeTab) {
-            Tab(value: .library) {
-                HomeScreen(viewModel: homeViewModel, bookRepository: bookRepository)
-                    .toolbarVisibility(.hidden, for: .tabBar)
+        ZStack {
+            // Base layer: TabView + tab bar blurred together as one unit.
+            // No separate per-layer blur — everything underneath the card
+            // goes out of focus as a single composite image.
+            contentLayer
+                .blur(radius: vocabularyTabViewModel.isOverlayVisible ? 3 : 0)
+                .allowsHitTesting(!vocabularyTabViewModel.isOverlayVisible)
+                .animation(
+                    .spring(duration: 0.42, bounce: 0.05),
+                    value: vocabularyTabViewModel.isOverlayVisible)
+
+            // Scrim
+            if vocabularyTabViewModel.selectedWord != nil {
+                Color.black
+                    .opacity(vocabularyTabViewModel.isExpanded ? 0.52 : 0)
+                    .ignoresSafeArea()
+                    .onTapGesture { vocabularyTabViewModel.dismissExpanded() }
+                    .allowsHitTesting(vocabularyTabViewModel.isExpanded)
+                    .animation(.easeInOut(duration: 0.26), value: vocabularyTabViewModel.isExpanded)
             }
-            Tab(value: .vocabulary) {
-                VocabularyTabView(viewModel: vocabularyTabViewModel)
-                    .toolbarVisibility(.hidden, for: .tabBar)
-            }
-            Tab(value: .settings) {
-                SettingsView()
-                    .toolbarVisibility(.hidden, for: .tabBar)
+
+            // Expanded word card — floats above the blurred base layer
+            if let word = vocabularyTabViewModel.selectedWord {
+                ExpandedWordCard(
+                    word: word,
+                    accentColor: vocabularyTabViewModel.selectedCardColor,
+                    entry: vocabularyTabViewModel.cachedEntry(for: word),
+                    sourceFrame: vocabularyTabViewModel.selectedCardFrame,
+                    isExpanded: vocabularyTabViewModel.isExpanded,
+                    contentVisible: vocabularyTabViewModel.expandedContentVisible,
+                    hasPrev: vocabularyTabViewModel.expandedHasPrev,
+                    hasNext: vocabularyTabViewModel.expandedHasNext,
+                    onDismiss: { vocabularyTabViewModel.dismissExpanded() },
+                    onNavigatePrev: { vocabularyTabViewModel.navigateExpanded(by: -1) },
+                    onNavigateNext: { vocabularyTabViewModel.navigateExpanded(by: 1) },
+                    onDelete: { vocabularyTabViewModel.showDeleteConfirm = true },
+                    onShare: { Task { await vocabularyTabViewModel.renderAndShare(word: word) } },
+                    onEdit: {
+                        vocabularyTabViewModel.wordToEdit = word
+                        vocabularyTabViewModel.dismissExpanded()
+                    },
+                    onJumpToBook: { vocabularyTabViewModel.jumpToBook(word: word) }
+                )
+                .transition(.opacity.animation(.easeOut(duration: 0.18)))
             }
         }
-        .fileImporter(
-            isPresented: $showImporter,
-            allowedContentTypes: [UTType.epub],
-            allowsMultipleSelection: false
-        ) { result in
-            guard let url = try? result.get().first else { return }
-            Task {
-                do {
-                    try await libraryViewModel.importBook(from: url)
-                    await homeViewModel.load()
-                } catch {
-                    if let localizedError = error as? LocalizedError, let message = localizedError.errorDescription {
-                        showToast(Toast(title: message, duration: 3, placementOffset: -72, symbol: "exclamationmark.triangle"))
-                    } else {
-                        showToast(Toast(title: "Failed to import book", duration: 3, placementOffset: -72, symbol: "exclamationmark.triangle"))
-                    }
+        .sheet(isPresented: $vocabularyTabViewModel.isShowingShareSheet) {
+            if let word = vocabularyTabViewModel.wordToShare {
+                WordSharePreviewSheet(
+                    word: word,
+                    entry: vocabularyTabViewModel.cachedEntry(for: word)
+                )
+            }
+        }
+        .confirmationDialog(
+            vocabularyTabViewModel.selectedWord.map { "Remove '\($0.word)' from your vocabulary?" }
+                ?? "",
+            isPresented: $vocabularyTabViewModel.showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                guard let word = vocabularyTabViewModel.selectedWord else { return }
+                Task {
+                    vocabularyTabViewModel.dismissExpanded()
+                    await vocabularyTabViewModel.removeWord(word)
                 }
             }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            customTabBar
-                .padding(.horizontal, 20)
-                .blur(radius: vocabularyTabViewModel.isCardExpanded ? 8 : 0)
-                .allowsHitTesting(!vocabularyTabViewModel.isCardExpanded)
-                .animation(.spring(duration: 0.42, bounce: 0.05), value: vocabularyTabViewModel.isCardExpanded)
         }
         .sheet(isPresented: $showShelfSheet) {
             NewShelfSheet { name, colorHex in
@@ -120,20 +149,71 @@ struct RootView: View {
         }
     }
 
+    // TabView + tab bar as a single composited layer so blur affects both equally.
+    private var contentLayer: some View {
+        TabView(selection: $activeTab) {
+            Tab(value: .library) {
+                HomeScreen(viewModel: homeViewModel, bookRepository: bookRepository)
+                    .toolbarVisibility(.hidden, for: .tabBar)
+            }
+            Tab(value: .vocabulary) {
+                VocabularyTabView(viewModel: vocabularyTabViewModel)
+                    .toolbarVisibility(.hidden, for: .tabBar)
+            }
+            Tab(value: .settings) {
+                SettingsView()
+                    .toolbarVisibility(.hidden, for: .tabBar)
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            customTabBar
+                .padding(.horizontal, 20)
+                .allowsHitTesting(
+                    !vocabularyTabViewModel.isCardExpanded
+                        && !vocabularyTabViewModel.isSearchFocused
+                )
+                .opacity(vocabularyTabViewModel.isSearchFocused ? 0 : 1)
+                .frame(height: vocabularyTabViewModel.isSearchFocused ? 0 : nil)
+                .animation(
+                    .spring(duration: 0.3, bounce: 0.05),
+                    value: vocabularyTabViewModel.isSearchFocused)
+        }
+        .fileImporter(
+            isPresented: $showImporter,
+            allowedContentTypes: [UTType.epub],
+            allowsMultipleSelection: false
+        ) { result in
+            guard let url = try? result.get().first else { return }
+            Task {
+                do {
+                    try await libraryViewModel.importBook(from: url)
+                    await homeViewModel.load()
+                } catch {
+                    if let localizedError = error as? LocalizedError,
+                        let message = localizedError.errorDescription
+                    {
+                        showToast(
+                            Toast(
+                                title: message, duration: 3, placementOffset: -72,
+                                symbol: "exclamationmark.triangle"))
+                    } else {
+                        showToast(
+                            Toast(
+                                title: "Failed to import book", duration: 3, placementOffset: -72,
+                                symbol: "exclamationmark.triangle"))
+                    }
+                }
+            }
+        }
+    }
+
     private var customTabBar: some View {
         tabBarContainer
             .frame(height: 60)
     }
 
-    @ViewBuilder
     private var tabBarContainer: some View {
-        if #available(iOS 26, *) {
-            GlassEffectContainer(spacing: 10) {
-                tabBarItems
-            }
-        } else {
-            tabBarItems
-        }
+        tabBarItems
     }
 
     private var tabBarItems: some View {
@@ -152,31 +232,68 @@ struct RootView: View {
                 .interactiveGlassEffect()
             }
 
-            Menu {
-                Button {
-                    showImporter = true
-                } label: {
-                    Label("Add Book", systemImage: "book.badge.plus")
+            ZStack {
+                if activeTab == .vocabulary {
+                    Button {
+                        vocabularyTabViewModel.showAddWord = true
+                    } label: {
+                        Color.clear.contentShape(Rectangle())
+                    }
+                } else {
+                    Menu {
+                        Button {
+                            showImporter = true
+                        } label: {
+                            Label("Add Book", systemImage: "book.badge.plus")
+                        }
+                        Button {
+                            showShelfSheet = true
+                        } label: {
+                            Label("Add Shelf", systemImage: "folder.badge.plus")
+                        }
+                    } label: {
+                        Color.clear.contentShape(Rectangle())
+                    }
                 }
-                Button {
-                    showShelfSheet = true
-                } label: {
-                    Label("Add Shelf", systemImage: "folder.badge.plus")
+
+                Group {
+                    if activeTab == .vocabulary {
+                        AddWordIcon()
+                            .transition(
+                                reduceMotion
+                                    ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
+                    } else {
+                        Image(systemName: "plus")
+                            .font(.system(size: 22, weight: .medium))
+                            .transition(
+                                reduceMotion
+                                    ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
+                    }
                 }
-            } label: {
-                Image(systemName: "plus")
-                    .foregroundColor(.primary)
-                    .font(.system(size: 22, weight: .medium))
-                    .frame(width: 60, height: 60)
+                .foregroundColor(.primary)
+                .allowsHitTesting(false)
+                .animation(.snappy, value: activeTab)
             }
+            .frame(width: 60, height: 60)
             .interactiveGlassEffect()
         }
     }
 }
 
-private extension View {
+private struct AddWordIcon: View {
+    var body: some View {
+        HStack(spacing: 1) {
+            Image(systemName: "character")
+                .font(.system(size: 20, weight: .medium))
+            Image(systemName: "plus")
+                .font(.system(size: 12, weight: .semibold))
+        }
+    }
+}
+
+extension View {
     @ViewBuilder
-    func interactiveGlassEffect() -> some View {
+    fileprivate func interactiveGlassEffect() -> some View {
         if #available(iOS 26, *) {
             self.glassEffect(.regular.interactive(), in: .capsule)
         } else {

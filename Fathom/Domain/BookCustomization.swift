@@ -16,4 +16,7 @@ struct BookCustomization: Identifiable {
     
     // AI Choice
     var enableAI: Bool = false
+
+    // Set to true when the user explicitly picks a new cover image (edit mode only)
+    var isCoverChanged: Bool = false
 }

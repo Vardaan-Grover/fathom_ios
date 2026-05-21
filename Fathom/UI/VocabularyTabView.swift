@@ -4,11 +4,24 @@ import SwiftUI
 // MARK: - Card Color Palette
 
 private let wordAccentPalette: [Color] = [
-    Color(hex: "C4944A"),  // Sepia Ochre
-    Color(hex: "4E7C5F"),  // Scholar Green
-    Color(hex: "A85A6A"),  // Faded Rose
-    Color(hex: "2E5478"),  // Oxford Blue
-    Color(hex: "B07A30"),  // Amber Dusk
+    Color(hex: "B8720A"),  // Burnt Amber
+    Color(hex: "2A5E40"),  // Forest Green
+    Color(hex: "922840"),  // Deep Rose
+    Color(hex: "1C3E6E"),  // Oxford Navy
+    Color(hex: "7A3E18"),  // Terracotta
+    Color(hex: "4A2472"),  // Deep Violet
+    Color(hex: "1A5C6E"),  // Teal
+    Color(hex: "6E2A18"),  // Brick Red
+    Color(hex: "2E4E1E"),  // Olive
+    Color(hex: "8A3A70"),  // Plum
+    Color(hex: "1A4A3A"),  // Dark Jade
+    Color(hex: "5A3E10"),  // Dark Caramel
+    Color(hex: "2A3A6E"),  // Indigo
+    Color(hex: "6E4A1A"),  // Saddle Brown
+    Color(hex: "3A1A5A"),  // Midnight Purple
+    Color(hex: "1E5248"),  // Deep Teal
+    Color(hex: "7A2030"),  // Burgundy
+    Color(hex: "1E3E28"),  // Dark Emerald
 ]
 
 // Fallback used by detail/share views where display-order context isn't available
@@ -79,129 +92,146 @@ private func masonryColumns(from words: [SavedWord]) -> (left: [SavedWord], righ
 struct VocabularyTabView: View {
     @ObservedObject var viewModel: VocabularyTabViewModel
     @Environment(\.appTheme) var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var showBookFilter = false
     @State private var appearedCardIDs: Set<UUID> = []
+    @FocusState private var isSearchFocused: Bool
 
-    // Card expansion state
-    @State private var selectedWord: SavedWord? = nil
-    @State private var selectedCardColor: Color = .clear
-    @State private var selectedCardFrame: CGRect = .zero
-    @State private var isExpanded = false
-    @State private var expandedContentVisible = false
-    // Separate from selectedWord so grid can return to normal before the overlay is removed
-    @State private var isOverlayVisible = false
-    // Cancellable task that fires the expand animation on the frame after appearance
-    @State private var expandTask: Task<Void, Never>? = nil
-    // Index of the currently expanded word in filteredWords — drives swipe navigation
-    @State private var expandedWordIndex: Int = 0
-
-    // Actions triggered from the expanded card
-    @State private var showDeleteConfirm = false
-    @State private var isShowingShareSheet = false
-    @State private var shareImage: UIImage? = nil
+    // Context menu state — drives long-press delete confirmations on grid cards
+    @State private var contextMenuWord: SavedWord? = nil
+    @State private var showContextMenuDeleteConfirm = false
 
     var body: some View {
-        ZStack {
-            NavigationStack {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        VocabStatsHeader(
-                            viewModel: viewModel,
-                            onFilterTap: { showBookFilter = true },
-                            onAddTap: { viewModel.showAddWord = true }
-                        )
-                        .padding(.horizontal, theme.layout.horizontalPadding)
-                        .padding(.top, 20)
-                        .padding(.bottom, 16)
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 0) {
+                    VocabStatsHeader(
+                        viewModel: viewModel,
+                        onFilterTap: { showBookFilter = true }
+                    )
+                    .padding(.horizontal, theme.layout.horizontalPadding)
+                    .padding(.top, 20)
+                    .padding(.bottom, 12)
 
-                        if viewModel.isLoading {
-                            loadingView
-                        } else if viewModel.filteredWords.isEmpty {
-                            emptyStateView
-                        } else {
-                            masonryGrid
-                                .padding(.horizontal, theme.layout.horizontalPadding)
-                                .padding(.top, 8)
-                                .padding(.bottom, 100)
-                        }
+                    VocabSearchBar(text: $viewModel.searchQuery, isFocused: $isSearchFocused)
+                        .padding(.horizontal, theme.layout.horizontalPadding)
+                        .padding(.bottom, viewModel.isSearchActive && viewModel.filteredWords.isEmpty && !viewModel.isLoading ? 8 : 16)
+
+                    if viewModel.isSearchActive && viewModel.filteredWords.isEmpty && !viewModel.isLoading {
+                        searchAddRow
+                            .padding(.horizontal, theme.layout.horizontalPadding)
+                            .padding(.bottom, 16)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    if viewModel.isLoading {
+                        loadingView
+                    } else if viewModel.filteredWords.isEmpty && !viewModel.isSearchActive {
+                        emptyStateView
+                    } else if !viewModel.filteredWords.isEmpty {
+                        masonryGrid
+                            .padding(.horizontal, theme.layout.horizontalPadding)
+                            .padding(.top, 8)
+                            .padding(.bottom, 100)
                     }
                 }
-                .background(theme.colors.background)
-                .toolbarVisibility(.hidden, for: .tabBar)
             }
-            .blur(radius: isOverlayVisible ? 3 : 0)
-            .allowsHitTesting(selectedWord == nil)
-            .animation(.spring(duration: 0.42, bounce: 0.05), value: isOverlayVisible)
-
-            // Scrim
-            if selectedWord != nil {
-                Color.black
-                    .opacity(isExpanded ? 0.52 : 0)
-                    .ignoresSafeArea()
-                    .onTapGesture { dismissExpanded() }
-                    .allowsHitTesting(isExpanded)
-                    .animation(.easeInOut(duration: 0.26), value: isExpanded)
-            }
-
-            // Expanded card — exit transition crossfades the blank shell into the
-            // grid card beneath, hiding the single-frame re-render flash.
-            if let word = selectedWord {
-                ExpandedWordCard(
-                    word: word,
-                    accentColor: selectedCardColor,
-                    entry: viewModel.cachedEntry(for: word),
-                    sourceFrame: selectedCardFrame,
-                    isExpanded: isExpanded,
-                    contentVisible: expandedContentVisible,
-                    hasPrev: expandedHasPrev,
-                    hasNext: expandedHasNext,
-                    onDismiss: dismissExpanded,
-                    onNavigatePrev: { navigateExpanded(by: -1) },
-                    onNavigateNext: { navigateExpanded(by: 1) },
-                    onDelete: { showDeleteConfirm = true },
-                    onShare: { Task { await renderAndShare(word: word) } },
-                    onJumpToBook: { jumpToBook(word: word) }
-                )
-                .transition(.opacity.animation(.easeOut(duration: 0.18)))
-            }
+            .scrollDismissesKeyboard(.interactively)
+            .background(theme.colors.background)
+            .toolbarVisibility(.hidden, for: .tabBar)
         }
+        .simultaneousGesture(TapGesture().onEnded { isSearchFocused = false })
         .sheet(isPresented: $showBookFilter) {
             BookFilterSheet(viewModel: viewModel)
         }
-        .sheet(isPresented: $viewModel.showAddWord) {
-            AddWordSheet { word, entry, context in
+        .sheet(isPresented: $viewModel.showAddWord, onDismiss: { viewModel.addWordInitialText = "" }) {
+            AddWordSheet(initialWord: viewModel.addWordInitialText) { word, entry, context in
                 await viewModel.addManualWord(word: word, entry: entry, contextSentence: context)
+            }
+        }
+        .sheet(item: $viewModel.wordToEdit) { existing in
+            AddWordSheet(existingWord: existing) { newText, entry, context in
+                await viewModel.updateWord(existing, newText: newText, entry: entry, contextSentence: context)
+            }
+        }
+        .confirmationDialog(
+            contextMenuWord.map { "Remove '\($0.word)' from your vocabulary?" } ?? "",
+            isPresented: $showContextMenuDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                guard let word = contextMenuWord else { return }
+                Task { await viewModel.removeWord(word) }
+                contextMenuWord = nil
             }
         }
         .fullScreenCover(item: $viewModel.studySession) { _ in
             StudyModeView(viewModel: viewModel)
         }
-        .sheet(isPresented: $isShowingShareSheet) {
-            if let img = shareImage {
-                ShareLink(
-                    item: Image(uiImage: img),
-                    preview: SharePreview(selectedWord?.word ?? "", image: Image(uiImage: img))
-                )
-            }
-        }
-        .confirmationDialog(
-            selectedWord.map { "Remove '\($0.word)' from your vocabulary?" } ?? "",
-            isPresented: $showDeleteConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Remove", role: .destructive) {
-                guard let word = selectedWord else { return }
-                Task {
-                    dismissExpanded()
-                    await viewModel.removeWord(word)
-                }
-            }
-        }
         .task { await viewModel.load() }
         .onChange(of: viewModel.allWords) { _, _ in triggerEntranceAnimations() }
         .onChange(of: viewModel.selectedBookFilter) { _, _ in triggerEntranceAnimations() }
+        .onChange(of: isSearchFocused) { _, focused in viewModel.isSearchFocused = focused }
+    }
+
+    // MARK: - Search Add Row
+
+    private var searchAddRow: some View {
+        let query = viewModel.searchQuery.trimmingCharacters(in: .whitespaces)
+        return Button {
+            viewModel.addWordInitialText = query
+            viewModel.showAddWord = true
+        } label: {
+            HStack(spacing: 13) {
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.14))
+                        .frame(width: 40, height: 40)
+                    HStack(spacing: 1) {
+                        Image(systemName: "character")
+                            .font(.system(size: 15, weight: .medium))
+                        Image(systemName: "plus")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    .foregroundStyle(Color.accentColor)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Add \u{201C}\(query)\u{201D}")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text("Not in your vocabulary yet")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentColor.opacity(0.6))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(searchAddRowBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.18), lineWidth: 1)
+            )
+        }
+        .buttonStyle(SpringPressStyle())
+    }
+
+    @ViewBuilder
+    private var searchAddRowBackground: some View {
+        if #available(iOS 26, *) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.clear)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        } else {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.accentColor.opacity(0.07))
+        }
     }
 
     // MARK: - Masonry Grid
@@ -215,148 +245,28 @@ struct VocabularyTabView: View {
                 ForEach(cols.left) { word in
                     let color = colors[word.id] ?? wordAccentColor(for: word)
                     VocabWordCard(
-                        word: word, cardColor: color, isAppeared: appearedCardIDs.contains(word.id)
-                    ) { frame in
-                        expandCard(word, frame: frame, color: color)
-                    }
+                        word: word, cardColor: color, isAppeared: appearedCardIDs.contains(word.id),
+                        onExpand: { frame in viewModel.expandCard(word, frame: frame, color: color) },
+                        onEdit: { viewModel.wordToEdit = word },
+                        onShare: { Task { await viewModel.renderAndShare(word: word) } },
+                        onDelete: { contextMenuWord = word; showContextMenuDeleteConfirm = true },
+                        onPin: { Task { await viewModel.togglePin(word) } }
+                    )
                 }
             }
             VStack(spacing: 12) {
                 ForEach(cols.right) { word in
                     let color = colors[word.id] ?? wordAccentColor(for: word)
                     VocabWordCard(
-                        word: word, cardColor: color, isAppeared: appearedCardIDs.contains(word.id)
-                    ) { frame in
-                        expandCard(word, frame: frame, color: color)
-                    }
+                        word: word, cardColor: color, isAppeared: appearedCardIDs.contains(word.id),
+                        onExpand: { frame in viewModel.expandCard(word, frame: frame, color: color) },
+                        onEdit: { viewModel.wordToEdit = word },
+                        onShare: { Task { await viewModel.renderAndShare(word: word) } },
+                        onDelete: { contextMenuWord = word; showContextMenuDeleteConfirm = true },
+                        onPin: { Task { await viewModel.togglePin(word) } }
+                    )
                 }
             }
-        }
-    }
-
-    // MARK: - Expand / Dismiss
-
-    private func expandCard(_ word: SavedWord, frame: CGRect, color: Color) {
-        // Guard against re-entry: prevents double-taps that land before allowsHitTesting
-        // updates from corrupting the animation state with two cards' worth of setup.
-        guard selectedWord == nil else { return }
-
-        selectedWord = word
-        selectedCardColor = color
-        selectedCardFrame = frame
-        expandedWordIndex = viewModel.filteredWords.firstIndex(where: { $0.id == word.id }) ?? 0
-        isExpanded = false
-        expandedContentVisible = false
-        isOverlayVisible = true
-        viewModel.isCardExpanded = true
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-
-        if reduceMotion {
-            isExpanded = true
-            expandedContentVisible = true
-            return
-        }
-
-        // Trigger the expand animation on the next frame so SwiftUI has committed
-        // the initial (collapsed) state before we animate away from it.
-        // The task is cancellable: dismissExpanded() cancels it if the user
-        // dismisses before the animation has even started, preventing the
-        // onAppear-vs-dismiss race that leaves completionCriteria hanging.
-        expandTask?.cancel()
-        expandTask = Task { @MainActor in
-            await Task.yield()
-            guard !Task.isCancelled, selectedWord?.id == word.id else { return }
-            withAnimation(.spring(duration: 0.42, bounce: 0.15)) {
-                isExpanded = true
-            }
-            withAnimation(.easeOut(duration: 0.22).delay(0.20)) {
-                expandedContentVisible = true
-            }
-        }
-    }
-
-    private func dismissExpanded() {
-        // Cancel any pending expand animation so it can't resurrect isExpanded=true
-        // after we've already started collapsing.
-        expandTask?.cancel()
-        expandTask = nil
-
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-
-        if reduceMotion {
-            isExpanded = false
-            expandedContentVisible = false
-            isOverlayVisible = false
-            viewModel.isCardExpanded = false
-            selectedWord = nil
-            return
-        }
-
-        expandedContentVisible = false
-
-        // If the card never finished opening (isExpanded still false), skip the
-        // spring entirely — the completion would never fire at its target.
-        guard isExpanded || isOverlayVisible else {
-            isOverlayVisible = false
-            viewModel.isCardExpanded = false
-            selectedWord = nil
-            return
-        }
-
-        withAnimation(.spring(duration: 0.38, bounce: 0.08), completionCriteria: .logicallyComplete)
-        {
-            isExpanded = false
-            isOverlayVisible = false
-            viewModel.isCardExpanded = false
-        } completion: {
-            selectedWord = nil
-        }
-    }
-
-    private var expandedHasPrev: Bool {
-        selectedWord != nil && expandedWordIndex > 0
-    }
-
-    private var expandedHasNext: Bool {
-        selectedWord != nil && expandedWordIndex < viewModel.filteredWords.count - 1
-    }
-
-    private func navigateExpanded(by delta: Int) {
-        let newIndex = expandedWordIndex + delta
-        guard viewModel.filteredWords.indices.contains(newIndex) else { return }
-        expandedWordIndex = newIndex
-        let newWord = viewModel.filteredWords[newIndex]
-        UISelectionFeedbackGenerator().selectionChanged()
-        withAnimation(.spring(duration: 0.32, bounce: 0.05)) {
-            selectedWord = newWord
-            selectedCardColor = wordAccentColor(for: newWord)
-        }
-    }
-
-    private func jumpToBook(word: SavedWord) {
-        guard let bookID = word.bookID else { return }
-        if let locatorJSON = word.locatorJSON,
-            let locator = try? Locator(jsonString: locatorJSON)
-        {
-            ReadingStateStore.shared.saveLocator(locator, forBookID: bookID)
-        }
-        NotificationCenter.default.post(
-            name: .vocabularyJumpToBook,
-            object: nil,
-            userInfo: ["bookID": bookID, "locatorJSON": word.locatorJSON as Any]
-        )
-        dismissExpanded()
-    }
-
-    @MainActor
-    private func renderAndShare(word: SavedWord) async {
-        let entry = viewModel.cachedEntry(for: word)
-        let card = WordShareCardView(word: word, entry: entry).frame(width: 390, height: 520)
-        let renderer = ImageRenderer(content: card)
-        renderer.scale = UIScreen.main.scale
-        if let img = renderer.uiImage {
-            shareImage = img
-            isShowingShareSheet = true
         }
     }
 
@@ -423,7 +333,6 @@ struct VocabularyTabView: View {
 private struct VocabStatsHeader: View {
     @ObservedObject var viewModel: VocabularyTabViewModel
     let onFilterTap: () -> Void
-    let onAddTap: () -> Void
     @Environment(\.appTheme) var theme
 
     var body: some View {
@@ -447,12 +356,6 @@ private struct VocabStatsHeader: View {
             Spacer()
 
             HStack(spacing: 14) {
-                Button(action: onAddTap) {
-                    Image(systemName: "plus.circle")
-                        .font(.system(size: 22))
-                        .foregroundStyle(theme.colors.secondary)
-                }
-
                 Button(action: onFilterTap) {
                     Image(
                         systemName: viewModel.selectedBookFilter != nil
@@ -541,6 +444,10 @@ struct VocabWordCard: View {
     let cardColor: Color
     let isAppeared: Bool
     let onExpand: (CGRect) -> Void
+    let onEdit: () -> Void
+    let onShare: () -> Void
+    let onDelete: () -> Void
+    let onPin: () -> Void
 
     @Environment(\.appTheme) var theme
     @State private var cardFrame: CGRect = .zero
@@ -558,11 +465,14 @@ struct VocabWordCard: View {
                 RoundedRectangle(cornerRadius: theme.layout.cornerRadiusLarge, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [Color.white.opacity(0.12), Color.clear],
+                            colors: [Color.white.opacity(0.28), Color.black.opacity(0.22)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
+
+                RoundedRectangle(cornerRadius: theme.layout.cornerRadiusLarge, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
 
                 VStack(alignment: .leading, spacing: 6) {
                     posPill
@@ -576,7 +486,7 @@ struct VocabWordCard: View {
                     if !snippet.isEmpty {
                         Text(snippet)
                             .font(theme.typography.subheadline)
-                            .foregroundStyle(.white.opacity(0.72))
+                            .foregroundStyle(.white.opacity(0.88))
                             .lineLimit(5)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -586,9 +496,38 @@ struct VocabWordCard: View {
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
                 .padding(.bottom, 14)
+
+                // Pin badge
+                if word.pinnedAt != nil {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(6)
+                        .background(Circle().fill(.white.opacity(0.22)))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .padding(.top, 10)
+                        .padding(.trailing, 10)
+                }
             }
         }
         .buttonStyle(SpringPressStyle())
+        .contextMenu {
+            Button { onPin() } label: {
+                Label(
+                    word.pinnedAt != nil ? "Unpin" : "Pin",
+                    systemImage: word.pinnedAt != nil ? "pin.slash" : "pin"
+                )
+            }
+            Button { onEdit() } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            Button { onShare() } label: {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+            Button(role: .destructive) { onDelete() } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
         .opacity(isAppeared ? 1 : 0)
         .offset(y: isAppeared ? 0 : 40)
         .scaleEffect(isAppeared ? 1 : 0.92)
@@ -608,10 +547,10 @@ struct VocabWordCard: View {
         let pos = word.partsOfSpeech.components(separatedBy: ", ").first ?? word.partsOfSpeech
         return Text(pos.uppercased())
             .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(.white.opacity(0.95))
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(Capsule().fill(.white.opacity(0.18)))
+            .background(Capsule().fill(.white.opacity(0.24)))
     }
 
     @ViewBuilder
@@ -621,14 +560,14 @@ struct VocabWordCard: View {
                 Image(systemName: "book.closed").font(.system(size: 9))
                 Text(title).font(.system(size: 10)).lineLimit(1)
             }
-            .foregroundStyle(.white.opacity(0.5))
+            .foregroundStyle(.white.opacity(0.65))
         }
     }
 }
 
 // MARK: - Expanded Word Card
 
-private struct ExpandedWordCard: View {
+struct ExpandedWordCard: View {
     let word: SavedWord
     let accentColor: Color
     let entry: DictionaryWordEntry?
@@ -642,6 +581,7 @@ private struct ExpandedWordCard: View {
     let onNavigateNext: () -> Void
     let onDelete: () -> Void
     let onShare: () -> Void
+    let onEdit: () -> Void
     let onJumpToBook: () -> Void
 
     @Environment(\.appTheme) var theme
@@ -769,7 +709,7 @@ private struct ExpandedWordCard: View {
             }
 
             LinearGradient(
-                colors: [.white.opacity(0.14), .clear],
+                colors: [.white.opacity(0.28), .clear],
                 startPoint: .topLeading,
                 endPoint: UnitPoint(x: 0.6, y: 0.6)
             )
@@ -839,10 +779,10 @@ private struct ExpandedWordCard: View {
                         ) { pos in
                             Text(pos.uppercased())
                                 .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.88))
+                                .foregroundStyle(.white.opacity(0.95))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3.5)
-                                .background(Capsule().fill(.white.opacity(0.18)))
+                                .background(Capsule().fill(.white.opacity(0.24)))
                         }
                         if let phonetic = phoneticText {
                             Text(phonetic)
@@ -850,6 +790,17 @@ private struct ExpandedWordCard: View {
                                 .foregroundStyle(.white.opacity(0.58))
                                 .italic()
                         }
+                        Spacer(minLength: 0)
+                        Button {
+                            PronunciationService.shared.speak(word.word)
+                        } label: {
+                            Image(systemName: "speaker.wave.2")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.72))
+                                .frame(width: 30, height: 30)
+                                .background(Circle().fill(.white.opacity(0.18)))
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     if let title = word.bookTitle {
@@ -859,7 +810,7 @@ private struct ExpandedWordCard: View {
                                 .font(.system(size: 11, weight: .medium))
                                 .lineLimit(1)
                         }
-                        .foregroundStyle(.white.opacity(0.48))
+                        .foregroundStyle(.white.opacity(0.62))
                     }
                 }
                 .padding(.horizontal, 18)
@@ -1014,6 +965,15 @@ private struct ExpandedWordCard: View {
 
             Spacer()
 
+            Button(action: onEdit) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(theme.colors.secondary)
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(theme.colors.surface))
+            }
+            .buttonStyle(SpringPressStyle())
+
             Button(action: onShare) {
                 Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 15, weight: .medium))
@@ -1046,6 +1006,71 @@ private struct ExpandedWordCard: View {
             width: width,
             height: height
         )
+    }
+}
+
+// MARK: - Search Bar
+
+private struct VocabSearchBar: View {
+    @Binding var text: String
+    @FocusState.Binding var isFocused: Bool
+    @Environment(\.appTheme) var theme
+
+    var body: some View {
+        Group {
+            if #available(iOS 26, *) {
+                searchContent
+                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            } else {
+                searchContent
+                    .background(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .fill(theme.colors.surface)
+                    )
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .strokeBorder(
+                    isFocused ? Color.accentColor.opacity(0.42) : Color.clear,
+                    lineWidth: 1.5
+                )
+                .animation(.spring(duration: 0.22, bounce: 0.1), value: isFocused)
+        )
+        .animation(.spring(duration: 0.22, bounce: 0.1), value: isFocused)
+        .animation(.spring(duration: 0.22, bounce: 0.15), value: text.isEmpty)
+    }
+
+    private var searchContent: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(isFocused ? Color.accentColor : theme.colors.secondary)
+                .animation(.spring(duration: 0.22, bounce: 0.1), value: isFocused)
+
+            TextField("Search words, definitions\u{2026}", text: $text)
+                .font(.system(size: 16))
+                .foregroundStyle(theme.colors.primary)
+                .focused($isFocused)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .submitLabel(.search)
+
+            if !text.isEmpty {
+                Button {
+                    withAnimation(.spring(duration: 0.28, bounce: 0.25)) {
+                        text = ""
+                    }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(theme.colors.secondary.opacity(0.7))
+                }
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
     }
 }
 

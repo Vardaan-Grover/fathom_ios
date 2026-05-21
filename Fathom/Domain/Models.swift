@@ -6,7 +6,7 @@ struct Book: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
     static let databaseTableName: String = "books"
 
     let id: UUID
-    let title: String
+    var title: String
     var author: String?
     var format: BookFormat
     var localFilename: String?
@@ -54,6 +54,8 @@ struct BookCategory: Identifiable, Equatable, Codable, FetchableRecord, Persista
     var name: String
     var shelfColorHex: String
     var createdAt: Date
+    var sortOrder: Int = 0
+    var modifiedAt: Date = Date()
 }
 
 struct BookCategoryMembership: Codable, FetchableRecord, PersistableRecord {
@@ -61,6 +63,8 @@ struct BookCategoryMembership: Codable, FetchableRecord, PersistableRecord {
     let bookID: UUID
     let categoryID: UUID
     let addedAt: Date
+    var sortOrder: Int = 0
+    var modifiedAt: Date = Date()
 }
 
 struct Passage: Identifiable, Equatable {

@@ -25,14 +25,15 @@ final class BookmarkStore {
         var bookID: UUID?
         do {
             try dbQueue.write { db in
-                if let bookmark = try Bookmark.fetchOne(db, id: id) {
+                if var bookmark = try Bookmark.fetchOne(db, id: id) {
                     bookID = bookmark.bookID
-                    _ = try Bookmark.deleteOne(db, id: id)
+                    bookmark.deletedAt = Date()
+                    try bookmark.update(db)
                 }
             }
             if let bookID { notifyChange(bookID: bookID) }
         } catch {
-            AppLogger.log(tag: "BookmarkStore", "Error deleting bookmark: \(error)")
+            AppLogger.log(tag: "BookmarkStore", "Error soft-deleting bookmark: \(error)")
         }
     }
 
@@ -40,7 +41,7 @@ final class BookmarkStore {
         do {
             return try dbQueue.read { db in
                 try Bookmark
-                    .filter(Column("bookID") == bookID)
+                    .filter(Column("bookID") == bookID && Column("deletedAt") == nil)
                     .order(Column("progression").asc)
                     .fetchAll(db)
             }

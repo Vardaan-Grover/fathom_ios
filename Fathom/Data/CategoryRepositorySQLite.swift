@@ -11,7 +11,7 @@ final actor CategoryRepositorySQLite: CategoryRepository {
     func listCategories() async -> [BookCategory] {
         do {
             return try await dbQueue.read { db in
-                try BookCategory.order(Column("createdAt")).fetchAll(db)
+                try BookCategory.order(Column("sortOrder"), Column("createdAt")).fetchAll(db)
             }
         } catch {
             AppLogger.logError(tag: "CategoryRepository", error)
@@ -22,7 +22,11 @@ final actor CategoryRepositorySQLite: CategoryRepository {
     func addCategory(_ category: BookCategory) async {
         do {
             try await dbQueue.write { db in
-                try category.insert(db)
+                // Place new shelf after all existing ones
+                let maxOrder = try Int.fetchOne(db, sql: "SELECT MAX(sortOrder) FROM bookCategories") ?? -1
+                var ordered = category
+                ordered.sortOrder = maxOrder + 1
+                try ordered.insert(db)
             }
         } catch {
             AppLogger.logError(tag: "CategoryRepository", error)
@@ -57,7 +61,9 @@ final actor CategoryRepositorySQLite: CategoryRepository {
     func listMemberships() async -> [BookCategoryMembership] {
         do {
             return try await dbQueue.read { db in
-                try BookCategoryMembership.order(Column("addedAt").desc).fetchAll(db)
+                try BookCategoryMembership
+                    .order(Column("categoryID"), Column("sortOrder"), Column("addedAt").desc)
+                    .fetchAll(db)
             }
         } catch {
             AppLogger.logError(tag: "CategoryRepository", error)
@@ -82,6 +88,37 @@ final actor CategoryRepositorySQLite: CategoryRepository {
                 try BookCategoryMembership
                     .filter(Column("bookID") == bookID && Column("categoryID") == categoryID)
                     .deleteAll(db)
+            }
+        } catch {
+            AppLogger.logError(tag: "CategoryRepository", error)
+        }
+    }
+
+    func reorderCategories(_ ids: [UUID]) async {
+        do {
+            try await dbQueue.write { db in
+                for (index, id) in ids.enumerated() {
+                    // Bind UUID directly — GRDB encodes it to match the stored blob format
+                    try db.execute(
+                        sql: "UPDATE bookCategories SET sortOrder = ? WHERE id = ?",
+                        arguments: [index, id]
+                    )
+                }
+            }
+        } catch {
+            AppLogger.logError(tag: "CategoryRepository", error)
+        }
+    }
+
+    func reorderBooksInCategory(categoryID: UUID, bookIDs: [UUID]) async {
+        do {
+            try await dbQueue.write { db in
+                for (index, bookID) in bookIDs.enumerated() {
+                    try db.execute(
+                        sql: "UPDATE bookCategoryMemberships SET sortOrder = ? WHERE bookID = ? AND categoryID = ?",
+                        arguments: [index, bookID, categoryID]
+                    )
+                }
             }
         } catch {
             AppLogger.logError(tag: "CategoryRepository", error)

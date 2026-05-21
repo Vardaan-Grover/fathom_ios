@@ -4,8 +4,10 @@ import GRDB
 public protocol VocabularyRepository: Actor {
     func listSavedWords() async -> [SavedWord]
     func addSavedWord(_ word: SavedWord) async
+    func updateSavedWord(_ word: SavedWord) async
     func removeSavedWord(id: UUID) async
     func getSavedWord(word: String, language: String) async -> SavedWord?
+    func setPinnedAt(id: UUID, pinnedAt: Date?) async
 }
 
 public final actor VocabularyRepositorySQLite: VocabularyRepository {
@@ -43,15 +45,49 @@ public final actor VocabularyRepositorySQLite: VocabularyRepository {
         }
     }
 
+    public func updateSavedWord(_ word: SavedWord) async {
+        await withCheckedContinuation { continuation in
+            do {
+                try dbQueue.write { db in
+                    try word.update(db)
+                }
+                continuation.resume()
+            } catch {
+                AppLogger.log(tag: "VocabularyRepository", "Error updating saved word: \(error)")
+                continuation.resume()
+            }
+        }
+    }
+
     public func removeSavedWord(id: UUID) async {
         await withCheckedContinuation { continuation in
             do {
                 try dbQueue.write { db in
-                    _ = try SavedWord.deleteOne(db, id: id)
+                    try db.execute(
+                        sql: "UPDATE saved_words SET deletedAt = ? WHERE id = ?",
+                        arguments: [Date(), id.uuidString]
+                    )
                 }
                 continuation.resume()
             } catch {
-                AppLogger.log(tag: "VocabularyRepository", "Error removing saved word: \(error)")
+                AppLogger.log(tag: "VocabularyRepository", "Error soft-deleting saved word: \(error)")
+                continuation.resume()
+            }
+        }
+    }
+
+    public func setPinnedAt(id: UUID, pinnedAt: Date?) async {
+        await withCheckedContinuation { continuation in
+            do {
+                try dbQueue.write { db in
+                    try db.execute(
+                        sql: "UPDATE saved_words SET pinnedAt = ? WHERE id = ?",
+                        arguments: [pinnedAt, id.uuidString]
+                    )
+                }
+                continuation.resume()
+            } catch {
+                AppLogger.log(tag: "VocabularyRepository", "Error setting pinnedAt: \(error)")
                 continuation.resume()
             }
         }

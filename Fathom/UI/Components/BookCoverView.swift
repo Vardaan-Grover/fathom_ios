@@ -6,6 +6,8 @@ struct BookCoverView: View {
     let height: CGFloat
     var userCategories: [HomeCategory] = []
     var onToggleCategory: ((UUID) -> Void)? = nil
+    var onEdit: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
 
     @State private var showShelfPicker = false
 
@@ -14,13 +16,17 @@ struct BookCoverView: View {
         width: CGFloat = 120,
         height: CGFloat = 168,
         userCategories: [HomeCategory] = [],
-        onToggleCategory: ((UUID) -> Void)? = nil
+        onToggleCategory: ((UUID) -> Void)? = nil,
+        onEdit: (() -> Void)? = nil,
+        onDelete: (() -> Void)? = nil
     ) {
         self.book = book
         self.width = width
         self.height = height
         self.userCategories = userCategories
         self.onToggleCategory = onToggleCategory
+        self.onEdit = onEdit
+        self.onDelete = onDelete
     }
 
     var body: some View {
@@ -48,26 +54,24 @@ struct BookCoverView: View {
 
     @ViewBuilder
     private var contextMenuContent: some View {
-        ControlGroup {
-            Button {
-            } label: {
-                Label("Favourite", systemImage: "heart")
-            }
-            Button {
-            } label: {
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-            Button(role: .destructive) {
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
+        Button {
+        } label: {
+            Label("Share", systemImage: "square.and.arrow.up")
         }
-        if !userCategories.isEmpty {
-            Button {
-                showShelfPicker = true
-            } label: {
-                Label("Add to Shelf", systemImage: "books.vertical.fill")
-            }
+        Button {
+            onEdit?()
+        } label: {
+            Label("Edit Book", systemImage: "pencil")
+        }
+        Button {
+            showShelfPicker = true
+        } label: {
+            Label("Manage Shelves", systemImage: "books.vertical")
+        }
+        Button(role: .destructive) {
+            onDelete?()
+        } label: {
+            Label("Delete Book", systemImage: "trash")
         }
     }
 
@@ -230,7 +234,7 @@ private struct ShelfPickerSheet: View {
                         .font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .padding(.bottom, 2)
-                    Text("Add to Shelf")
+                    Text("Manage Shelves")
                         .font(.title3.weight(.semibold))
                     Text(subtitle)
                         .font(.subheadline)

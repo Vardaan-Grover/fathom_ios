@@ -15,6 +15,10 @@ struct HomeScreen: View {
     @State private var readerBook: Book? = nil
     @State private var editingCategory: HomeCategory? = nil
     @State private var categoryToDelete: HomeCategory? = nil
+    @State private var showReorderShelves = false
+    @State private var reorderingBooksCategory: HomeCategory? = nil
+    @State private var editingBook: Book? = nil
+    @State private var bookToDelete: HomeBook? = nil
 
     // IDs currently in their dissolve-out phase — layout space is released
     // after the dissolve completes, creating a two-phase deletion.
@@ -78,11 +82,37 @@ struct HomeScreen: View {
                                         categoryToDelete = cat
                                     }
                                 } : nil,
+                            onReorderBooks: category.books.count > 1
+                                ? {
+                                    let cat = category
+                                    Task { @MainActor in
+                                        try? await Task.sleep(nanoseconds: 500_000_000)
+                                        reorderingBooksCategory = cat
+                                    }
+                                } : nil,
                             userCategories: userShelves,
                             onToggleCategoryMembership: { bookID, categoryID in
                                 withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
                                     viewModel.toggleBookInCategory(
                                         bookID: bookID, categoryID: categoryID)
+                                }
+                            },
+                            onEditBook: { bookID in
+                                Task { @MainActor in
+                                    let allBooks = await bookRepository.listBooks()
+                                    guard let book = allBooks.first(where: { $0.id == bookID })
+                                    else { return }
+                                    try? await Task.sleep(nanoseconds: 500_000_000)
+                                    editingBook = book
+                                }
+                            },
+                            onDeleteBook: { bookID in
+                                let hb = viewModel.categories.flatMap(\.books)
+                                    .first(where: { $0.id == bookID })
+                                guard let hb else { return }
+                                Task { @MainActor in
+                                    try? await Task.sleep(nanoseconds: 500_000_000)
+                                    bookToDelete = hb
                                 }
                             }
                         )
@@ -102,6 +132,32 @@ struct HomeScreen: View {
                                     with: .scale(scale: 0.94, anchor: .top)),
                                 removal: .identity  // already invisible by the time data removes it
                             ))
+                    }
+
+                    if viewModel.categories.count > 1 {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            showReorderShelves = true
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.up.arrow.down")
+                                    .font(.system(size: 14, weight: .semibold))
+                                Text("Reorder Shelves")
+                                    .font(.system(size: 15, weight: .medium))
+                            }
+                            .foregroundStyle(theme.colors.primary.opacity(0.8))
+                            .padding(.horizontal, 22)
+                            .padding(.vertical, 12)
+                            .background(
+                                Group {
+                                    Capsule()
+                                        .fill(.ultraThinMaterial)
+                                }
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 32)
+                        .padding(.bottom, 24)
                     }
                 }
             }
@@ -150,6 +206,9 @@ struct HomeScreen: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                         .padding(.horizontal)
                 }
                 .padding(.top, 10)
@@ -182,11 +241,105 @@ struct HomeScreen: View {
                     }
                 }
 
-                Spacer(minLength: 0)
             }
             .padding(.top, 36)
             .padding(.horizontal, 24)
-            .presentationDetents([.height(172)])
+            .presentationDetents([.height(216)])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showReorderShelves) {
+            ReorderShelvesSheet(shelves: viewModel.categories) { newOrder in
+                viewModel.applyShelfOrder(newOrder)
+            }
+        }
+        .sheet(item: $reorderingBooksCategory) { category in
+            let liveCategory =
+                viewModel.categories.first(where: { $0.id == category.id }) ?? category
+            ReorderBooksSheet(category: liveCategory) { newOrder in
+                viewModel.applyBookOrder(in: liveCategory.id, newOrder: newOrder)
+            }
+        }
+        .sheet(item: $editingBook) { book in
+            let coverData: Data? = {
+                guard let filename = book.coverFilename,
+                    let url = BookFileStore.coverURL(for: filename)
+                else { return nil }
+                return try? Data(contentsOf: url)
+            }()
+            BookCustomizationSheet(
+                initial: BookCustomization(
+                    id: book.id,
+                    title: book.title,
+                    author: book.author ?? "",
+                    description: book.description ?? "",
+                    coverImageData: coverData,
+                    originalTitle: book.title,
+                    originalAuthor: book.author,
+                    originalLanguage: book.language
+                ),
+                isEditing: true,
+                onConfirm: { edited in
+                    Task { await viewModel.updateBook(id: book.id, customization: edited) }
+                },
+                onCancel: {}
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $bookToDelete) { book in
+            VStack(spacing: 24) {
+                VStack(spacing: 8) {
+                    Text("Delete \"\(book.title)\"?")
+                        .font(.title2.bold())
+                        .multilineTextAlignment(.center)
+
+                    Text(
+                        "This will permanently remove the book and all your highlights, notes, and bookmarks."
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+                    .padding(.horizontal)
+                }
+                .padding(.top, 10)
+
+                HStack(spacing: 12) {
+                    Button(role: .cancel) {
+                        bookToDelete = nil
+                    } label: {
+                        Text("Cancel")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(
+                                Color(.secondarySystemFill), in: RoundedRectangle(cornerRadius: 14)
+                            )
+                            .foregroundStyle(.primary)
+                    }
+                    Button(role: .destructive) {
+                        let id = book.id
+                        bookToDelete = nil
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                            viewModel.deleteBook(id: id)
+                        }
+                    } label: {
+                        Text("Delete Book")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(
+                                Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 14)
+                            )
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .padding(.top, 36)
+            .padding(.horizontal, 24)
+            .presentationDetents([.height(236)])
             .presentationDragIndicator(.visible)
         }
         .fullScreenCover(item: $readerBook) { book in

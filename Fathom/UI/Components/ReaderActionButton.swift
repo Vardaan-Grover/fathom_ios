@@ -93,6 +93,7 @@ struct CustomButton: View {
                         .opacity(isPresented ? 1 : 0)
                 }
                 .clipShape(.capsule)
+                .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
             }
         }
     }
@@ -123,6 +124,7 @@ struct CustomSectionButton: View {
                         .opacity(isPresented ? 1 : 0)
                 }
                 .clipShape(.capsule)
+                .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
             }
         }
     }

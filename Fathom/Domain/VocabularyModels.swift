@@ -89,6 +89,12 @@ public struct SavedWord: Identifiable, Equatable, Hashable, Codable, FetchableRe
 
     public let createdAt: Date
 
+    // Non-nil when the word is pinned to the top; set to the pin timestamp
+    public var pinnedAt: Date?
+    /// Soft-delete tombstone — propagates the deletion to other devices via CloudKit.
+    public var deletedAt: Date? = nil
+    public var modifiedAt: Date = Date()
+
     public init(
         id: UUID = UUID(),
         word: String,
@@ -101,7 +107,10 @@ public struct SavedWord: Identifiable, Equatable, Hashable, Codable, FetchableRe
         locatorJSON: String?,
         contextSentence: String?,
         fullDictionaryJSON: Data?,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        pinnedAt: Date? = nil,
+        deletedAt: Date? = nil,
+        modifiedAt: Date = Date()
     ) {
         self.id = id
         self.word = word
@@ -115,6 +124,9 @@ public struct SavedWord: Identifiable, Equatable, Hashable, Codable, FetchableRe
         self.contextSentence = contextSentence
         self.fullDictionaryJSON = fullDictionaryJSON
         self.createdAt = createdAt
+        self.pinnedAt = pinnedAt
+        self.deletedAt = deletedAt
+        self.modifiedAt = modifiedAt
     }
 
     /// Helper to create a SavedWord from a DictionaryWordEntry API response
@@ -145,7 +157,8 @@ public struct SavedWord: Identifiable, Equatable, Hashable, Codable, FetchableRe
             locatorJSON: locatorJSON,
             contextSentence: contextSentence,
             fullDictionaryJSON: jsonData,
-            createdAt: Date()
+            createdAt: Date(),
+            pinnedAt: nil
         )
     }
 }

@@ -62,6 +62,11 @@ final class BookDetailsViewModel: ObservableObject {
             enableAIError = "Book content hash missing. Please re-import the book."
             return
         }
+        // For AI enablement we need the file fully on-device (to upload to R2).
+        guard ICloudDownloadMonitor.shared.isReadable(bookFilename: current.localFilename) else {
+            enableAIError = "Book file is not downloaded yet. Please wait for iCloud to finish syncing."
+            return
+        }
         guard let localURL = current.localURL else {
             enableAIError = "Local file not found."
             return

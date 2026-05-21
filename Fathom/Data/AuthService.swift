@@ -30,12 +30,48 @@ final class AuthService: ObservableObject {
             case .initialSession:
                 session = newSession
                 isLoading = false
+                if let s = newSession { await handleSignIn(session: s) }
             case .signedIn, .tokenRefreshed:
                 session = newSession
+                if let s = newSession { await handleSignIn(session: s) }
             case .signedOut:
                 session = nil
+                handleSignOut()
             default:
                 break
+            }
+        }
+    }
+
+    // MARK: - Private helpers
+
+    private func handleSignIn(session: Session) async {
+        guard let userID = UUID(uuidString: session.user.id.uuidString) else { return }
+
+        // 1. Configure file store first (must happen before migration or any file access).
+        ICloudFileStore.shared.configure(userID: userID)
+
+        // 2. Start the iCloud download monitor on the main actor.
+        await MainActor.run {
+            ICloudDownloadMonitor.shared.start()
+        }
+
+        // 3. Migrate existing local files into iCloud on first launch.
+        await LocalToICloudMigration.shared.migrateIfNeeded()
+
+        // 4. Start the CloudKit sync engine (push path).
+        //    Skipped gracefully if iCloud isn't available (Personal Team, no entitlement).
+        if ICloudFileStore.shared.isAvailable {
+            await SyncEngine.shared.start(userID: userID)
+        }
+    }
+
+    private func handleSignOut() {
+        ICloudFileStore.shared.reset()
+        Task {
+            await SyncEngine.shared.stop()
+            await MainActor.run {
+                ICloudDownloadMonitor.shared.stop()
             }
         }
     }

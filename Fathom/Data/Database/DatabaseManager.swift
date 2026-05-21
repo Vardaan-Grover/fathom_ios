@@ -284,6 +284,7 @@ final class DatabaseManager {
                 t.add(column: "bookTitle", .text)
             }
         }
+
         migrator.registerMigration("v17_add_sort_orders") { db in
             // Guard against the column already existing (e.g. from a partial prior run)
             let catColumns = try db.columns(in: "bookCategories").map(\.name)
@@ -326,7 +327,237 @@ final class DatabaseManager {
             }
         }
 
+        
+
+        // ── Sync infrastructure ────────────────────────────────────────────
+
+        // v19 — soft-delete tombstone column on annotation tables.
+        // Deletions set deletedAt instead of removing the row so tombstones
+        // propagate to other devices via CloudKit.
+        migrator.registerMigration("v19_add_deleted_at") { db in
+            for table in ["highlights", "notes", "bookmarks", "saved_words"] {
+                try db.alter(table: table) { t in
+                    t.add(column: "deletedAt", .datetime)
+                }
+            }
+        }
+
+        // v20 — modifiedAt timestamp on every synced table.
+        // Backfilled from each table's existing creation-time column.
+        // AFTER UPDATE triggers keep modifiedAt current without touching Swift models.
+        migrator.registerMigration("v20_add_modified_at") { db in
+            // (tableName, column to backfill from)
+            let tables: [(String, String)] = [
+                ("books",                    "importDate"),
+                ("bookCategories",           "createdAt"),
+                ("bookCategoryMemberships",  "addedAt"),
+                ("highlights",               "createdAt"),
+                ("notes",                    "createdAt"),
+                ("bookmarks",                "createdAt"),
+                ("saved_words",              "createdAt"),
+                ("aiConversations",          "createdAt"),
+            ]
+            for (table, sourceCol) in tables {
+                try db.alter(table: table) { t in
+                    t.add(column: "modifiedAt", .datetime)
+                }
+                try db.execute(sql: "UPDATE \(table) SET modifiedAt = \(sourceCol) WHERE modifiedAt IS NULL")
+            }
+
+            // AFTER UPDATE triggers auto-stamp modifiedAt.
+            // SQLite's recursive_triggers is OFF by default so the UPDATE inside
+            // the trigger body does NOT re-fire the trigger — no infinite loop.
+            let idTables = ["books", "bookCategories", "highlights", "notes",
+                            "bookmarks", "saved_words", "aiConversations"]
+            for table in idTables {
+                try db.execute(sql: """
+                    CREATE TRIGGER IF NOT EXISTS \(table)_stamp_modifiedAt
+                    AFTER UPDATE ON \(table)
+                    FOR EACH ROW
+                    BEGIN
+                        UPDATE \(table)
+                        SET    modifiedAt = strftime('%Y-%m-%dT%H:%M:%f', 'now')
+                        WHERE  id = NEW.id;
+                    END
+                    """)
+            }
+            // bookCategoryMemberships uses a composite primary key (no id column).
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS bookCategoryMemberships_stamp_modifiedAt
+                AFTER UPDATE ON bookCategoryMemberships
+                FOR EACH ROW
+                BEGIN
+                    UPDATE bookCategoryMemberships
+                    SET    modifiedAt = strftime('%Y-%m-%dT%H:%M:%f', 'now')
+                    WHERE  bookID = NEW.bookID AND categoryID = NEW.categoryID;
+                END
+                """)
+        }
+
+        // v21 — CloudKit change-data-capture queue + triggers.
+        // Every insert / update / delete on a synced table automatically adds a
+        // row here.  The SyncEngine observes this table (GRDB ValueObservation)
+        // and flushes pending entries to CloudKit.
+        //
+        // PRIMARY KEY (recordType, recordID) deduplicates: rapid changes to the
+        // same record collapse into one pending entry.
+        migrator.registerMigration("v21_cloudkit_sync_queue") { db in
+            try db.create(table: "cloudkit_pending_changes") { t in
+                t.column("recordType", .text).notNull()
+                t.column("recordID",   .text).notNull()
+                // 'upsert' — insert or update the CKRecord
+                // 'delete' — delete the CKRecord (hard-deleted rows)
+                t.column("operation",  .text).notNull().defaults(to: "upsert")
+                t.column("queuedAt",   .datetime).notNull()
+                    .defaults(sql: "CURRENT_TIMESTAMP")
+                t.primaryKey(["recordType", "recordID"])
+            }
+
+            // ── Upsert-only tables (soft-deletes, never hard-deleted) ──────
+            for table in ["highlights", "notes", "bookmarks", "saved_words"] {
+                let type = Self.cloudKitType(for: table)
+                try db.execute(sql: """
+                    CREATE TRIGGER IF NOT EXISTS \(table)_ck_insert
+                    AFTER INSERT ON \(table)
+                    BEGIN
+                        INSERT OR REPLACE INTO cloudkit_pending_changes
+                            (recordType, recordID, operation, queuedAt)
+                        VALUES ('\(type)', NEW.id, 'upsert', CURRENT_TIMESTAMP);
+                    END
+                    """)
+                try db.execute(sql: """
+                    CREATE TRIGGER IF NOT EXISTS \(table)_ck_update
+                    AFTER UPDATE ON \(table)
+                    BEGIN
+                        INSERT OR REPLACE INTO cloudkit_pending_changes
+                            (recordType, recordID, operation, queuedAt)
+                        VALUES ('\(type)', NEW.id, 'upsert', CURRENT_TIMESTAMP);
+                    END
+                    """)
+            }
+
+            // ── Hard-delete tables (insert/update → upsert, delete → delete) ─
+            for table in ["books", "bookCategories", "aiConversations"] {
+                let type = Self.cloudKitType(for: table)
+                try db.execute(sql: """
+                    CREATE TRIGGER IF NOT EXISTS \(table)_ck_insert
+                    AFTER INSERT ON \(table)
+                    BEGIN
+                        INSERT OR REPLACE INTO cloudkit_pending_changes
+                            (recordType, recordID, operation, queuedAt)
+                        VALUES ('\(type)', NEW.id, 'upsert', CURRENT_TIMESTAMP);
+                    END
+                    """)
+                try db.execute(sql: """
+                    CREATE TRIGGER IF NOT EXISTS \(table)_ck_update
+                    AFTER UPDATE ON \(table)
+                    BEGIN
+                        INSERT OR REPLACE INTO cloudkit_pending_changes
+                            (recordType, recordID, operation, queuedAt)
+                        VALUES ('\(type)', NEW.id, 'upsert', CURRENT_TIMESTAMP);
+                    END
+                    """)
+                try db.execute(sql: """
+                    CREATE TRIGGER IF NOT EXISTS \(table)_ck_delete
+                    AFTER DELETE ON \(table)
+                    BEGIN
+                        INSERT OR REPLACE INTO cloudkit_pending_changes
+                            (recordType, recordID, operation, queuedAt)
+                        VALUES ('\(type)', OLD.id, 'delete', CURRENT_TIMESTAMP);
+                    END
+                    """)
+            }
+
+            // bookCategoryMemberships — composite key, serialised as "bookID|categoryID"
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS bookCategoryMemberships_ck_insert
+                AFTER INSERT ON bookCategoryMemberships
+                BEGIN
+                    INSERT OR REPLACE INTO cloudkit_pending_changes
+                        (recordType, recordID, operation, queuedAt)
+                    VALUES ('BookCategoryMembership',
+                            NEW.bookID || '|' || NEW.categoryID,
+                            'upsert', CURRENT_TIMESTAMP);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS bookCategoryMemberships_ck_delete
+                AFTER DELETE ON bookCategoryMemberships
+                BEGIN
+                    INSERT OR REPLACE INTO cloudkit_pending_changes
+                        (recordType, recordID, operation, queuedAt)
+                    VALUES ('BookCategoryMembership',
+                            OLD.bookID || '|' || OLD.categoryID,
+                            'delete', CURRENT_TIMESTAMP);
+                END
+                """)
+
+            // aiMessages — inserting a message queues the parent conversation
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS aiMessages_ck_insert
+                AFTER INSERT ON aiMessages
+                BEGIN
+                    INSERT OR REPLACE INTO cloudkit_pending_changes
+                        (recordType, recordID, operation, queuedAt)
+                    VALUES ('AIConversation', NEW.conversationID, 'upsert', CURRENT_TIMESTAMP);
+                END
+                """)
+
+            // Seed queue with every existing record so first-run push is handled
+            // automatically by the normal push path rather than special-case code.
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO cloudkit_pending_changes (recordType, recordID, operation)
+                SELECT 'Book', id, 'upsert' FROM books
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO cloudkit_pending_changes (recordType, recordID, operation)
+                SELECT 'BookCategory', id, 'upsert' FROM bookCategories
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO cloudkit_pending_changes (recordType, recordID, operation)
+                SELECT 'BookCategoryMembership', bookID || '|' || categoryID, 'upsert'
+                FROM bookCategoryMemberships
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO cloudkit_pending_changes (recordType, recordID, operation)
+                SELECT 'Highlight', id, 'upsert' FROM highlights
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO cloudkit_pending_changes (recordType, recordID, operation)
+                SELECT 'Note', id, 'upsert' FROM notes
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO cloudkit_pending_changes (recordType, recordID, operation)
+                SELECT 'Bookmark', id, 'upsert' FROM bookmarks
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO cloudkit_pending_changes (recordType, recordID, operation)
+                SELECT 'SavedWord', id, 'upsert' FROM saved_words
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO cloudkit_pending_changes (recordType, recordID, operation)
+                SELECT 'AIConversation', id, 'upsert' FROM aiConversations
+                """)
+        }
+
         return migrator
+    }
+
+    // Maps a SQLite table name to its CloudKit record type string.
+    // Kept here (alongside the migration that creates the triggers) so the
+    // strings stay in sync automatically.
+    static func cloudKitType(for tableName: String) -> String {
+        switch tableName {
+        case "books":                   return "Book"
+        case "bookCategories":          return "BookCategory"
+        case "bookCategoryMemberships": return "BookCategoryMembership"
+        case "highlights":              return "Highlight"
+        case "notes":                   return "Note"
+        case "bookmarks":               return "Bookmark"
+        case "saved_words":             return "SavedWord"
+        case "aiConversations":         return "AIConversation"
+        default:                        return tableName
+        }
     }
 
     func runStartupSmokeTest() throws {

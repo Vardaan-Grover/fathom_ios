@@ -27,19 +27,18 @@ struct Book: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
     var estimatedReadingTimeMinutes: Int? = nil
     var lastReadAt: Date? = nil
 
+    /// Last time any field on this record was written — used for CloudKit
+    /// last-write-wins conflict resolution on pull.
+    var modifiedAt: Date = Date()
+
     var localURL: URL? {
         guard let filename = localFilename else { return nil }
-        guard
-            let appSupport = try? FileManager.default.url(
-                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil,
-                create: false)
-        else { return nil }
-        return appSupport.appendingPathComponent("Books").appendingPathComponent(filename)
+        return ICloudFileStore.shared.bookURL(for: filename)
     }
 
     var coverURL: URL? {
         guard let filename = coverFilename else { return nil }
-        return BookFileStore.coverURL(for: filename)
+        return ICloudFileStore.shared.coverURL(for: filename)
     }
 }
 
@@ -254,6 +253,10 @@ struct Highlight: Identifiable, Codable, FetchableRecord, PersistableRecord {
     let text: String
     let createdAt: Date
     var color: HighlightColor
+    /// Non-nil when the highlight has been soft-deleted on this device.
+    /// The record is kept in SQLite so the tombstone can propagate via CloudKit.
+    var deletedAt: Date? = nil
+    var modifiedAt: Date = Date()
 }
 
 struct Note: Identifiable, Codable, FetchableRecord, PersistableRecord {
@@ -268,6 +271,8 @@ struct Note: Identifiable, Codable, FetchableRecord, PersistableRecord {
     var chapterTitle: String?
     var pageNumber: Int?
     var highlightColor: HighlightColor
+    var deletedAt: Date? = nil
+    var modifiedAt: Date = Date()
 
     init(
         id: UUID = UUID(),
@@ -278,7 +283,9 @@ struct Note: Identifiable, Codable, FetchableRecord, PersistableRecord {
         createdAt: Date = Date(),
         chapterTitle: String? = nil,
         pageNumber: Int? = nil,
-        highlightColor: HighlightColor = .indigo
+        highlightColor: HighlightColor = .indigo,
+        deletedAt: Date? = nil,
+        modifiedAt: Date = Date()
     ) {
         self.id = id
         self.bookID = bookID
@@ -289,6 +296,8 @@ struct Note: Identifiable, Codable, FetchableRecord, PersistableRecord {
         self.chapterTitle = chapterTitle
         self.pageNumber = pageNumber
         self.highlightColor = highlightColor
+        self.deletedAt = deletedAt
+        self.modifiedAt = modifiedAt
     }
 }
 
@@ -302,6 +311,8 @@ struct Bookmark: Identifiable, Codable, FetchableRecord, PersistableRecord {
     var chapterTitle: String?
     var pageNumber: Int?
     let createdAt: Date
+    var deletedAt: Date? = nil
+    var modifiedAt: Date = Date()
 
     init(
         id: UUID = UUID(),
@@ -310,7 +321,9 @@ struct Bookmark: Identifiable, Codable, FetchableRecord, PersistableRecord {
         progression: Double,
         chapterTitle: String? = nil,
         pageNumber: Int? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        deletedAt: Date? = nil,
+        modifiedAt: Date = Date()
     ) {
         self.id = id
         self.bookID = bookID
@@ -319,6 +332,8 @@ struct Bookmark: Identifiable, Codable, FetchableRecord, PersistableRecord {
         self.chapterTitle = chapterTitle
         self.pageNumber = pageNumber
         self.createdAt = createdAt
+        self.deletedAt = deletedAt
+        self.modifiedAt = modifiedAt
     }
 }
 

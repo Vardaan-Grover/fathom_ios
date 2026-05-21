@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct FathomApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var authService = AuthService()
     @StateObject private var homeViewModel: HomeViewModel
     @StateObject private var libraryViewModel: LibraryViewModel
@@ -43,6 +44,13 @@ struct FathomApp: App {
                     Task { try? await authService.handleDeepLink(url) }
                 }
                 .themed(with: themeManager)
+                // Pull remote changes whenever the app comes to the foreground.
+                // SyncEngine guards internally if not started (no iCloud/paid account).
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active {
+                        Task { await SyncEngine.shared.fetchChangesIfNeeded() }
+                    }
+                }
             }
         }
     }

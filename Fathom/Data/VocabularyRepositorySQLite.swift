@@ -21,7 +21,12 @@ public final actor VocabularyRepositorySQLite: VocabularyRepository {
         await withCheckedContinuation { continuation in
             do {
                 let items = try dbQueue.read { db in
-                    try SavedWord.order(Column("createdAt").desc).fetchAll(db)
+                    // Pinned words first (most recently pinned first), then by newest saved.
+                    // Exclude soft-deleted tombstones.
+                    try SavedWord
+                        .filter(Column("deletedAt") == nil)
+                        .order(Column("pinnedAt").desc, Column("createdAt").desc)
+                        .fetchAll(db)
                 }
                 continuation.resume(returning: items)
             } catch {
@@ -97,7 +102,8 @@ public final actor VocabularyRepositorySQLite: VocabularyRepository {
         await withCheckedContinuation { continuation in
             do {
                 let saved = try dbQueue.read { db in
-                    try SavedWord.filter(Column("word") == word && Column("language") == language)
+                    try SavedWord
+                        .filter(Column("word") == word && Column("language") == language && Column("deletedAt") == nil)
                         .fetchOne(db)
                 }
                 continuation.resume(returning: saved)

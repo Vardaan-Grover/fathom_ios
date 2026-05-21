@@ -10,8 +10,25 @@ class HomeViewModel: ObservableObject {
     @Published var recentBookProgress: Double = 0
     @Published var recentFullBook: Book? = nil
 
+    // Fixed UUID so "My Library" has a stable identity across loads
+    static let myLibraryID = UUID(uuidString: "00000000-FADE-0000-0000-000000000001")!
+
     private let bookRepository: BookRepository
     private let categoryRepository: CategoryRepository
+
+    // MARK: - UserDefaults keys for My Library ordering
+    private static let myLibraryPositionKey = "fathom.myLibrarySortPosition"
+    private static let myLibraryBookOrderKey = "fathom.myLibraryBookOrder"
+
+    private static var myLibraryPosition: Int {
+        get { UserDefaults.standard.integer(forKey: myLibraryPositionKey) }
+        set { UserDefaults.standard.set(newValue, forKey: myLibraryPositionKey) }
+    }
+
+    private static var myLibraryBookOrder: [String] {
+        get { UserDefaults.standard.stringArray(forKey: myLibraryBookOrderKey) ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: myLibraryBookOrderKey) }
+    }
 
     init(
         bookRepository: BookRepository,
@@ -90,6 +107,54 @@ class HomeViewModel: ObservableObject {
         Task { await categoryRepository.deleteCategory(id: id) }
     }
 
+    func deleteBook(id: UUID) {
+        for i in categories.indices {
+            categories[i].books.removeAll { $0.id == id }
+        }
+        if recentBook?.id == id {
+            recentBook = nil
+            recentFullBook = nil
+        }
+        Task {
+            let allBooks = await bookRepository.listBooks()
+            guard let book = allBooks.first(where: { $0.id == id }) else { return }
+            // For iCloud files, removeItem works for both downloaded and
+            // placeholder files (it removes from the cloud too).
+            if let url = book.localURL {
+                try? FileManager.default.removeItem(at: url)
+            }
+            if let coverFilename = book.coverFilename,
+               let coverURL = BookFileStore.coverURL(for: coverFilename) {
+                try? FileManager.default.removeItem(at: coverURL)
+            }
+            await bookRepository.deleteBook(book)
+        }
+    }
+
+    func updateBook(id: UUID, customization: BookCustomization) async {
+        let allBooks = await bookRepository.listBooks()
+        guard var book = allBooks.first(where: { $0.id == id }) else { return }
+
+        book.title = customization.title
+        book.author = customization.author.isEmpty ? nil : customization.author
+        book.description = customization.description.isEmpty ? nil : customization.description
+
+        if customization.isCoverChanged {
+            if let old = book.coverFilename, let url = BookFileStore.coverURL(for: old) {
+                try? FileManager.default.removeItem(at: url)
+            }
+            if let data = customization.coverImageData,
+               let filename = try? BookFileStore.saveCoverImage(data, coverID: UUID()) {
+                book.coverFilename = filename
+            } else {
+                book.coverFilename = nil
+            }
+        }
+
+        await bookRepository.updateBook(book)
+        await load()
+    }
+
     func toggleBookInCategory(bookID: UUID, categoryID: UUID) {
         guard let catIdx = categories.firstIndex(where: { $0.id == categoryID }) else { return }
 
@@ -121,6 +186,31 @@ class HomeViewModel: ObservableObject {
                     categories[i].books[j].categoryIDs.insert(categoryID)
                 }
             }
+        }
+    }
+
+    // MARK: - Reordering
+
+    // Called by ReorderShelvesSheet when the user taps Done with a final ordering.
+    func applyShelfOrder(_ newOrder: [HomeCategory]) {
+        categories = newOrder
+        if let myLibIdx = newOrder.firstIndex(where: { $0.id == Self.myLibraryID }) {
+            Self.myLibraryPosition = myLibIdx
+        }
+        let userCatIDs = newOrder.filter { !$0.shelfColorHex.isEmpty }.map(\.id)
+        Task { await categoryRepository.reorderCategories(userCatIDs) }
+    }
+
+    // Called by ReorderBooksSheet when the user taps Done.
+    func applyBookOrder(in categoryID: UUID, newOrder: [HomeBook]) {
+        guard let catIdx = categories.firstIndex(where: { $0.id == categoryID }) else { return }
+        categories[catIdx].books = newOrder
+        let bookIDs = newOrder.map(\.id)
+
+        if categoryID == Self.myLibraryID {
+            Self.myLibraryBookOrder = bookIDs.map(\.uuidString)
+        } else {
+            Task { await categoryRepository.reorderBooksInCategory(categoryID: categoryID, bookIDs: bookIDs) }
         }
     }
 
@@ -157,38 +247,53 @@ class HomeViewModel: ObservableObject {
             )
         }
 
-        var result: [HomeCategory] = []
-
-        if !books.isEmpty {
-            let libraryBooks =
-                books
-                .sorted { $0.importDate > $1.importDate }
-                .map { homeBook(from: $0) }
-            result.append(
-                HomeCategory(
-                    id: UUID(),
-                    name: "My Library",
-                    books: libraryBooks,
-                    shelfColor: AppTheme.default.colors.shelfAccent,
-                    shelfColorHex: ""
-                ))
-        }
-
-        for cat in userCategories {
+        // Build user shelves in persisted sortOrder (already ordered by DB query)
+        var userHomeCategories: [HomeCategory] = userCategories.map { cat in
             let memberBooks = (categoryBookIDs[cat.id] ?? []).compactMap { id in
                 bookByID[id].map { homeBook(from: $0) }
             }
-            result.append(
-                HomeCategory(
-                    id: cat.id,
-                    name: cat.name,
-                    books: memberBooks,
-                    shelfColor: Color(hex: cat.shelfColorHex),
-                    shelfColorHex: cat.shelfColorHex
-                ))
+            return HomeCategory(
+                id: cat.id,
+                name: cat.name,
+                books: memberBooks,
+                shelfColor: Color(hex: cat.shelfColorHex),
+                shelfColorHex: cat.shelfColorHex
+            )
         }
 
-        return result
+        if books.isEmpty {
+            return userHomeCategories
+        }
+
+        // Apply persisted book order for My Library (new books land at the front)
+        let rawLibraryBooks = books
+            .sorted { $0.importDate > $1.importDate }
+            .map { homeBook(from: $0) }
+        let savedOrder = Self.myLibraryBookOrder
+        let libraryBooks: [HomeBook]
+        if savedOrder.isEmpty {
+            libraryBooks = rawLibraryBooks
+        } else {
+            let orderIndex = Dictionary(uniqueKeysWithValues: savedOrder.enumerated().map { ($1, $0) })
+            let known = rawLibraryBooks
+                .filter { orderIndex[$0.id.uuidString] != nil }
+                .sorted { orderIndex[$0.id.uuidString]! < orderIndex[$1.id.uuidString]! }
+            let newer = rawLibraryBooks.filter { orderIndex[$0.id.uuidString] == nil }
+            libraryBooks = newer + known
+        }
+
+        let myLibrary = HomeCategory(
+            id: Self.myLibraryID,
+            name: "My Library",
+            books: libraryBooks,
+            shelfColor: AppTheme.default.colors.shelfAccent,
+            shelfColorHex: ""
+        )
+
+        // Insert My Library at its persisted position
+        let clampedPos = min(Self.myLibraryPosition, userHomeCategories.count)
+        userHomeCategories.insert(myLibrary, at: clampedPos)
+        return userHomeCategories
     }
 
     // Paired cover + text colors. Index is derived from the book's UUID so the

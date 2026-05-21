@@ -8,6 +8,7 @@ private struct SelectedBook: Identifiable {
 struct HomeScreen: View {
 
     @ObservedObject var viewModel: HomeViewModel
+    @ObservedObject private var downloadMonitor = ICloudDownloadMonitor.shared
     let bookRepository: BookRepository
     @Environment(\.appTheme) var theme
 
@@ -44,7 +45,8 @@ struct HomeScreen: View {
                             book: recentBook,
                             progress: viewModel.recentBookProgress,
                             onTap: {
-                                guard let book = viewModel.recentFullBook, book.localURL != nil
+                                guard let book = viewModel.recentFullBook,
+                                      downloadMonitor.isReadable(bookFilename: book.localFilename)
                                 else { return }
                                 UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
                                 readerBook = book
@@ -373,7 +375,8 @@ struct HomeScreen: View {
             guard let bookID = note.userInfo?["bookID"] as? UUID else { return }
             Task {
                 let books = await bookRepository.listBooks()
-                guard let book = books.first(where: { $0.id == bookID }), book.localURL != nil
+                guard let book = books.first(where: { $0.id == bookID }),
+                      ICloudDownloadMonitor.shared.isReadable(bookFilename: book.localFilename)
                 else { return }
                 await MainActor.run { readerBook = book }
             }

@@ -14,6 +14,7 @@ enum CKRecordType {
     static let aiConversation          = "AIConversation"
     static let readingPosition         = "ReadingPosition"
     static let readerSettings          = "ReaderSettings"
+    static let userProfile             = "UserProfile"
 }
 
 // MARK: - Helpers

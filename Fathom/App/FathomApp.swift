@@ -38,6 +38,7 @@ struct FathomApp: App {
                     vocabularyRepo: vocabularyRepo
                 )
                 .environmentObject(authService)
+                .environmentObject(themeManager)
                 .task { await authService.startListening() }
                 .task { await homeViewModel.load() }
                 .onOpenURL { url in

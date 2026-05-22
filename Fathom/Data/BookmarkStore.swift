@@ -51,6 +51,21 @@ final class BookmarkStore {
         }
     }
 
+    /// All non-deleted bookmarks across every book, newest first.
+    func allBookmarks() -> [Bookmark] {
+        do {
+            return try dbQueue.read { db in
+                try Bookmark
+                    .filter(Column("deletedAt") == nil)
+                    .order(Column("createdAt").desc)
+                    .fetchAll(db)
+            }
+        } catch {
+            AppLogger.log(tag: "BookmarkStore", "Error fetching all bookmarks: \(error)")
+            return []
+        }
+    }
+
     /// Returns the bookmark at `progression` (within `tolerance`) if one exists.
     func bookmark(forBookID bookID: UUID, progression: Double, tolerance: Double = 0.01) -> Bookmark? {
         bookmarks(forBookID: bookID).first { abs($0.progression - progression) <= tolerance }

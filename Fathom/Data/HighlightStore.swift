@@ -69,6 +69,21 @@ final class HighlightStore {
         }
     }
 
+    /// All non-deleted highlights across every book, newest first.
+    func allHighlights() -> [Highlight] {
+        do {
+            return try dbQueue.read { db in
+                try Highlight
+                    .filter(Column("deletedAt") == nil)
+                    .order(Column("createdAt").desc)
+                    .fetchAll(db)
+            }
+        } catch {
+            AppLogger.log(tag: "HighlightStore", "Error fetching all highlights: \(error)")
+            return []
+        }
+    }
+
     private func notifyChange(bookID: UUID) {
         DispatchQueue.main.async {
             NotificationCenter.default.post(

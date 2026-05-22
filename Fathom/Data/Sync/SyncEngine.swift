@@ -100,7 +100,15 @@ actor SyncEngine {
             Task { await self?.pushReaderSettings() }
         }
 
-        notificationTokens = [posToken, settingsToken]
+        let profileToken = center.addObserver(
+            forName: UserProfileStore.didSaveNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            Task { await self?.pushUserProfile() }
+        }
+
+        notificationTokens = [posToken, settingsToken, profileToken]
     }
 
     // MARK: - Reading position push
@@ -143,6 +151,29 @@ actor SyncEngine {
             AppLogger.log(tag: "SyncEngine", "Reader settings pushed")
         } catch {
             AppLogger.log(tag: "SyncEngine", "Reader settings push failed: \(error)")
+        }
+    }
+
+    // MARK: - User profile push
+
+    func pushUserProfile() async {
+        guard let zoneID else { return }
+
+        let profile    = UserProfileStore.shared.load()
+        let modifiedAt = UserProfileStore.shared.modifiedAt ?? Date()
+
+        let rid = CKRecord.ID(recordName: "userProfile", zoneID: zoneID)
+        let r   = CKRecord(recordType: CKRecordType.userProfile, recordID: rid)
+        if let name = profile.displayName  { r["displayName"]  = name as CKRecordValue }
+        if let emoji = profile.avatarEmoji { r["avatarEmoji"]  = emoji as CKRecordValue }
+        r["avatarColorHex"] = profile.avatarColorHex as CKRecordValue
+        r["modifiedAt"]     = modifiedAt as CKRecordValue
+
+        do {
+            _ = try await database.save(r)
+            AppLogger.log(tag: "SyncEngine", "User profile pushed")
+        } catch {
+            AppLogger.log(tag: "SyncEngine", "User profile push failed: \(error)")
         }
     }
 

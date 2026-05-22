@@ -317,6 +317,14 @@ class HomeViewModel: ObservableObject {
         abs(book.id.hashValue) % coverPalette.count
     }
 
+    /// Returns the cover background + text Color pair for any UUID.
+    /// Used by the import flow to preview the palette colour before the book is saved.
+    static func coverColorPair(for id: UUID) -> (cover: Color, text: Color) {
+        let index = abs(id.hashValue) % coverPalette.count
+        let pair = coverPalette[index]
+        return (Color(hex: pair.cover), Color(hex: pair.text))
+    }
+
     static func makeHomeBook(_ book: Book, categoryIDs: Set<UUID> = []) -> HomeBook {
         HomeBook(
             id: book.id,

@@ -138,7 +138,7 @@ final class LibraryViewModel: ObservableObject {
             }
 
             var book = Book(
-                id: UUID(),
+                id: finalCustomization.id,  // reuse the preview UUID so palette colour is consistent
                 title: finalCustomization.title,
                 author: finalCustomization.author.isEmpty ? nil : finalCustomization.author,
                 format: .epub,

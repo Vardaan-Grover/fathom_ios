@@ -96,6 +96,21 @@ final class NoteStore {
         }
     }
 
+    /// All non-deleted notes across every book, newest first.
+    func allNotes() -> [Note] {
+        do {
+            return try dbQueue.read { db in
+                try Note
+                    .filter(Column("deletedAt") == nil)
+                    .order(Column("createdAt").desc)
+                    .fetchAll(db)
+            }
+        } catch {
+            AppLogger.log(tag: "NoteStore", "Error fetching all notes: \(error)")
+            return []
+        }
+    }
+
     private func notifyChange(bookID: UUID) {
         DispatchQueue.main.async {
             NotificationCenter.default.post(

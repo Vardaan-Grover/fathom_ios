@@ -283,6 +283,21 @@ extension SyncEngine {
                     }
                 }
 
+            // ── User profile ───────────────────────────────────────────────
+            case CKRecordType.userProfile:
+                guard let modifiedAt = r["modifiedAt"] as? Date else { return }
+
+                let localDate = UserProfileStore.shared.modifiedAt
+                if localDate == nil || modifiedAt > localDate! {
+                    var profile = UserProfileStore.shared.load()
+                    profile.displayName    = r["displayName"]    as? String
+                    profile.avatarEmoji    = r["avatarEmoji"]    as? String
+                    if let hex = r["avatarColorHex"] as? String {
+                        profile.avatarColorHex = hex
+                    }
+                    UserProfileStore.shared.save(profile, suppressSync: true)
+                }
+
             // ── Reader settings ────────────────────────────────────────────
             case CKRecordType.readerSettings:
                 guard

@@ -268,7 +268,7 @@ struct HomeScreen: View {
                 else { return nil }
                 return try? Data(contentsOf: url)
             }()
-            BookCustomizationSheet(
+            BookImportFlow(
                 initial: BookCustomization(
                     id: book.id,
                     title: book.title,

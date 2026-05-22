@@ -126,7 +126,7 @@ struct RootView: View {
             .presentationDragIndicator(.visible)
         }
         .sheet(item: $libraryViewModel.pendingCustomization) { customization in
-            BookCustomizationSheet(
+            BookImportFlow(
                 initial: customization,
                 onConfirm: { edited in libraryViewModel.confirmImport(with: edited) },
                 onCancel: { libraryViewModel.cancelImport() }

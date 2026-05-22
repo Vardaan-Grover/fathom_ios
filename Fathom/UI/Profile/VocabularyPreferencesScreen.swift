@@ -1,13 +1,13 @@
 import AVFoundation
 import SwiftUI
 
-// MARK: - VocabularySettingsScreen
+// MARK: - VocabularyPreferencesScreen
 //
 // Lets the user pick a default pronunciation language and a specific
 // voice from the system's installed AVSpeechSynthesisVoice list, and
 // adjust the speech rate.
 
-struct VocabularySettingsScreen: View {
+struct VocabularyPreferencesScreen: View {
     @State private var defaultLanguage: String = VocabularySettingsStore.shared.defaultLanguage
     @State private var voiceIdentifier: String? = VocabularySettingsStore.shared.voiceIdentifier
     @State private var rate: Float = VocabularySettingsStore.shared.rate

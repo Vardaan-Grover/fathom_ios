@@ -4,13 +4,13 @@ import UniformTypeIdentifiers
 enum CustomTab: String, CaseIterable {
     case library = "Library"
     case vocabulary = "Vocab"
-    case settings = "Settings"
+    case profile = "Profile"
 
     var symbol: String {
         switch self {
         case .library: return "books.vertical"
         case .vocabulary: return "text.book.closed"
-        case .settings: return "gearshape"
+        case .profile: return "person.circle"
         }
     }
 
@@ -160,8 +160,8 @@ struct RootView: View {
                 VocabularyTabView(viewModel: vocabularyTabViewModel)
                     .toolbarVisibility(.hidden, for: .tabBar)
             }
-            Tab(value: .settings) {
-                SettingsView()
+            Tab(value: .profile) {
+                ProfileView()
                     .toolbarVisibility(.hidden, for: .tabBar)
             }
         }

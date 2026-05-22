@@ -135,7 +135,7 @@ struct FilterChip: View {
 
 // MARK: - Open-in-reader helper
 
-enum SettingsBookOpener {
+enum ProfileBookOpener {
     /// Switches to the library tab and opens the given book at the locator.
     /// Piggybacks on the existing `.vocabularyJumpToBook` notification flow
     /// already wired in RootView.

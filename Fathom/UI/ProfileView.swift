@@ -1,13 +1,13 @@
 import SwiftUI
 import Auth
 
-// MARK: - SettingsView
+// MARK: - ProfileView
 //
-// The main Settings screen. Hero profile card + grouped sections for
+// The main Profile screen. Hero profile card + grouped sections for
 // Library, Appearance, Vocabulary, Notifications, Sync & Storage, Data,
 // About, and Account.
 
-struct SettingsView: View {
+struct ProfileView: View {
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var themeManager: ThemeManager
     @Environment(\.appTheme) private var theme
@@ -38,8 +38,8 @@ struct SettingsView: View {
             .listSectionSpacing(.compact)
             .contentMargins(.bottom, 90, for: .scrollContent)
             .scrollContentBackground(.hidden)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .navigationTitle("Settings")
+            .background(theme.colors.background.ignoresSafeArea())
+            .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
         }
         .toolbarVisibility(.hidden, for: .tabBar)
@@ -101,7 +101,7 @@ struct SettingsView: View {
             NavigationLink {
                 AllHighlightsScreen()
             } label: {
-                SettingsRow(
+                ProfileRow(
                     icon: "highlighter",
                     iconColor: .yellow,
                     title: "All Highlights"
@@ -111,7 +111,7 @@ struct SettingsView: View {
             NavigationLink {
                 AllNotesScreen()
             } label: {
-                SettingsRow(
+                ProfileRow(
                     icon: "note.text",
                     iconColor: Color(.systemIndigo),
                     title: "All Notes"
@@ -121,7 +121,7 @@ struct SettingsView: View {
             NavigationLink {
                 AllBookmarksScreen()
             } label: {
-                SettingsRow(
+                ProfileRow(
                     icon: "bookmark.fill",
                     iconColor: Color(red: 0.78, green: 0.08, blue: 0.15),
                     title: "All Bookmarks"
@@ -130,6 +130,7 @@ struct SettingsView: View {
         } header: {
             SectionHeader("Library")
         }
+        .listRowBackground(theme.colors.surface)
     }
 
     private var appearanceSection: some View {
@@ -137,7 +138,7 @@ struct SettingsView: View {
             NavigationLink {
                 AppearancePickerScreen(selection: appearanceBinding)
             } label: {
-                SettingsRow(
+                ProfileRow(
                     icon: "circle.lefthalf.filled",
                     iconColor: Color(.systemPurple),
                     title: "Appearance",
@@ -147,14 +148,15 @@ struct SettingsView: View {
         } header: {
             SectionHeader("Appearance")
         }
+        .listRowBackground(theme.colors.surface)
     }
 
     private var vocabularySection: some View {
         Section {
             NavigationLink {
-                VocabularySettingsScreen()
+                VocabularyPreferencesScreen()
             } label: {
-                SettingsRow(
+                ProfileRow(
                     icon: "character.book.closed.fill",
                     iconColor: Color(.systemTeal),
                     title: "Pronunciation"
@@ -163,14 +165,15 @@ struct SettingsView: View {
         } header: {
             SectionHeader("Vocabulary")
         }
+        .listRowBackground(theme.colors.surface)
     }
 
     private var notificationsSection: some View {
         Section {
             NavigationLink {
-                NotificationSettingsScreen()
+                NotificationPreferencesScreen()
             } label: {
-                SettingsRow(
+                ProfileRow(
                     icon: "bell.fill",
                     iconColor: Color(.systemRed),
                     title: "Notifications"
@@ -179,6 +182,7 @@ struct SettingsView: View {
         } header: {
             SectionHeader("Notifications")
         }
+        .listRowBackground(theme.colors.surface)
     }
 
     private var syncStorageSection: some View {
@@ -188,7 +192,7 @@ struct SettingsView: View {
             NavigationLink {
                 StorageUsageScreen()
             } label: {
-                SettingsRow(
+                ProfileRow(
                     icon: "internaldrive.fill",
                     iconColor: Color(.systemGray),
                     title: "Storage"
@@ -197,6 +201,7 @@ struct SettingsView: View {
         } header: {
             SectionHeader("Sync & Storage")
         }
+        .listRowBackground(theme.colors.surface)
     }
 
     private var dataSection: some View {
@@ -204,7 +209,7 @@ struct SettingsView: View {
             NavigationLink {
                 ExportDataScreen()
             } label: {
-                SettingsRow(
+                ProfileRow(
                     icon: "square.and.arrow.up.fill",
                     iconColor: Color(.systemGreen),
                     title: "Export My Data"
@@ -213,6 +218,7 @@ struct SettingsView: View {
         } header: {
             SectionHeader("Data")
         }
+        .listRowBackground(theme.colors.surface)
     }
 
     private var aboutSection: some View {
@@ -220,7 +226,7 @@ struct SettingsView: View {
             NavigationLink {
                 AboutScreen()
             } label: {
-                SettingsRow(
+                ProfileRow(
                     icon: "info.circle.fill",
                     iconColor: Color(.systemBlue),
                     title: "About"
@@ -229,6 +235,7 @@ struct SettingsView: View {
         } header: {
             SectionHeader("Help")
         }
+        .listRowBackground(theme.colors.surface)
     }
 
     private var signOutSection: some View {
@@ -244,7 +251,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .listRowBackground(Color(.secondarySystemGroupedBackground))
+        .listRowBackground(theme.colors.surface)
     }
 
     // MARK: - Bindings
@@ -329,9 +336,9 @@ struct AppearancePickerScreen: View {
     }
 }
 
-// MARK: - SettingsRow
+// MARK: - ProfileRow
 
-struct SettingsRow: View {
+struct ProfileRow: View {
     let icon: String
     let iconColor: Color
     let title: String

@@ -1,30 +1,37 @@
 import SwiftUI
 
-// MARK: - AllBookmarksScreen
+// MARK: - AllHighlightsScreen
 //
-// Cross-book view of every bookmark. Searchable + filterable by book.
-// No color filter (bookmarks have no color).
+// Cross-book view of every highlight. Searchable + filterable by book and
+// by color.
 
-struct AllBookmarksScreen: View {
+struct AllHighlightsScreen: View {
     @StateObject private var directory = BookDirectory()
 
-    @State private var bookmarks: [Bookmark] = []
+    @State private var highlights: [Highlight] = []
     @State private var search: String = ""
+    @State private var selectedColor: HighlightColor? = nil
     @State private var bookFilter: Set<UUID> = []
     @State private var showBookFilter = false
 
-    private var perBookCounts: [UUID: Int] {
-        Dictionary(bookmarks.map { ($0.bookID, 1) }, uniquingKeysWith: +)
+    private var presentColors: [HighlightColor] {
+        HighlightColor.allCases.filter { c in highlights.contains { $0.color == c } }
     }
 
-    private var filtered: [Bookmark] {
+    private var perBookCounts: [UUID: Int] {
+        Dictionary(highlights.map { ($0.bookID, 1) }, uniquingKeysWith: +)
+    }
+
+    private var filtered: [Highlight] {
         let q = search.trimmingCharacters(in: .whitespaces).lowercased()
-        return bookmarks.filter { bm in
-            if !bookFilter.isEmpty && !bookFilter.contains(bm.bookID) { return false }
+        return highlights.filter { h in
+            if let selectedColor, h.color != selectedColor { return false }
+            if !bookFilter.isEmpty && !bookFilter.contains(h.bookID) { return false }
             if !q.isEmpty {
-                let bookTitle = directory.byID[bm.bookID]?.title.lowercased() ?? ""
-                let chapter = (bm.chapterTitle ?? "").lowercased()
-                if !(bookTitle.contains(q) || chapter.contains(q)) { return false }
+                let bookTitle = directory.byID[h.bookID]?.title.lowercased() ?? ""
+                if !(h.text.lowercased().contains(q) || bookTitle.contains(q)) {
+                    return false
+                }
             }
             return true
         }
@@ -35,17 +42,16 @@ struct AllBookmarksScreen: View {
             Color(.systemGroupedBackground).ignoresSafeArea()
 
             VStack(spacing: 0) {
-                if !bookmarks.isEmpty {
+                if !highlights.isEmpty {
                     filterBar
                 }
 
                 if filtered.isEmpty {
-                    if bookmarks.isEmpty {
+                    if highlights.isEmpty {
                         CrossBookEmptyState(
-                            symbol: "bookmark",
-                            title: "No Bookmarks Yet",
-                            subtitle: "Tap the bookmark icon in the reader menu to save your place.",
-                            accent: Color(red: 0.78, green: 0.08, blue: 0.15)
+                            symbol: "highlighter",
+                            title: "No Highlights Yet",
+                            subtitle: "Select text while reading to highlight your first passage."
                         )
                     } else {
                         CrossBookEmptyState(
@@ -55,17 +61,17 @@ struct AllBookmarksScreen: View {
                         )
                     }
                 } else {
-                    bookmarksList
+                    highlightsList
                 }
             }
         }
-        .navigationTitle("All Bookmarks")
+        .navigationTitle("All Highlights")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 0) {
-                    Text("All Bookmarks").font(.system(size: 16, weight: .semibold))
-                    Text("\(filtered.count) of \(bookmarks.count)")
+                    Text("All Highlights").font(.system(size: 16, weight: .semibold))
+                    Text("\(filtered.count) of \(highlights.count)")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())
@@ -74,7 +80,8 @@ struct AllBookmarksScreen: View {
             }
         }
         .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "Search bookmarks")
+                    prompt: "Search highlights")
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: selectedColor)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: bookFilter)
         .sheet(isPresented: $showBookFilter) {
             SettingsBookFilterSheet(
@@ -85,10 +92,10 @@ struct AllBookmarksScreen: View {
         }
         .onAppear {
             directory.reload()
-            loadBookmarks()
+            loadHighlights()
         }
-        .onReceive(NotificationCenter.default.publisher(for: BookmarkStore.didChangeNotification)) { _ in
-            loadBookmarks()
+        .onReceive(NotificationCenter.default.publisher(for: HighlightStore.didChangeNotification)) { _ in
+            loadHighlights()
         }
     }
 
@@ -104,26 +111,41 @@ struct AllBookmarksScreen: View {
                 ) {
                     showBookFilter = true
                 }
+
+                Divider().frame(height: 22).padding(.horizontal, 4)
+
+                FilterChip(label: "All", symbol: nil, isSelected: selectedColor == nil) {
+                    selectedColor = nil
+                }
+                ForEach(presentColors, id: \.self) { color in
+                    FilterChip(
+                        label: color.rawValue.capitalized,
+                        accent: color.displayColor,
+                        isSelected: selectedColor == color
+                    ) {
+                        selectedColor = (selectedColor == color) ? nil : color
+                    }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
     }
 
-    private var bookmarksList: some View {
+    private var highlightsList: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
-                ForEach(filtered) { bookmark in
-                    BookmarkCrossBookCard(
-                        bookmark: bookmark,
-                        book: directory.byID[bookmark.bookID]
+                ForEach(filtered) { highlight in
+                    HighlightCrossBookCard(
+                        highlight: highlight,
+                        book: directory.byID[highlight.bookID]
                     ) {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        SettingsBookOpener.open(bookID: bookmark.bookID, locatorJSON: bookmark.locatorJSON)
+                        ProfileBookOpener.open(bookID: highlight.bookID, locatorJSON: highlight.locatorJSON)
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
-                            BookmarkStore.shared.delete(id: bookmark.id)
+                            HighlightStore.shared.delete(id: highlight.id)
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
@@ -136,27 +158,33 @@ struct AllBookmarksScreen: View {
         }
     }
 
-    private func loadBookmarks() {
-        bookmarks = BookmarkStore.shared.allBookmarks()
-        bookFilter = bookFilter.filter { id in bookmarks.contains(where: { $0.bookID == id }) }
+    private func loadHighlights() {
+        highlights = HighlightStore.shared.allHighlights()
+        if let color = selectedColor, !highlights.contains(where: { $0.color == color }) {
+            selectedColor = nil
+        }
+        bookFilter = bookFilter.filter { id in highlights.contains(where: { $0.bookID == id }) }
     }
 }
 
-// MARK: - BookmarkCrossBookCard
+// MARK: - HighlightCrossBookCard
 
-private struct BookmarkCrossBookCard: View {
-    let bookmark: Bookmark
+private struct HighlightCrossBookCard: View {
+    let highlight: Highlight
     let book: Book?
     let onTap: () -> Void
 
-    private let railColor = Color(red: 0.78, green: 0.08, blue: 0.15)
+    private var meta: LocatorMeta? {
+        guard let data = highlight.locatorJSON.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(LocatorMeta.self, from: data)
+    }
 
     var body: some View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 0) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(railColor)
-                    .frame(width: 4)
+                    .fill(highlight.color.displayColor)
+                    .frame(width: 3)
                     .padding(.vertical, 14)
                     .padding(.leading, 14)
 
@@ -169,19 +197,19 @@ private struct BookmarkCrossBookCard: View {
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
                             HStack(spacing: 0) {
-                                if let chapter = bookmark.chapterTitle, !chapter.isEmpty {
+                                if let chapter = meta?.title, !chapter.isEmpty {
                                     Text(chapter).lineLimit(1)
                                 }
-                                if let page = bookmark.pageNumber {
-                                    let hasChapter = bookmark.chapterTitle?.isEmpty == false
-                                    Text((hasChapter ? " · " : "") + "p. \(page)")
+                                if let position = meta?.locations?.position {
+                                    let hasChapter = meta?.title?.isEmpty == false
+                                    Text((hasChapter ? " · " : "") + "p. \(position)")
                                 }
                             }
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text(bookmark.createdAt, format: .dateTime.month(.abbreviated).day())
+                        Text(highlight.createdAt, format: .dateTime.month(.abbreviated).day())
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                     }
@@ -189,9 +217,11 @@ private struct BookmarkCrossBookCard: View {
                     .padding(.bottom, 10)
                     .padding(.trailing, 14)
 
-                    Text("\(Int(bookmark.progression * 100))% through book")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
+                    Text(highlight.text)
+                        .font(.system(size: 15, design: .serif))
+                        .foregroundStyle(.primary.opacity(0.9))
+                        .lineLimit(6)
+                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.trailing, 14)
                         .padding(.bottom, 14)
                 }
@@ -202,14 +232,24 @@ private struct BookmarkCrossBookCard: View {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(Color(.secondarySystemGroupedBackground))
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(railColor.opacity(0.05))
+                        .fill(highlight.color.displayColor.opacity(0.06))
                 }
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(railColor.opacity(0.2), lineWidth: 1)
+                        .strokeBorder(highlight.color.displayColor.opacity(0.25), lineWidth: 1)
                 )
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct LocatorMeta: Decodable {
+    let title: String?
+    let locations: Locations?
+
+    struct Locations: Decodable {
+        let position: Int?
+        let totalProgression: Double?
     }
 }

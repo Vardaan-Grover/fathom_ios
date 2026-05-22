@@ -36,17 +36,17 @@ struct AboutScreen: View {
 
             Section {
                 Link(destination: URL(string: "https://fathom.read/privacy")!) {
-                    SettingsRow(icon: "hand.raised.fill",
+                    ProfileRow(icon: "hand.raised.fill",
                                 iconColor: Color(.systemBlue),
                                 title: "Privacy Policy")
                 }
                 Link(destination: URL(string: "https://fathom.read/terms")!) {
-                    SettingsRow(icon: "doc.text.fill",
+                    ProfileRow(icon: "doc.text.fill",
                                 iconColor: Color(.systemGray),
                                 title: "Terms of Service")
                 }
                 Link(destination: URL(string: "mailto:support@fathom.read")!) {
-                    SettingsRow(icon: "envelope.fill",
+                    ProfileRow(icon: "envelope.fill",
                                 iconColor: Color(.systemGreen),
                                 title: "Contact Support")
                 }
@@ -58,7 +58,7 @@ struct AboutScreen: View {
                 NavigationLink {
                     AcknowledgmentsScreen()
                 } label: {
-                    SettingsRow(icon: "heart.fill",
+                    ProfileRow(icon: "heart.fill",
                                 iconColor: Color(.systemPink),
                                 title: "Acknowledgments")
                 }

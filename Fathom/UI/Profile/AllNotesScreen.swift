@@ -1,57 +1,65 @@
 import SwiftUI
 
-// MARK: - AllHighlightsScreen
+// MARK: - AllNotesScreen
 //
-// Cross-book view of every highlight. Searchable + filterable by book and
-// by color.
+// Cross-book view of every note. Searchable + filterable by book and by
+// highlight color. Tapping a card opens that book in the reader at the
+// note's locator.
 
-struct AllHighlightsScreen: View {
+struct AllNotesScreen: View {
     @StateObject private var directory = BookDirectory()
 
-    @State private var highlights: [Highlight] = []
+    @State private var notes: [Note] = []
     @State private var search: String = ""
     @State private var selectedColor: HighlightColor? = nil
     @State private var bookFilter: Set<UUID> = []
     @State private var showBookFilter = false
 
+    // MARK: - Derived
+
     private var presentColors: [HighlightColor] {
-        HighlightColor.allCases.filter { c in highlights.contains { $0.color == c } }
+        HighlightColor.allCases.filter { c in notes.contains { $0.highlightColor == c } }
     }
 
     private var perBookCounts: [UUID: Int] {
-        Dictionary(highlights.map { ($0.bookID, 1) }, uniquingKeysWith: +)
+        Dictionary(notes.map { ($0.bookID, 1) }, uniquingKeysWith: +)
     }
 
-    private var filtered: [Highlight] {
+    private var filtered: [Note] {
         let q = search.trimmingCharacters(in: .whitespaces).lowercased()
-        return highlights.filter { h in
-            if let selectedColor, h.color != selectedColor { return false }
-            if !bookFilter.isEmpty && !bookFilter.contains(h.bookID) { return false }
+        return notes.filter { note in
+            if let selectedColor, note.highlightColor != selectedColor { return false }
+            if !bookFilter.isEmpty && !bookFilter.contains(note.bookID) { return false }
             if !q.isEmpty {
-                let bookTitle = directory.byID[h.bookID]?.title.lowercased() ?? ""
-                if !(h.text.lowercased().contains(q) || bookTitle.contains(q)) {
-                    return false
-                }
+                let bookTitle = directory.byID[note.bookID]?.title.lowercased() ?? ""
+                let chapter = (note.chapterTitle ?? "").lowercased()
+                let matches = note.selectedText.lowercased().contains(q)
+                    || note.noteContent.lowercased().contains(q)
+                    || chapter.contains(q)
+                    || bookTitle.contains(q)
+                if !matches { return false }
             }
             return true
         }
     }
+
+    // MARK: - Body
 
     var body: some View {
         ZStack {
             Color(.systemGroupedBackground).ignoresSafeArea()
 
             VStack(spacing: 0) {
-                if !highlights.isEmpty {
+                if !notes.isEmpty {
                     filterBar
                 }
 
                 if filtered.isEmpty {
-                    if highlights.isEmpty {
+                    if notes.isEmpty {
                         CrossBookEmptyState(
-                            symbol: "highlighter",
-                            title: "No Highlights Yet",
-                            subtitle: "Select text while reading to highlight your first passage."
+                            symbol: "note.text",
+                            title: "No Notes Yet",
+                            subtitle: "Select text while reading and tap \"Note\" to add your first one."
                         )
                     } else {
                         CrossBookEmptyState(
@@ -61,17 +69,17 @@ struct AllHighlightsScreen: View {
                         )
                     }
                 } else {
-                    highlightsList
+                    notesList
                 }
             }
         }
-        .navigationTitle("All Highlights")
+        .navigationTitle("All Notes")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 0) {
-                    Text("All Highlights").font(.system(size: 16, weight: .semibold))
-                    Text("\(filtered.count) of \(highlights.count)")
+                    Text("All Notes").font(.system(size: 16, weight: .semibold))
+                    Text("\(filtered.count) of \(notes.count)")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())
@@ -80,7 +88,7 @@ struct AllHighlightsScreen: View {
             }
         }
         .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "Search highlights")
+                    prompt: "Search notes")
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: selectedColor)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: bookFilter)
         .sheet(isPresented: $showBookFilter) {
@@ -92,12 +100,14 @@ struct AllHighlightsScreen: View {
         }
         .onAppear {
             directory.reload()
-            loadHighlights()
+            loadNotes()
         }
-        .onReceive(NotificationCenter.default.publisher(for: HighlightStore.didChangeNotification)) { _ in
-            loadHighlights()
+        .onReceive(NotificationCenter.default.publisher(for: NoteStore.didChangeNotification)) { _ in
+            loadNotes()
         }
     }
+
+    // MARK: - Filter bar
 
     private var filterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -132,20 +142,22 @@ struct AllHighlightsScreen: View {
         }
     }
 
-    private var highlightsList: some View {
+    // MARK: - List
+
+    private var notesList: some View {
         ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(filtered) { highlight in
-                    HighlightCrossBookCard(
-                        highlight: highlight,
-                        book: directory.byID[highlight.bookID]
+            LazyVStack(spacing: 12) {
+                ForEach(filtered) { note in
+                    NoteCrossBookCard(
+                        note: note,
+                        book: directory.byID[note.bookID]
                     ) {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        SettingsBookOpener.open(bookID: highlight.bookID, locatorJSON: highlight.locatorJSON)
+                        ProfileBookOpener.open(bookID: note.bookID, locatorJSON: note.locatorJSON)
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
-                            HighlightStore.shared.delete(id: highlight.id)
+                            NoteStore.shared.delete(id: note.id)
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
@@ -158,37 +170,39 @@ struct AllHighlightsScreen: View {
         }
     }
 
-    private func loadHighlights() {
-        highlights = HighlightStore.shared.allHighlights()
-        if let color = selectedColor, !highlights.contains(where: { $0.color == color }) {
+    private func loadNotes() {
+        notes = NoteStore.shared.allNotes()
+        // Clear color filter if no longer applicable.
+        if let color = selectedColor, !notes.contains(where: { $0.highlightColor == color }) {
             selectedColor = nil
         }
-        bookFilter = bookFilter.filter { id in highlights.contains(where: { $0.bookID == id }) }
+        // Clear book filter for books that no longer have notes.
+        bookFilter = bookFilter.filter { id in notes.contains(where: { $0.bookID == id }) }
     }
 }
 
-// MARK: - HighlightCrossBookCard
+// MARK: - NoteCrossBookCard
 
-private struct HighlightCrossBookCard: View {
-    let highlight: Highlight
+private struct NoteCrossBookCard: View {
+    let note: Note
     let book: Book?
     let onTap: () -> Void
 
-    private var meta: LocatorMeta? {
-        guard let data = highlight.locatorJSON.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(LocatorMeta.self, from: data)
+    private var hasNote: Bool {
+        !note.noteContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 0) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(highlight.color.displayColor)
+                    .fill(note.highlightColor.displayColor)
                     .frame(width: 3)
                     .padding(.vertical, 14)
                     .padding(.leading, 14)
 
                 VStack(alignment: .leading, spacing: 0) {
+                    // Book meta row
                     HStack(spacing: 8) {
                         MiniBookCover(book: book, width: 22, height: 30)
                         VStack(alignment: .leading, spacing: 1) {
@@ -197,19 +211,20 @@ private struct HighlightCrossBookCard: View {
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
                             HStack(spacing: 0) {
-                                if let chapter = meta?.title, !chapter.isEmpty {
-                                    Text(chapter).lineLimit(1)
+                                if let chapter = note.chapterTitle, !chapter.isEmpty {
+                                    Text(chapter)
+                                        .lineLimit(1)
                                 }
-                                if let position = meta?.locations?.position {
-                                    let hasChapter = meta?.title?.isEmpty == false
-                                    Text((hasChapter ? " · " : "") + "p. \(position)")
+                                if let page = note.pageNumber {
+                                    let hasChapter = note.chapterTitle?.isEmpty == false
+                                    Text((hasChapter ? " · " : "") + "p. \(page)")
                                 }
                             }
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text(highlight.createdAt, format: .dateTime.month(.abbreviated).day())
+                        Text(note.createdAt, format: .dateTime.month(.abbreviated).day())
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                     }
@@ -217,13 +232,29 @@ private struct HighlightCrossBookCard: View {
                     .padding(.bottom, 10)
                     .padding(.trailing, 14)
 
-                    Text(highlight.text)
+                    // Selected text (serif)
+                    Text(note.selectedText)
                         .font(.system(size: 15, design: .serif))
-                        .foregroundStyle(.primary.opacity(0.9))
-                        .lineLimit(6)
+                        .foregroundStyle(.primary.opacity(0.88))
+                        .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.trailing, 14)
-                        .padding(.bottom, 14)
+                        .padding(.bottom, hasNote ? 12 : 14)
+
+                    if hasNote {
+                        Divider()
+                            .padding(.trailing, 14)
+                            .opacity(0.5)
+
+                        Text(note.noteContent)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 10)
+                            .padding(.trailing, 14)
+                            .padding(.bottom, 14)
+                    }
                 }
                 .padding(.leading, 12)
             }
@@ -232,24 +263,14 @@ private struct HighlightCrossBookCard: View {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(Color(.secondarySystemGroupedBackground))
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(highlight.color.displayColor.opacity(0.06))
+                        .fill(note.highlightColor.displayColor.opacity(0.05))
                 }
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(highlight.color.displayColor.opacity(0.25), lineWidth: 1)
+                        .strokeBorder(note.highlightColor.displayColor.opacity(0.22), lineWidth: 1)
                 )
             )
         }
         .buttonStyle(.plain)
-    }
-}
-
-private struct LocatorMeta: Decodable {
-    let title: String?
-    let locations: Locations?
-
-    struct Locations: Decodable {
-        let position: Int?
-        let totalProgression: Double?
     }
 }

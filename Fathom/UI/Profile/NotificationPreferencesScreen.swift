@@ -1,9 +1,9 @@
 import SwiftUI
 import UserNotifications
 
-// MARK: - NotificationSettingsScreen
+// MARK: - NotificationPreferencesScreen
 
-struct NotificationSettingsScreen: View {
+struct NotificationPreferencesScreen: View {
     @State private var isEnabled: Bool = NotificationSettingsStore.shared.isEnabled
     @State private var time: Date = NotificationSettingsStore.shared.timeAsDate
     @State private var authStatus: UNAuthorizationStatus = .notDetermined

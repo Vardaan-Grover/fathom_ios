@@ -59,6 +59,9 @@ protocol BookRepository {
     func updateBook(_ book: Book) async
     func deleteBook(_ book: Book) async
     func touchLastReadAt(bookID: UUID) async
+    func logReadingSession(for bookID: UUID, duration: TimeInterval) async
+    func listReadingActivity(forYear year: Int) async -> [ReadingActivity]
+    func insertMockReadingActivity(_ activity: ReadingActivity) async
 }
 
 final actor InMemoryBookRepository: BookRepository {
@@ -85,6 +88,10 @@ final actor InMemoryBookRepository: BookRepository {
         guard let idx = books.firstIndex(where: { $0.id == bookID }) else { return }
         books[idx].lastReadAt = Date()
     }
+
+    func logReadingSession(for bookID: UUID, duration: TimeInterval) async {}
+    func listReadingActivity(forYear year: Int) async -> [ReadingActivity] { return [] }
+    func insertMockReadingActivity(_ activity: ReadingActivity) async {}
 }
 
 final actor JSONBookRepository: BookRepository {
@@ -131,6 +138,10 @@ final actor JSONBookRepository: BookRepository {
         books[idx].lastReadAt = Date()
         save()
     }
+
+    func logReadingSession(for bookID: UUID, duration: TimeInterval) async {}
+    func listReadingActivity(forYear year: Int) async -> [ReadingActivity] { return [] }
+    func insertMockReadingActivity(_ activity: ReadingActivity) async {}
 
     private func save() {
         guard let data = try? JSONEncoder().encode(books) else {return}

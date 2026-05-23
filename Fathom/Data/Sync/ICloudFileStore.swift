@@ -78,6 +78,15 @@ final class ICloudFileStore {
             .appendingPathComponent(uid.uuidString, isDirectory: true)
     }
 
+    /// iCloud path for reflection images belonging to the current user.
+    var reflectionsDirectory: URL? {
+        guard let container = _containerURL, let uid = _userID else { return nil }
+        return container
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("Reflections", isDirectory: true)
+            .appendingPathComponent(uid.uuidString, isDirectory: true)
+    }
+
     // MARK: - URL Resolution
 
     /// Resolves the best available URL for an EPUB filename.
@@ -123,6 +132,22 @@ final class ICloudFileStore {
         return legacyLocalCoversDirectory?.appendingPathComponent(filename)
     }
 
+    /// Resolves the best available URL for a reflection image filename.
+    func reflectionImageURL(for filename: String) -> URL? {
+        if let dir = reflectionsDirectory {
+            let icloudURL = dir.appendingPathComponent(filename)
+            if FileManager.default.fileExists(atPath: icloudURL.path) {
+                return icloudURL
+            }
+            if let localURL = legacyLocalReflectionsDirectory?.appendingPathComponent(filename),
+               FileManager.default.fileExists(atPath: localURL.path) {
+                return localURL
+            }
+            return icloudURL
+        }
+        return legacyLocalReflectionsDirectory?.appendingPathComponent(filename)
+    }
+
     // MARK: - Write Operations
 
     /// Copies an EPUB from a security-scoped or temporary URL into the store.
@@ -142,6 +167,14 @@ final class ICloudFileStore {
     func saveCover(_ data: Data, coverID: UUID) throws -> String {
         let filename = "\(coverID.uuidString).png"
         let destDir = try effectiveCoversDirectory()
+        try data.write(to: destDir.appendingPathComponent(filename), options: .atomic)
+        return filename
+    }
+
+    /// Saves raw reflection image data and returns the filename.
+    func saveReflectionImage(_ data: Data, imageID: UUID = UUID()) throws -> String {
+        let filename = "\(imageID.uuidString).png"
+        let destDir = try effectiveReflectionsDirectory()
         try data.write(to: destDir.appendingPathComponent(filename), options: .atomic)
         return filename
     }
@@ -174,6 +207,13 @@ final class ICloudFileStore {
         ).appendingPathComponent("Covers", isDirectory: true)
     }
 
+    private var legacyLocalReflectionsDirectory: URL? {
+        try? FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: false
+        ).appendingPathComponent("Reflections", isDirectory: true)
+    }
+
     private func effectiveBooksDirectory() throws -> URL {
         if let dir = booksDirectory {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -190,6 +230,14 @@ final class ICloudFileStore {
         return try makeLocalDirectory(named: "Covers")
     }
 
+    private func effectiveReflectionsDirectory() throws -> URL {
+        if let dir = reflectionsDirectory {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        }
+        return try makeLocalDirectory(named: "Reflections")
+    }
+
     private func makeLocalDirectory(named name: String) throws -> URL {
         let appSupport = try FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask,
@@ -201,7 +249,7 @@ final class ICloudFileStore {
     }
 
     private func createDirectoriesIfNeeded() {
-        [booksDirectory, coversDirectory].forEach { url in
+        [booksDirectory, coversDirectory, reflectionsDirectory].forEach { url in
             guard let url else { return }
             try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }

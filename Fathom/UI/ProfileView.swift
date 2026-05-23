@@ -12,6 +12,8 @@ struct ProfileView: View {
     @EnvironmentObject var themeManager: ThemeManager
     @Environment(\.appTheme) private var theme
 
+    let bookRepository: BookRepository
+
     // Profile state
     @State private var profile: UserProfile = UserProfileStore.shared.load()
 
@@ -26,6 +28,7 @@ struct ProfileView: View {
         NavigationStack {
             List {
                 profileSection
+                memoryGardenSection
                 librarySection
                 appearanceSection
                 vocabularySection
@@ -40,7 +43,7 @@ struct ProfileView: View {
             .scrollContentBackground(.hidden)
             .background(theme.colors.background.ignoresSafeArea())
             .navigationTitle("Profile")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
         }
         .toolbarVisibility(.hidden, for: .tabBar)
         .sheet(isPresented: $showAvatarPicker) {
@@ -80,8 +83,6 @@ struct ProfileView: View {
         }
     }
 
-    // MARK: - Sections
-
     private var profileSection: some View {
         Section {
             ProfileHeaderCard(
@@ -96,8 +97,35 @@ struct ProfileView: View {
         }
     }
 
+    private var memoryGardenSection: some View {
+        Section {
+            NavigationLink {
+                MemoryGardenView(bookRepository: bookRepository)
+            } label: {
+                ProfileRow(
+                    icon: "leaf.fill",
+                    iconColor: Color(red: 0.1, green: 0.05, blue: 0.85),
+                    title: "Memory Garden"
+                )
+            }
+        } header: {
+            SectionHeader("Journey")
+        }
+        .listRowBackground(theme.colors.surface)
+    }
+
     private var librarySection: some View {
         Section {
+            NavigationLink {
+                AllFinishedBooksScreen(bookRepository: bookRepository)
+            } label: {
+                ProfileRow(
+                    icon: "checkmark.seal.fill",
+                    iconColor: theme.colors.shelfAccent,
+                    title: "Books I've Read"
+                )
+            }
+
             NavigationLink {
                 AllHighlightsScreen()
             } label: {
@@ -145,6 +173,7 @@ struct ProfileView: View {
                     trailing: appearanceBinding.wrappedValue.displayName
                 )
             }
+
         } header: {
             SectionHeader("Appearance")
         }

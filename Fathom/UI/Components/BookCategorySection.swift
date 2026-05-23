@@ -11,6 +11,7 @@ struct BookCategorySection: View {
     var onToggleCategoryMembership: ((UUID, UUID) -> Void)? = nil  // (bookID, categoryID)
     var onEditBook: ((UUID) -> Void)? = nil
     var onDeleteBook: ((UUID) -> Void)? = nil
+    var onMarkFinished: ((UUID) -> Void)? = nil
 
     private let sectionHeight: CGFloat = 196
     private let shelfBandHeight: CGFloat = 72
@@ -87,7 +88,8 @@ struct BookCategorySection: View {
                                 onToggleCategoryMembership?(book.id, categoryID)
                             },
                             onEdit: onEditBook != nil ? { onEditBook?(book.id) } : nil,
-                            onDelete: onDeleteBook != nil ? { onDeleteBook?(book.id) } : nil
+                            onDelete: onDeleteBook != nil ? { onDeleteBook?(book.id) } : nil,
+                            onMarkFinished: onMarkFinished != nil ? { onMarkFinished?(book.id) } : nil
                         )
                         .onTapGesture {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()

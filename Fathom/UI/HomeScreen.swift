@@ -20,6 +20,7 @@ struct HomeScreen: View {
     @State private var reorderingBooksCategory: HomeCategory? = nil
     @State private var editingBook: Book? = nil
     @State private var bookToDelete: HomeBook? = nil
+    @State private var bookToMarkFinished: Book? = nil
 
     // IDs currently in their dissolve-out phase — layout space is released
     // after the dissolve completes, creating a two-phase deletion.
@@ -115,6 +116,14 @@ struct HomeScreen: View {
                                 Task { @MainActor in
                                     try? await Task.sleep(nanoseconds: 500_000_000)
                                     bookToDelete = hb
+                                }
+                            },
+                            onMarkFinished: { bookID in
+                                Task {
+                                    let books = await bookRepository.listBooks()
+                                    guard let book = books.first(where: { $0.id == bookID }) else { return }
+                                    try? await Task.sleep(nanoseconds: 500_000_000)
+                                    await MainActor.run { bookToMarkFinished = book }
                                 }
                             }
                         )
@@ -350,6 +359,8 @@ struct HomeScreen: View {
                     bookFileURL: url,
                     bookTitle: book.title,
                     bookID: book.id,
+                    book: book,
+                    bookRepository: bookRepository,
                     backendBookID: book.backendBookID,
                     aiEnabled: book.aiEnabled,
                     ingestionStatus: book.preprocessingStatus,
@@ -380,6 +391,12 @@ struct HomeScreen: View {
                 else { return }
                 await MainActor.run { readerBook = book }
             }
+        }
+        .fullScreenCover(item: $bookToMarkFinished) { book in
+            BookCompletionScreen(book: book, bookRepository: bookRepository)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .bookCompletionDidSave)) { _ in
+            Task { await viewModel.load() }
         }
     }
 

@@ -84,4 +84,65 @@ final actor BookRepositorySQLite: BookRepository {
             }
         }
     }
+
+    func logReadingSession(for bookID: UUID, duration: TimeInterval) async {
+        guard duration > 0 else { return }
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        let todayStr = formatter.string(from: Date())
+        
+        await withCheckedContinuation { continuation in
+            do {
+                try dbQueue.write { db in
+                    if var existing = try ReadingActivity.fetchOne(db, sql: "SELECT * FROM readingActivity WHERE bookID = ? AND date = ?", arguments: [bookID.uuidString, todayStr]) {
+                        existing.duration += duration
+                        try existing.update(db)
+                    } else {
+                        let newActivity = ReadingActivity(id: UUID(), bookID: bookID, date: todayStr, duration: duration, createdAt: Date())
+                        try newActivity.insert(db)
+                    }
+                }
+                continuation.resume()
+            } catch {
+                AppLogger.logError(tag: "BookRepository", error)
+                continuation.resume()
+            }
+        }
+    }
+
+    func listReadingActivity(forYear year: Int) async -> [ReadingActivity] {
+        await withCheckedContinuation { continuation in
+            do {
+                let prefix = "\(year)-"
+                let activities = try dbQueue.read { db in
+                    try ReadingActivity.fetchAll(db, sql: "SELECT * FROM readingActivity WHERE date LIKE ?", arguments: [prefix + "%"])
+                }
+                continuation.resume(returning: activities)
+            } catch {
+                AppLogger.logError(tag: "BookRepository", error)
+                continuation.resume(returning: [])
+            }
+        }
+    }
+
+    func insertMockReadingActivity(_ activity: ReadingActivity) async {
+        await withCheckedContinuation { continuation in
+            do {
+                try dbQueue.write { db in
+                    if var existing = try ReadingActivity.fetchOne(db, sql: "SELECT * FROM readingActivity WHERE bookID = ? AND date = ?", arguments: [activity.bookID.uuidString, activity.date]) {
+                        existing.duration += activity.duration
+                        try existing.update(db)
+                    } else {
+                        try activity.insert(db)
+                    }
+                }
+                continuation.resume()
+            } catch {
+                AppLogger.logError(tag: "BookRepository", error)
+                continuation.resume()
+            }
+        }
+    }
 }

@@ -13,7 +13,7 @@ final class BookDetailsViewModel: ObservableObject {
     @Published var enableAIError: String? = nil
 
     private let bookID: UUID
-    private let bookRepository: BookRepository
+    let bookRepository: BookRepository
 
     init(bookID: UUID, bookRepository: BookRepository) {
         self.bookID = bookID

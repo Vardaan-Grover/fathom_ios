@@ -25,4 +25,15 @@ enum BookFileStore {
     static func coverURL(for filename: String) -> URL? {
         ICloudFileStore.shared.coverURL(for: filename)
     }
+
+    /// Saves reflection image PNG data and returns the filename to store as
+    /// `Book.reflectionImageFilename`.
+    static func saveReflectionImage(_ data: Data, imageID: UUID = UUID()) throws -> String {
+        try ICloudFileStore.shared.saveReflectionImage(data, imageID: imageID)
+    }
+
+    /// Resolves the full URL for a reflection image filename.
+    static func reflectionImageURL(for filename: String) -> URL? {
+        ICloudFileStore.shared.reflectionImageURL(for: filename)
+    }
 }

@@ -327,7 +327,37 @@ final class DatabaseManager {
             }
         }
 
-        
+        migrator.registerMigration("v22_add_book_completion") { db in
+            try db.alter(table: "books") { t in
+                t.add(column: "rating", .integer)
+                t.add(column: "reflection", .text)
+                t.add(column: "finishedAt", .datetime)
+            }
+        }
+
+        migrator.registerMigration("v23_add_reflection_image") { db in
+            try db.alter(table: "books") { t in
+                t.add(column: "reflectionImageFilename", .text)
+            }
+        }
+
+        migrator.registerMigration("v24_add_reading_activity") { db in
+            try db.create(table: "readingActivity") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("bookID", .text).notNull().indexed().references("books", onDelete: .cascade)
+                t.column("date", .text).notNull().indexed()
+                t.column("duration", .double).notNull().defaults(to: 0.0)
+                t.column("createdAt", .datetime).notNull()
+            }
+            // Unique constraint on bookID and date so we upsert rather than duplicate
+            try db.create(index: "idx_readingActivity_book_date", on: "readingActivity", columns: ["bookID", "date"], unique: true)
+        }
+
+        migrator.registerMigration("v25_add_readingActivity_modifiedAt") { db in
+            try db.alter(table: "readingActivity") { t in
+                t.add(column: "modifiedAt", .datetime).notNull().defaults(to: Date())
+            }
+        }
 
         // ── Sync infrastructure ────────────────────────────────────────────
 
@@ -368,7 +398,7 @@ final class DatabaseManager {
             // SQLite's recursive_triggers is OFF by default so the UPDATE inside
             // the trigger body does NOT re-fire the trigger — no infinite loop.
             let idTables = ["books", "bookCategories", "highlights", "notes",
-                            "bookmarks", "saved_words", "aiConversations"]
+                            "bookmarks", "saved_words", "aiConversations", "readingActivity"]
             for table in idTables {
                 try db.execute(sql: """
                     CREATE TRIGGER IF NOT EXISTS \(table)_stamp_modifiedAt
@@ -414,7 +444,7 @@ final class DatabaseManager {
             }
 
             // ── Upsert-only tables (soft-deletes, never hard-deleted) ──────
-            for table in ["highlights", "notes", "bookmarks", "saved_words"] {
+            for table in ["highlights", "notes", "bookmarks", "saved_words", "readingActivity"] {
                 let type = Self.cloudKitType(for: table)
                 try db.execute(sql: """
                     CREATE TRIGGER IF NOT EXISTS \(table)_ck_insert
@@ -536,7 +566,7 @@ final class DatabaseManager {
                 """)
             try db.execute(sql: """
                 INSERT OR IGNORE INTO cloudkit_pending_changes (recordType, recordID, operation)
-                SELECT 'AIConversation', id, 'upsert' FROM aiConversations
+                SELECT 'ReadingActivity', id, 'upsert' FROM readingActivity
                 """)
         }
 
@@ -556,6 +586,7 @@ final class DatabaseManager {
         case "bookmarks":               return "Bookmark"
         case "saved_words":             return "SavedWord"
         case "aiConversations":         return "AIConversation"
+        case "readingActivity":         return "ReadingActivity"
         default:                        return tableName
         }
     }

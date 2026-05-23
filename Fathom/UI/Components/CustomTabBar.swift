@@ -44,7 +44,9 @@ struct CustomTabBar<TabItemView: View>: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UISegmentedControl, context: Context) {
-
+        if uiView.selectedSegmentIndex != activeTab.index {
+            uiView.selectedSegmentIndex = activeTab.index
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UISegmentedControl, context: Context) -> CGSize? {

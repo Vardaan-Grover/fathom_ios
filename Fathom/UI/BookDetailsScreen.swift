@@ -7,6 +7,8 @@ struct BookDetailsScreen: View {
 
     let onStartReading: (Book) -> Void
 
+    @State private var isShowingCompletion = false
+
     init(bookID: UUID, bookRepository: BookRepository, onStartReading: @escaping (Book) -> Void) {
         _viewModel = StateObject(
             wrappedValue: BookDetailsViewModel(
@@ -36,6 +38,17 @@ struct BookDetailsScreen: View {
                 .ignoresSafeArea(edges: .bottom)
         }
         .task { await viewModel.load() }
+        .fullScreenCover(isPresented: $isShowingCompletion) {
+            if let book = viewModel.book {
+                BookCompletionScreen(
+                    book: book,
+                    bookRepository: viewModel.bookRepository
+                )
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .bookCompletionDidSave)) { _ in
+            Task { await viewModel.load() }
+        }
     }
 
     // MARK: - Overlay Buttons
@@ -311,22 +324,35 @@ struct BookDetailsScreen: View {
 
     private var ctaButton: some View {
         let hasProgress = (viewModel.totalProgression ?? 0) > 0.01
+        let isFinished = viewModel.book?.finishedAt != nil
         let label = hasProgress ? "Continue Reading" : "Start Reading"
 
-        return Button {
-            if let book = viewModel.book {
-                dismiss()
-                onStartReading(book)
+        return VStack(spacing: 10) {
+            Button {
+                if let book = viewModel.book {
+                    dismiss()
+                    onStartReading(book)
+                }
+            } label: {
+                Text(label)
+                    .font(theme.typography.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(
+                        theme.colors.shelfAccent,
+                        in: RoundedRectangle(cornerRadius: theme.layout.cornerRadiusLarge))
             }
-        } label: {
-            Text(label)
-                .font(theme.typography.headline)
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(
-                    theme.colors.shelfAccent,
-                    in: RoundedRectangle(cornerRadius: theme.layout.cornerRadiusLarge))
+
+            if !isFinished {
+                Button {
+                    isShowingCompletion = true
+                } label: {
+                    Text("Mark as Finished")
+                        .font(theme.typography.subheadline)
+                        .foregroundColor(theme.colors.shelfAccent)
+                }
+            }
         }
     }
 
@@ -369,11 +395,20 @@ struct BookDetailsScreen: View {
     // MARK: - Overview Section
 
     private var overviewSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
+            if let book = viewModel.book, book.finishedAt != nil {
+                BookCompletionPreviewCard(book: book) {
+                    isShowingCompletion = true
+                }
+                .padding(.bottom, 24)
+            }
+
             Text("Book Overview")
                 .font(theme.typography.title)
                 .foregroundColor(theme.colors.primary)
                 .tracking(0.1)
+
+            Spacer().frame(height: 10)
 
             if let description = viewModel.book?.description, !description.isEmpty {
                 Text(description.asHTMLAttributedString())
@@ -433,6 +468,9 @@ struct BookDetailsScreen: View {
         func updateBook(_ book: Book) async {}
         func deleteBook(_ book: Book) async {}
         func touchLastReadAt(bookID: UUID) async {}
+        func logReadingSession(for bookID: UUID, duration: TimeInterval) async {}
+        func listReadingActivity(forYear year: Int) async -> [ReadingActivity] { [] }
+        func insertMockReadingActivity(_ activity: ReadingActivity) async {}
     }
 
     #Preview {

@@ -27,6 +27,11 @@ struct Book: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
     var estimatedReadingTimeMinutes: Int? = nil
     var lastReadAt: Date? = nil
 
+    var rating: Int? = nil
+    var reflection: String? = nil
+    var reflectionImageFilename: String? = nil
+    var finishedAt: Date? = nil
+
     /// Last time any field on this record was written — used for CloudKit
     /// last-write-wins conflict resolution on pull.
     var modifiedAt: Date = Date()
@@ -39,6 +44,11 @@ struct Book: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
     var coverURL: URL? {
         guard let filename = coverFilename else { return nil }
         return ICloudFileStore.shared.coverURL(for: filename)
+    }
+
+    var reflectionImageURL: URL? {
+        guard let filename = reflectionImageFilename else { return nil }
+        return ICloudFileStore.shared.reflectionImageURL(for: filename)
     }
 }
 
@@ -358,4 +368,15 @@ struct AIThread: Identifiable, Codable {
     let chapterTitle: String?
     let createdAt: Date
     var messages: [AIMessage]
+}
+
+struct ReadingActivity: Identifiable, Codable, FetchableRecord, PersistableRecord, Equatable {
+    static let databaseTableName = "readingActivity"
+
+    let id: UUID
+    let bookID: UUID
+    let date: String // YYYY-MM-DD
+    var duration: TimeInterval // in seconds
+    let createdAt: Date
+    var modifiedAt: Date = Date()
 }

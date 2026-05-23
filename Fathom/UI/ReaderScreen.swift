@@ -7,6 +7,8 @@ struct ReaderScreen: View {
     let bookFileURL: URL
     let bookTitle: String
     let bookID: UUID
+    var book: Book? = nil
+    var bookRepository: BookRepository? = nil
     var backendBookID: UUID? = nil
     var aiEnabled: Bool = false
     var ingestionStatus: PreprocessingStatus = .pending
@@ -53,12 +55,16 @@ struct ReaderScreen: View {
     @State private var pendingSearchLocatorJSON: String? = nil
     @State private var isScrubbing: Bool = false
     @State private var scrubTargetProgression: Double = 0.0
+    @State private var isShowingCompletion = false
+    @State private var hasTriggeredCompletion = false
     @StateObject private var loader = PublicationLoader()
     @State private var tableOfContents: [ReadiumShared.Link] = []
     @State private var aiSelectedText: String?
     @State private var aiSelectedLocatorJSON: String?
 
     @Environment(\.dismiss) private var dismiss
+
+    @State private var sessionStartTime: Date = Date()
 
     private var aiReady: Bool { aiEnabled && ingestionStatus == .completed }
 
@@ -219,6 +225,36 @@ struct ReaderScreen: View {
                         aiSelectedLocatorJSON = nil
                     }
                 )
+            }
+        }
+        .fullScreenCover(isPresented: $isShowingCompletion) {
+            if let b = book, let repo = bookRepository {
+                BookCompletionScreen(book: b, bookRepository: repo)
+            }
+        }
+        .onChange(of: currentProgression) { _, newValue in
+            guard
+                !hasTriggeredCompletion,
+                newValue >= 0.98,
+                let b = book,
+                b.finishedAt == nil,
+                bookRepository != nil
+            else { return }
+            hasTriggeredCompletion = true
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                isShowingCompletion = true
+            }
+        }
+        .onAppear {
+            sessionStartTime = Date()
+        }
+        .onDisappear {
+            let duration = Date().timeIntervalSince(sessionStartTime)
+            if duration > 10 { // Changed to 10s for easier testing, maybe 60s in production
+                Task {
+                    await bookRepository?.logReadingSession(for: bookID, duration: duration)
+                }
             }
         }
     }

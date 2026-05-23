@@ -8,6 +8,7 @@ struct BookCoverView: View {
     var onToggleCategory: ((UUID) -> Void)? = nil
     var onEdit: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
+    var onMarkFinished: (() -> Void)? = nil
 
     @State private var showShelfPicker = false
 
@@ -18,7 +19,8 @@ struct BookCoverView: View {
         userCategories: [HomeCategory] = [],
         onToggleCategory: ((UUID) -> Void)? = nil,
         onEdit: (() -> Void)? = nil,
-        onDelete: (() -> Void)? = nil
+        onDelete: (() -> Void)? = nil,
+        onMarkFinished: (() -> Void)? = nil
     ) {
         self.book = book
         self.width = width
@@ -27,6 +29,7 @@ struct BookCoverView: View {
         self.onToggleCategory = onToggleCategory
         self.onEdit = onEdit
         self.onDelete = onDelete
+        self.onMarkFinished = onMarkFinished
     }
 
     var body: some View {
@@ -57,6 +60,11 @@ struct BookCoverView: View {
         Button {
         } label: {
             Label("Share", systemImage: "square.and.arrow.up")
+        }
+        Button {
+            onMarkFinished?()
+        } label: {
+            Label("Mark as Finished", systemImage: "checkmark.seal")
         }
         Button {
             onEdit?()

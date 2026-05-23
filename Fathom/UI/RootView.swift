@@ -32,6 +32,7 @@ struct RootView: View {
 
     @Environment(\.showToast) private var showToast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.appTheme) private var theme
 
     init(
         homeViewModel: HomeViewModel,
@@ -49,6 +50,7 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
+            theme.colors.background.ignoresSafeArea()
             // Base layer: TabView + tab bar blurred together as one unit.
             // No separate per-layer blur — everything underneath the card
             // goes out of focus as a single composite image.
@@ -92,6 +94,21 @@ struct RootView: View {
                     onJumpToBook: { vocabularyTabViewModel.jumpToBook(word: word) }
                 )
                 .transition(.opacity.animation(.easeOut(duration: 0.18)))
+        }
+            
+            VStack {
+                Spacer()
+                customTabBar
+                    .padding(.horizontal, 20)
+                    .allowsHitTesting(
+                        !vocabularyTabViewModel.isCardExpanded
+                            && !vocabularyTabViewModel.isSearchFocused
+                    )
+                    .opacity(vocabularyTabViewModel.isSearchFocused ? 0 : 1)
+                    .frame(height: vocabularyTabViewModel.isSearchFocused ? 0 : nil)
+                    .animation(
+                        .spring(duration: 0.3, bounce: 0.05),
+                        value: vocabularyTabViewModel.isSearchFocused)
             }
         }
         .sheet(isPresented: $vocabularyTabViewModel.isShowingShareSheet) {
@@ -149,34 +166,24 @@ struct RootView: View {
         }
     }
 
-    // TabView + tab bar as a single composited layer so blur affects both equally.
+    // All tab screens laid out side-by-side and shifted by activeTab.index so
+    // switching tabs slides the correct screen in from the right direction.
+    // All three views stay mounted so scroll position and state are preserved.
     private var contentLayer: some View {
-        TabView(selection: $activeTab) {
-            Tab(value: .library) {
+        GeometryReader { geo in
+            HStack(spacing: 0) {
                 HomeScreen(viewModel: homeViewModel, bookRepository: bookRepository)
-                    .toolbarVisibility(.hidden, for: .tabBar)
-            }
-            Tab(value: .vocabulary) {
+                    .frame(width: geo.size.width)
                 VocabularyTabView(viewModel: vocabularyTabViewModel)
-                    .toolbarVisibility(.hidden, for: .tabBar)
+                    .frame(width: geo.size.width)
+                ProfileView(bookRepository: bookRepository)
+                    .frame(width: geo.size.width)
             }
-            Tab(value: .profile) {
-                ProfileView()
-                    .toolbarVisibility(.hidden, for: .tabBar)
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            customTabBar
-                .padding(.horizontal, 20)
-                .allowsHitTesting(
-                    !vocabularyTabViewModel.isCardExpanded
-                        && !vocabularyTabViewModel.isSearchFocused
-                )
-                .opacity(vocabularyTabViewModel.isSearchFocused ? 0 : 1)
-                .frame(height: vocabularyTabViewModel.isSearchFocused ? 0 : nil)
-                .animation(
-                    .spring(duration: 0.3, bounce: 0.05),
-                    value: vocabularyTabViewModel.isSearchFocused)
+            .offset(x: -CGFloat(activeTab.index) * geo.size.width)
+            .animation(
+                reduceMotion ? nil : .snappy(duration: 0.38, extraBounce: 0.05),
+                value: activeTab
+            )
         }
         .fileImporter(
             isPresented: $showImporter,

@@ -26,7 +26,7 @@ private let wordAccentPalette: [Color] = [
 
 // Fallback used by detail/share views where display-order context isn't available
 func wordAccentColor(for word: SavedWord) -> Color {
-    wordAccentPalette[abs(word.word.hashValue) % wordAccentPalette.count]
+    wordAccentPalette[StableHash.index(of: word.word, count: wordAccentPalette.count)]
 }
 
 // Assigns colors in display order, preventing runs of identical colors within a 3-wide window.
@@ -34,7 +34,7 @@ func assignMasonryColors(to words: [SavedWord]) -> [UUID: Color] {
     var result: [UUID: Color] = [:]
     var recentSlots: [Int] = []
     for word in words {
-        let preferred = abs(word.word.hashValue) % wordAccentPalette.count
+        let preferred = StableHash.index(of: word.word, count: wordAccentPalette.count)
         var slot = preferred
         var tries = 0
         while recentSlots.suffix(3).contains(slot) && tries < wordAccentPalette.count {

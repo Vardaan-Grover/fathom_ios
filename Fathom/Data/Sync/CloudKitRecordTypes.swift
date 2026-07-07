@@ -12,6 +12,7 @@ enum CKRecordType {
     static let bookmark                = "Bookmark"
     static let savedWord               = "SavedWord"
     static let aiConversation          = "AIConversation"
+    static let readingActivity         = "ReadingActivity"
     static let readingPosition         = "ReadingPosition"
     static let readerSettings          = "ReaderSettings"
     static let userProfile             = "UserProfile"
@@ -349,6 +350,41 @@ extension SavedWord {
             createdAt: createdAt,
             pinnedAt: r["pinnedAt"] as? Date,
             deletedAt: r["deletedAt"] as? Date,
+            modifiedAt: r["modifiedAt"] as? Date ?? createdAt
+        )
+    }
+}
+
+// MARK: - ReadingActivity
+
+extension ReadingActivity {
+    func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
+        let rid = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)
+        let r   = CKRecord(recordType: CKRecordType.readingActivity, recordID: rid)
+        r["bookID"]     = bookID.uuidString as CKRecordValue
+        r["date"]       = date as CKRecordValue
+        r["duration"]   = duration as CKRecordValue
+        r["createdAt"]  = createdAt as CKRecordValue
+        r["modifiedAt"] = modifiedAt as CKRecordValue
+        return r
+    }
+
+    static func from(ckRecord r: CKRecord) -> ReadingActivity? {
+        guard
+            let id        = UUID(uuidString: r.recordID.recordName),
+            let bookIDStr = r["bookID"] as? String,
+            let bookID    = UUID(uuidString: bookIDStr),
+            let date      = r["date"] as? String,
+            let duration  = r["duration"] as? Double,
+            let createdAt = r["createdAt"] as? Date
+        else { return nil }
+
+        return ReadingActivity(
+            id: id,
+            bookID: bookID,
+            date: date,
+            duration: duration,
+            createdAt: createdAt,
             modifiedAt: r["modifiedAt"] as? Date ?? createdAt
         )
     }

@@ -72,7 +72,7 @@ struct AddWordSheet: View {
 
     private var accentColor: Color {
         guard !lookedUpWord.isEmpty else { return Self.palette[0] }
-        return Self.palette[abs(lookedUpWord.hashValue) % Self.palette.count]
+        return Self.palette[StableHash.index(of: lookedUpWord, count: Self.palette.count)]
     }
 
     private var selectedCount: Int { definitions.filter(\.isSelected).count }

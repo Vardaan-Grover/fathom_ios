@@ -233,6 +233,36 @@ extension SyncEngine {
                     SyncEngine.removeFromQueue(db: db, type: CKRecordType.savedWord, id: recordName)
                 }
 
+            // ── Reading activity ───────────────────────────────────────────
+            case CKRecordType.readingActivity:
+                guard let incoming = ReadingActivity.from(ckRecord: r) else { return }
+                try await DatabaseManager.shared.dbQueue.write { db in
+                    if let existing = try ReadingActivity.fetchOne(db, id: incoming.id) {
+                        if incoming.modifiedAt > existing.modifiedAt {
+                            try incoming.update(db)
+                        }
+                    } else if var existing = try ReadingActivity
+                        .filter(Column("bookID") == incoming.bookID
+                                && Column("date") == incoming.date)
+                        .fetchOne(db)
+                    {
+                        // Different record id for the same (bookID, date) — this
+                        // day was logged independently on another device. The
+                        // unique index forbids a second row, so merge into the
+                        // local one. `max` (not sum) keeps the merge idempotent
+                        // when the same record is pulled again.
+                        if incoming.duration > existing.duration {
+                            existing.duration = incoming.duration
+                            try existing.update(db)
+                        }
+                    } else {
+                        try incoming.insert(db, onConflict: .ignore)
+                    }
+                    SyncEngine.removeFromQueue(db: db,
+                                               type: CKRecordType.readingActivity,
+                                               id: recordName)
+                }
+
             // ── AI conversations (additive, never deleted) ─────────────────
             case CKRecordType.aiConversation:
                 // Dormant while the AI Companion is not user-facing. Note this

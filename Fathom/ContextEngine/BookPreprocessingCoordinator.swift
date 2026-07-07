@@ -7,6 +7,13 @@ actor BookPreprocessingCoordinator {
     private let dbQueue: DatabaseQueue
     private let backendService = BackendService.shared
 
+    /// Books currently being preprocessed. `preprocess(book:)` is fired from
+    /// both the import flow and the resume-on-launch path, which can overlap
+    /// (e.g. two `load()` calls while extraction is still running); running the
+    /// same book twice concurrently inserts duplicate chapters and trips the
+    /// paragraphs (bookID, absoluteIndex) unique key.
+    private var inFlightBookIDs: Set<UUID> = []
+
     init(dbQueue: DatabaseQueue) {
         self.dbQueue = dbQueue
     }
@@ -32,6 +39,12 @@ actor BookPreprocessingCoordinator {
     }
 
     func preprocess(book: Book) async {
+        guard inFlightBookIDs.insert(book.id).inserted else {
+            AppLogger.log(tag: "Preprocessing", "⏭️ \(book.title) already in flight — skipping duplicate run")
+            return
+        }
+        defer { inFlightBookIDs.remove(book.id) }
+
         do {
             AppLogger.log(tag: "Preprocessing", "▶️ Started for book: \(book.title)")
 

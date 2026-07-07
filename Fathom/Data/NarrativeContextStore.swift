@@ -75,12 +75,22 @@ actor NarrativeContextStore {
         href.hasPrefix("/") ? String(href.dropFirst()) : href
     }
 
+    /// Escapes LIKE wildcards so selected text containing `%` or `_` matches
+    /// literally. Use with `LIKE ? ESCAPE '\'`.
+    private static func escapeLikePattern(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+    }
+
     // MARK: - Chapter-restricted search
 
     private func chapterRestrictedSearch(
         bookID: UUID, href: String, probe: String, progression: Double?
     ) async -> Int? {
         let normalizedHref = Self.normalizeHref(href)
+        let likePattern = "%" + Self.escapeLikePattern(probe) + "%"
         do {
             return try await dbQueue.read { db in
                 // Log a sample of stored hrefs to compare against the locator's href
@@ -108,22 +118,22 @@ actor NarrativeContextStore {
                 if AppLogger.isEnabled {
                     let globalCount = try Int.fetchOne(
                         db,
-                        sql: "SELECT COUNT(*) FROM paragraphs WHERE bookID = ? AND text LIKE ?",
-                        arguments: [bookID, "%\(probe)%"]
+                        sql: "SELECT COUNT(*) FROM paragraphs WHERE bookID = ? AND text LIKE ? ESCAPE '\\'",
+                        arguments: [bookID, likePattern]
                     ) ?? 0
                     AppLogger.log(tag: "NarrativeContextStore", "🧪 global LIKE count: \(globalCount)")
 
                     let chapterOnlyCount = try Int.fetchOne(
                         db,
-                        sql: "SELECT COUNT(*) FROM paragraphs WHERE chapterID = ? AND text LIKE ?",
-                        arguments: [chapterID, "%\(probe)%"]
+                        sql: "SELECT COUNT(*) FROM paragraphs WHERE chapterID = ? AND text LIKE ? ESCAPE '\\'",
+                        arguments: [chapterID, likePattern]
                     ) ?? 0
                     AppLogger.log(tag: "NarrativeContextStore", "🧪 chapter LIKE count: \(chapterOnlyCount)")
 
                     let testRows = try Row.fetchAll(
                         db,
-                        sql: "SELECT absoluteIndex FROM paragraphs WHERE chapterID = ? AND text LIKE ?",
-                        arguments: [chapterID, "%\(probe)%"]
+                        sql: "SELECT absoluteIndex FROM paragraphs WHERE chapterID = ? AND text LIKE ? ESCAPE '\\'",
+                        arguments: [chapterID, likePattern]
                     )
                     AppLogger.log(tag: "NarrativeContextStore", "🧪 test fetchAll count: \(testRows.count)")
                     if let first = testRows.first {
@@ -133,8 +143,8 @@ actor NarrativeContextStore {
 
                 let rows = try Row.fetchAll(
                     db,
-                    sql: "SELECT absoluteIndex, indexInChapter FROM paragraphs WHERE chapterID = ? AND text LIKE ? ORDER BY absoluteIndex ASC",
-                    arguments: [chapterID, "%\(probe)%"]
+                    sql: "SELECT absoluteIndex, indexInChapter FROM paragraphs WHERE chapterID = ? AND text LIKE ? ESCAPE '\\' ORDER BY absoluteIndex ASC",
+                    arguments: [chapterID, likePattern]
                 )
                 AppLogger.log(tag: "NarrativeContextStore", "🧪 main rows.count: \(rows.count)")
 

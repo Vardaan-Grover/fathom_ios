@@ -118,6 +118,11 @@ final class LibraryViewModel: ObservableObject {
             AppLogger.log(tag: "LibraryViewModel", "2. Awaiting user customization...")
             let finalCustomization = try await withCheckedThrowingContinuation {
                 (cont: CheckedContinuation<BookCustomization, Error>) in
+                // A previous import may still be awaiting its customization
+                // sheet (e.g. another EPUB arrived via onOpenURL). Cancel it —
+                // overwriting the slot would leak that continuation and hang
+                // its import task forever.
+                importContinuation?.resume(throwing: CancellationError())
                 importContinuation = cont
                 pendingCustomization = customization
             }

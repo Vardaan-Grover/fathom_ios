@@ -316,13 +316,13 @@ class HomeViewModel: ObservableObject {
     }
 
     private static func paletteIndex(for book: Book) -> Int {
-        abs(book.id.hashValue) % coverPalette.count
+        StableHash.index(of: book.id, count: coverPalette.count)
     }
 
     /// Returns the cover background + text Color pair for any UUID.
     /// Used by the import flow to preview the palette colour before the book is saved.
     static func coverColorPair(for id: UUID) -> (cover: Color, text: Color) {
-        let index = abs(id.hashValue) % coverPalette.count
+        let index = StableHash.index(of: id, count: coverPalette.count)
         let pair = coverPalette[index]
         return (Color(hex: pair.cover), Color(hex: pair.text))
     }

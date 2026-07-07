@@ -15,6 +15,16 @@ Severity legend: 🔴 Critical (data loss / broken feature) · 🟠 High (real b
 - ✅ 2.1 Fixed: `AppLogger` redacts Authorization/apikey headers and is compiled off in release builds.
 - ✅ 1.8 Mitigated: backend ingestion polling is flag-gated off while AI is dormant (timeout/backoff still needed when re-enabled).
 
+**Phase 2 — done (2026-07-08):**
+- ✅ 1.3 Fixed: ReadingActivity now has a full sync path (`CKRecordType.readingActivity`, `toCKRecord/from`, push branch, pull branch). Pull merges same-(bookID, date) rows from other devices via `max(duration)` — idempotent, honors the unique index. Rows stuck in the queue on existing installs get pushed and cleared on the next flush.
+- ✅ 1.5 Fixed: new `StableHash` (FNV-1a) replaces seeded `hashValue` at all 7 palette sites (HomeViewModel, VocabularyTabView ×2, AddWordSheet, CollectionsListView ×2, coverColorPair) — colors are stable across launches now.
+- ✅ 1.7 Fixed: migration `v27_millisecond_queue_timestamps` recreates CDC triggers with millisecond `queuedAt`; `clearQueue` is awaited and matches on `(recordType, recordID, queuedAt)` so mid-push edits survive cleanup; `scheduleFlush` loops until a pass makes no progress, catching changes whose observation fired during a flush.
+- ✅ 1.9 Fixed: `BookPreprocessingCoordinator` keeps an in-flight book-ID set; duplicate `preprocess` calls are skipped.
+- ✅ 1.10 Fixed: reading timer pauses on scenePhase inactive/background; minimum logged session is 60 s (per the original code comment's production intent — adjust `ReaderScreen.minimumLoggedSession` if desired).
+- ✅ 1.11 Fixed: LIKE wildcards escaped (`ESCAPE '\'`) in all four paragraph-search queries.
+- ✅ 1.12 Fixed: a pending import continuation is cancelled (resumed with `CancellationError`) before a new one is stored.
+- ⏭️ 1.6 Skipped (AI dormant): resumed-thread history fix deferred until the AI Companion ships; noted inline where relevant.
+
 ---
 
 ## 1. Critical correctness bugs

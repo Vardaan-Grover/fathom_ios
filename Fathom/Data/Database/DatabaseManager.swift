@@ -588,6 +588,88 @@ final class DatabaseManager {
                 sql: "DELETE FROM cloudkit_pending_changes WHERE recordType = 'AIConversation'")
         }
 
+        // v27 — millisecond-precision CDC queue timestamps.
+        // The v21 triggers stamp queuedAt with CURRENT_TIMESTAMP (second
+        // precision). The SyncEngine clears processed queue rows by exact
+        // (recordType, recordID, queuedAt) match so that a row re-queued
+        // *during* a push (INSERT OR REPLACE writes a fresh queuedAt) survives
+        // the cleanup and is pushed again. Second precision makes same-second
+        // collisions realistic; recreate the triggers with millisecond stamps.
+        // (aiConversations/aiMessages triggers were dropped in v26.)
+        migrator.registerMigration("v27_millisecond_queue_timestamps") { db in
+            let stamp = "strftime('%Y-%m-%dT%H:%M:%f', 'now')"
+
+            // Upsert-only tables (soft-deletes, never hard-deleted).
+            for table in ["highlights", "notes", "bookmarks", "saved_words", "readingActivity"] {
+                let type = Self.cloudKitType(for: table)
+                for (suffix, event) in [("_ck_insert", "INSERT"), ("_ck_update", "UPDATE")] {
+                    try db.execute(sql: "DROP TRIGGER IF EXISTS \(table)\(suffix)")
+                    try db.execute(sql: """
+                        CREATE TRIGGER \(table)\(suffix)
+                        AFTER \(event) ON \(table)
+                        BEGIN
+                            INSERT OR REPLACE INTO cloudkit_pending_changes
+                                (recordType, recordID, operation, queuedAt)
+                            VALUES ('\(type)', NEW.id, 'upsert', \(stamp));
+                        END
+                        """)
+                }
+            }
+
+            // Hard-delete tables.
+            for table in ["books", "bookCategories"] {
+                let type = Self.cloudKitType(for: table)
+                for (suffix, event) in [("_ck_insert", "INSERT"), ("_ck_update", "UPDATE")] {
+                    try db.execute(sql: "DROP TRIGGER IF EXISTS \(table)\(suffix)")
+                    try db.execute(sql: """
+                        CREATE TRIGGER \(table)\(suffix)
+                        AFTER \(event) ON \(table)
+                        BEGIN
+                            INSERT OR REPLACE INTO cloudkit_pending_changes
+                                (recordType, recordID, operation, queuedAt)
+                            VALUES ('\(type)', NEW.id, 'upsert', \(stamp));
+                        END
+                        """)
+                }
+                try db.execute(sql: "DROP TRIGGER IF EXISTS \(table)_ck_delete")
+                try db.execute(sql: """
+                    CREATE TRIGGER \(table)_ck_delete
+                    AFTER DELETE ON \(table)
+                    BEGIN
+                        INSERT OR REPLACE INTO cloudkit_pending_changes
+                            (recordType, recordID, operation, queuedAt)
+                        VALUES ('\(type)', OLD.id, 'delete', \(stamp));
+                    END
+                    """)
+            }
+
+            // bookCategoryMemberships — composite key "bookID|categoryID".
+            try db.execute(sql: "DROP TRIGGER IF EXISTS bookCategoryMemberships_ck_insert")
+            try db.execute(sql: """
+                CREATE TRIGGER bookCategoryMemberships_ck_insert
+                AFTER INSERT ON bookCategoryMemberships
+                BEGIN
+                    INSERT OR REPLACE INTO cloudkit_pending_changes
+                        (recordType, recordID, operation, queuedAt)
+                    VALUES ('BookCategoryMembership',
+                            NEW.bookID || '|' || NEW.categoryID,
+                            'upsert', \(stamp));
+                END
+                """)
+            try db.execute(sql: "DROP TRIGGER IF EXISTS bookCategoryMemberships_ck_delete")
+            try db.execute(sql: """
+                CREATE TRIGGER bookCategoryMemberships_ck_delete
+                AFTER DELETE ON bookCategoryMemberships
+                BEGIN
+                    INSERT OR REPLACE INTO cloudkit_pending_changes
+                        (recordType, recordID, operation, queuedAt)
+                    VALUES ('BookCategoryMembership',
+                            OLD.bookID || '|' || OLD.categoryID,
+                            'delete', \(stamp));
+                END
+                """)
+        }
+
         return migrator
     }
 

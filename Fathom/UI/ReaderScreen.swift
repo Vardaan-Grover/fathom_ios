@@ -68,8 +68,16 @@ struct ReaderScreen: View {
     @State private var isShowingTranslation = false
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
-    @State private var sessionStartTime: Date = Date()
+    // Reading-session tracking. The timer only runs while the app is active:
+    // `sessionStartTime` is nil whenever the app is inactive/backgrounded, and
+    // time accrued so far is banked in `accumulatedReadingTime`.
+    @State private var sessionStartTime: Date? = nil
+    @State private var accumulatedReadingTime: TimeInterval = 0
+
+    /// Sessions shorter than this are noise (accidental opens), not reading.
+    private static let minimumLoggedSession: TimeInterval = 60
 
     private var aiReady: Bool { aiEnabled && ingestionStatus == .completed }
 
@@ -254,9 +262,27 @@ struct ReaderScreen: View {
         .onAppear {
             sessionStartTime = Date()
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                if sessionStartTime == nil { sessionStartTime = Date() }
+            } else {
+                // Pause while inactive/backgrounded — a locked phone with the
+                // reader open must not count as reading time.
+                if let start = sessionStartTime {
+                    accumulatedReadingTime += Date().timeIntervalSince(start)
+                    sessionStartTime = nil
+                }
+            }
+        }
         .onDisappear {
-            let duration = Date().timeIntervalSince(sessionStartTime)
-            if duration > 10 { // Changed to 10s for easier testing, maybe 60s in production
+            var duration = accumulatedReadingTime
+            if let start = sessionStartTime {
+                duration += Date().timeIntervalSince(start)
+            }
+            sessionStartTime = nil
+            accumulatedReadingTime = 0
+
+            if duration >= Self.minimumLoggedSession {
                 Task {
                     await bookRepository?.logReadingSession(for: bookID, duration: duration)
                     // Signal *after* the write commits so listeners (e.g. the

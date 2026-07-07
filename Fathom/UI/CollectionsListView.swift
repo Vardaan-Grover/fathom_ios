@@ -184,7 +184,7 @@ struct CollectionsListView: View {
         StickerStore.shared.stickers(for: category.id)
         ?? {
           let pairs = StickerStore.allPairs
-          let index = abs(category.id.hashValue) % pairs.count
+          let index = StableHash.index(of: category.id, count: pairs.count)
           return pairs[index]
         }()
 
@@ -289,7 +289,7 @@ private struct CollectionFolderCell: View {
       return overridden
     }
     let pairs = StickerStore.allPairs
-    let index = abs(category.id.hashValue) % pairs.count
+    let index = StableHash.index(of: category.id, count: pairs.count)
     return pairs[index]
   }
 

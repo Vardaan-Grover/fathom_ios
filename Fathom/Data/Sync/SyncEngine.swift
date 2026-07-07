@@ -8,7 +8,10 @@ private struct PendingChange: Decodable, FetchableRecord {
     let recordType: String
     let recordID: String
     let operation: String   // "upsert" | "delete"
-    let queuedAt: Date
+    /// Raw column text, not a Date: cleanup deletes by exact
+    /// (recordType, recordID, queuedAt) match, and round-tripping through
+    /// Date would change the string format and never match.
+    let queuedAt: String
 }
 
 // MARK: - SyncEngine
@@ -243,19 +246,25 @@ actor SyncEngine {
         )
     }
 
-    /// Debounce: if a flush is already in flight, do nothing — the observation
-    /// will fire again if new rows arrive after the flush completes.
+    /// Debounce: if a flush is already in flight, do nothing — that flush's
+    /// loop below picks up rows that arrive while it runs.
     private func scheduleFlush() async {
         guard !isPushing else { return }
         isPushing = true
         defer { isPushing = false }
-        await flush()
+        // Changes that land while a push is in flight have their observation
+        // fire swallowed by the guard above, so keep flushing until a pass
+        // makes no progress — queue empty, offline, or the remaining rows
+        // persistently fail (those retry on the next observation/foreground).
+        while await flush() > 0 {}
     }
 
     // MARK: - Push
 
-    private func flush() async {
-        guard let zoneID else { return }
+    /// Pushes one batch of pending changes. Returns the number of queue rows
+    /// successfully processed and cleared (0 = no progress; stop looping).
+    private func flush() async -> Int {
+        guard let zoneID else { return 0 }
 
         // Read the pending queue.
         let pending: [PendingChange]
@@ -269,10 +278,10 @@ actor SyncEngine {
             }
         } catch {
             AppLogger.log(tag: "SyncEngine", "Failed to read pending changes: \(error)")
-            return
+            return 0
         }
 
-        if pending.isEmpty { return }
+        if pending.isEmpty { return 0 }
 
         let upserts = pending.filter { $0.operation == "upsert" }
         let deletes = pending.filter { $0.operation == "delete" }
@@ -287,8 +296,8 @@ actor SyncEngine {
 
         guard !records.isEmpty || !deleteIDs.isEmpty else {
             // Nothing to push — clear stale queue rows.
-            clearQueue(pending)
-            return
+            await clearQueue(pending)
+            return pending.count
         }
 
         // Push to CloudKit.
@@ -333,14 +342,16 @@ actor SyncEngine {
             let succeeded = pending.filter {
                 savedIDs.contains($0.recordID) || deletedIDs.contains($0.recordID)
             }
-            clearQueue(succeeded)
+            await clearQueue(succeeded)
 
             let total = savedIDs.count + deletedIDs.count
             AppLogger.log(tag: "SyncEngine",
                           "Flushed \(total)/\(pending.count) records to CloudKit")
+            return succeeded.count
 
         } catch {
             AppLogger.log(tag: "SyncEngine", "Flush error: \(error)")
+            return 0
         }
     }
 
@@ -375,6 +386,8 @@ actor SyncEngine {
                         return try Bookmark.fetchAll(db: db, ids: ids, zoneID: zoneID)
                     case CKRecordType.savedWord:
                         return try SavedWord.fetchAll(db: db, ids: ids, zoneID: zoneID)
+                    case CKRecordType.readingActivity:
+                        return try ReadingActivity.fetchAll(db: db, ids: ids, zoneID: zoneID)
                     case CKRecordType.aiConversation:
                         // Dormant: chats currently live in ai_threads.json
                         // (AIThreadStore), not in the aiConversations tables this
@@ -397,24 +410,28 @@ actor SyncEngine {
 
     // MARK: - Queue helpers
 
-    private func clearQueue(_ processed: [PendingChange]) {
+    /// Removes processed rows from the queue.
+    ///
+    /// Matches on queuedAt too: if a record was edited *while* its push was in
+    /// flight, the trigger re-queued it with a fresh (millisecond-precision)
+    /// timestamp — that row must survive this cleanup so the newer change is
+    /// pushed by the next pass.
+    private func clearQueue(_ processed: [PendingChange]) async {
         guard !processed.isEmpty else { return }
-        Task {
-            do {
-                try await DatabaseManager.shared.dbQueue.write { db in
-                    for item in processed {
-                        try db.execute(
-                            sql: """
-                                DELETE FROM cloudkit_pending_changes
-                                WHERE recordType = ? AND recordID = ?
-                                """,
-                            arguments: [item.recordType, item.recordID]
-                        )
-                    }
+        do {
+            try await DatabaseManager.shared.dbQueue.write { db in
+                for item in processed {
+                    try db.execute(
+                        sql: """
+                            DELETE FROM cloudkit_pending_changes
+                            WHERE recordType = ? AND recordID = ? AND queuedAt = ?
+                            """,
+                        arguments: [item.recordType, item.recordID, item.queuedAt]
+                    )
                 }
-            } catch {
-                AppLogger.log(tag: "SyncEngine", "Queue cleanup error: \(error)")
             }
+        } catch {
+            AppLogger.log(tag: "SyncEngine", "Queue cleanup error: \(error)")
         }
     }
 }
@@ -508,6 +525,16 @@ private extension SavedWord {
             guard let uuid = UUID(uuidString: idStr),
                   let w = try SavedWord.fetchOne(db, id: uuid) else { return nil }
             return w.toCKRecord(zoneID: zoneID)
+        }
+    }
+}
+
+private extension ReadingActivity {
+    static func fetchAll(db: Database, ids: [String], zoneID: CKRecordZone.ID) throws -> [CKRecord] {
+        try ids.compactMap { idStr -> CKRecord? in
+            guard let uuid = UUID(uuidString: idStr),
+                  let a = try ReadingActivity.fetchOne(db, id: uuid) else { return nil }
+            return a.toCKRecord(zoneID: zoneID)
         }
     }
 }

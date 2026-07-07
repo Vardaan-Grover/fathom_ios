@@ -27,13 +27,8 @@ final class ReaderSettingsStore {
     private var needsSyncNotification = false
 
     private init() {
-        let appSupport = try! FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        saveURL = appSupport.appendingPathComponent("reader_settings.json")
+        saveURL = AppFiles.applicationSupportDirectory()
+            .appendingPathComponent("reader_settings.json")
     }
 
     func load() -> ReaderSettings {

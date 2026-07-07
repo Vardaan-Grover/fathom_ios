@@ -442,10 +442,16 @@ extension SyncEngine {
     /// Removes a CDC entry from within an already-open GRDB write transaction
     /// so pulled records are not immediately re-pushed.
     static func removeFromQueue(db: Database, type: String, id: String) {
-        try? db.execute(
-            sql: "DELETE FROM cloudkit_pending_changes WHERE recordType = ? AND recordID = ?",
-            arguments: [type, id]
-        )
+        do {
+            try db.execute(
+                sql: "DELETE FROM cloudkit_pending_changes WHERE recordType = ? AND recordID = ?",
+                arguments: [type, id]
+            )
+        } catch {
+            // Non-fatal: the record would be re-pushed once, and LWW on the
+            // other side makes that a no-op — but it shouldn't go unnoticed.
+            AppLogger.log(tag: "SyncEngine", "removeFromQueue failed for \(type)/\(id): \(error)")
+        }
     }
 }
 

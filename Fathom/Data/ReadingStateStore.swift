@@ -30,13 +30,8 @@ final class ReadingStateStore {
     private var pendingWrite: DispatchWorkItem?
 
     private init() {
-        let appSupport = try! FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        saveURL = appSupport.appendingPathComponent("reading_state.json")
+        saveURL = AppFiles.applicationSupportDirectory()
+            .appendingPathComponent("reading_state.json")
     }
 
     // MARK: - Locator read/write

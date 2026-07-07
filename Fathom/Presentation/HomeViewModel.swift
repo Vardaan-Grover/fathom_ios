@@ -30,9 +30,11 @@ class HomeViewModel: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: myLibraryBookOrderKey) }
     }
 
+    // No default for categoryRepository: an accidental fallback to an
+    // in-memory repo would silently discard the user's shelves.
     init(
         bookRepository: BookRepository,
-        categoryRepository: CategoryRepository = InMemoryCategoryRepository()
+        categoryRepository: CategoryRepository
     ) {
         self.bookRepository = bookRepository
         self.categoryRepository = categoryRepository

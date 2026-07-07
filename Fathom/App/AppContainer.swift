@@ -1,6 +1,11 @@
 import Foundation
 
 final class AppContainer {
+    /// The app-wide object graph. Prefer constructor injection from here;
+    /// reach for `AppContainer.shared` directly only where SwiftUI view
+    /// construction makes threading a dependency through impractical.
+    static let shared = AppContainer.live()
+
     // Repos
     let bookRepo: BookRepository
     let categoryRepo: CategoryRepository

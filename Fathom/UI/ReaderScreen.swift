@@ -200,8 +200,7 @@ struct ReaderScreen: View {
                         pageNumber: currentPage > 0 ? currentPage : nil,
                         locatorJSON: definedLocatorJSON,
                         contextSentence: definedContextSentence,
-                        repository: VocabularyRepositorySQLite(
-                            dbQueue: DatabaseManager.shared.dbQueue)
+                        repository: AppContainer.shared.vocabularyRepo
                     )
                 )
             }

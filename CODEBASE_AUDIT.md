@@ -33,6 +33,14 @@ Severity legend: 🔴 Critical (data loss / broken feature) · 🟠 High (real b
 - ✅ 3.5 Fixed: `ReadiumNavigatorView.updateUIViewController` diffs against coordinator-held last-applied state — preferences submit only on settings change, AI highlight only on locator change, note decorations only on notesVersion change.
 - Known trade-off: a hard crash (not backgrounding) can lose up to the debounce window — ~2 s of reading position / ~1 s of settings.
 
+**Phase 4 — done (2026-07-08):**
+- ✅ 2.2/2.3 (config layer): new `AppConfig` reads `FathomBackendBaseURL`, `FathomSupabaseAuthURL`, `FathomSupabaseAnonKey` from Info.plist; `BackendService` and the `supabase` client consume it. Environments are now a plist/xcconfig edit, not a source change. Correction to the original audit: ATS does **not** apply to raw IP-address hosts, so the plain-HTTP LAN IP works without an ATS exception — the missing-ATS claim in 2.2 was wrong. `flowType: .implicit` → PKCE is deferred: it changes the magic-link redirect flow and needs end-to-end testing with a real email round trip.
+- ✅ 5.1 (partial): `AppContainer.shared` added; FathomApp and previews use it; `ReaderScreen` uses the shared `vocabularyRepo` instead of constructing its own. Full singleton-through-container routing (stores, SyncEngine, BackendService) deferred — mechanical but wide-reaching; do it alongside test-target bootstrap so seams get used.
+- ✅ 5.4: `HomeViewModel` no longer defaults to `InMemoryCategoryRepository` — the repo must be passed explicitly.
+- ✅ 5.5 (data/sync layer): swallowed errors now logged — `UserProfileStore.save`, `SyncEngine.removeFromQueue`, `ICloudFileStore.createDirectoriesIfNeeded`, `NarrativeContextStore` (`hasParagraphs`, chapter search). Surfacing write failures in UI remains open.
+- ✅ 5.6: `try!` app-support lookups replaced with `AppFiles.applicationSupportDirectory()` (falls back Caches → temp instead of crashing) in ReadingStateStore, ReaderSettingsStore, UserProfileStore. `DatabaseManager.fatalError` kept deliberately: the app cannot run without its database, and a loud early crash is more debuggable than limping.
+- 📐 5.2 (storage policy, documented rather than migrated): **SQLite** for structured or synced data; **JSON file stores** (with debounced writes + `flush()` on resign-active) only for single-blob device state (reading positions, reader settings, profile); **UserDefaults** only for tiny flags/timestamps (change tokens, savedAt stamps, migration flags); **no new storage mechanism** without updating this rule. Existing data stays where it is — migrations aren't worth the risk until a feature forces them.
+
 ---
 
 ## 1. Critical correctness bugs

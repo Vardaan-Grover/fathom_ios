@@ -59,9 +59,7 @@ struct APIErrorResponse: Decodable, Sendable {
 actor BackendService {
     static let shared = BackendService()
 
-    private var baseURL: URL {
-        URL(string: "http://192.168.29.216:8080")!
-    }
+    private var baseURL: URL { AppConfig.backendBaseURL }
 
     // Fetches a fresh (auto-refreshed) JWT from the active Supabase session.
     // Throws BackendError.unauthenticated if no session exists.

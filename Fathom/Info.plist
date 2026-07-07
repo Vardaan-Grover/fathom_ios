@@ -2,6 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Environment configuration — read via AppConfig. Point these at the
+	     right environment here (or override per-configuration with xcconfig
+	     variables) instead of editing Swift source. -->
+	<key>FathomBackendBaseURL</key>
+	<string>http://192.168.29.216:8080</string>
+	<key>FathomSupabaseAuthURL</key>
+	<string>https://igueynbdkxwrqpknvxfv.supabase.co/auth/v1</string>
+	<key>FathomSupabaseAnonKey</key>
+	<string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlndWV5bmJka3h3cnFwa252eGZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NzY5MjEsImV4cCI6MjA5MzM1MjkyMX0.e_JlRuHVuCIANNe0bECjaK_GLK26xcSZDNeLOgZBdNk</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>ReenieBeanie.ttf</string>

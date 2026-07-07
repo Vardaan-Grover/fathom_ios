@@ -21,6 +21,9 @@ actor NarrativeContextStore {
                 return count > 0
             }
         } catch {
+            // Treated as "not indexed" — which re-triggers preprocessing, so
+            // a persistent DB error here would loop; make it visible.
+            AppLogger.log(tag: "NarrativeContextStore", "hasParagraphs failed: \(error)")
             return false
         }
     }
@@ -185,7 +188,10 @@ actor NarrativeContextStore {
 
                 return rows[0]["absoluteIndex"] as Int?
             }
-        } catch { return nil }
+        } catch {
+            AppLogger.log(tag: "NarrativeContextStore", "Chapter search failed: \(error)")
+            return nil
+        }
     }
 
     // MARK: - Text normalization

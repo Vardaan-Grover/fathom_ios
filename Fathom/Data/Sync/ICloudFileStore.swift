@@ -251,7 +251,12 @@ final class ICloudFileStore {
     private func createDirectoriesIfNeeded() {
         [booksDirectory, coversDirectory, reflectionsDirectory].forEach { url in
             guard let url else { return }
-            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            do {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            } catch {
+                AppLogger.log(tag: "ICloudFileStore",
+                              "Failed to create \(url.lastPathComponent): \(error)")
+            }
         }
     }
 }

@@ -12,7 +12,7 @@ struct FathomApp: App {
     private let vocabularyRepo: VocabularyRepository
 
     init() {
-        let container = AppContainer.live()
+        let container = AppContainer.shared
         bookRepository = container.bookRepo
         vocabularyRepo = container.vocabularyRepo
         _homeViewModel = StateObject(wrappedValue: HomeViewModel(

@@ -34,13 +34,8 @@ final class UserProfileStore {
     private let modifiedAtKey = "fathom.user_profile.modifiedAt"
 
     private init() {
-        let appSupport = try! FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        saveURL = appSupport.appendingPathComponent("user_profile.json")
+        saveURL = AppFiles.applicationSupportDirectory()
+            .appendingPathComponent("user_profile.json")
     }
 
     // MARK: - Load / Save
@@ -56,7 +51,11 @@ final class UserProfileStore {
     ///   the SyncEngine doesn't immediately push the profile back up.
     func save(_ profile: UserProfile, suppressSync: Bool = false) {
         guard let data = try? JSONEncoder().encode(profile) else { return }
-        try? data.write(to: saveURL, options: .atomic)
+        do {
+            try data.write(to: saveURL, options: .atomic)
+        } catch {
+            AppLogger.log(tag: "UserProfileStore", "Failed to write profile: \(error)")
+        }
 
         UserDefaults.standard.set(Date(), forKey: modifiedAtKey)
 

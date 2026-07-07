@@ -464,7 +464,10 @@ struct HomeScreen: View {
 
 // MARK: - Preview
 #Preview {
-    let vm = HomeViewModel(bookRepository: InMemoryBookRepository())
+    let vm = HomeViewModel(
+        bookRepository: InMemoryBookRepository(),
+        categoryRepository: InMemoryCategoryRepository()
+    )
     return HomeScreen(viewModel: vm, bookRepository: InMemoryBookRepository())
         .task { await vm.load() }
 }

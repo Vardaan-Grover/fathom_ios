@@ -125,7 +125,19 @@ extension SyncEngine {
                 try await DatabaseManager.shared.dbQueue.write { db in
                     if let existing = try Book.fetchOne(db, key: incoming.id) {
                         if incoming.modifiedAt > existing.modifiedAt {
-                            try incoming.update(db)
+                            var merged = incoming
+                            // Not part of the CKRecord schema — always local.
+                            merged.aiAnalysisProgress = existing.aiAnalysisProgress
+                            // Completion fields may be absent from records pushed
+                            // by app versions that predate them (and CloudKit can't
+                            // distinguish "cleared" from "never set"), so a nil
+                            // incoming value never erases local completion data.
+                            merged.rating = incoming.rating ?? existing.rating
+                            merged.reflection = incoming.reflection ?? existing.reflection
+                            merged.reflectionImageFilename =
+                                incoming.reflectionImageFilename ?? existing.reflectionImageFilename
+                            merged.finishedAt = incoming.finishedAt ?? existing.finishedAt
+                            try merged.update(db)
                         }
                     } else {
                         try incoming.insert(db, onConflict: .ignore)
@@ -223,6 +235,11 @@ extension SyncEngine {
 
             // ── AI conversations (additive, never deleted) ─────────────────
             case CKRecordType.aiConversation:
+                // Dormant while the AI Companion is not user-facing. Note this
+                // path is also broken as written: it inserts paragraphID 0,
+                // which violates the NOT NULL FK to paragraphs, so INSERT OR
+                // IGNORE drops the row. Fix before re-enabling the feature.
+                guard FeatureFlags.aiCompanionEnabled else { return }
                 guard let incoming = AIThread.from(ckRecord: r) else { return }
                 try await DatabaseManager.shared.dbQueue.write { db in
                     let exists = try Row.fetchOne(db,

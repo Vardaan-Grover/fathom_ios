@@ -51,6 +51,10 @@ extension Book {
         r.set("estimatedPageCount",        estimatedPageCount as? CKRecordValue)
         r.set("estimatedReadingTimeMinutes", estimatedReadingTimeMinutes as? CKRecordValue)
         r.set("lastReadAt",                lastReadAt as? CKRecordValue)
+        r.set("rating",                    rating as? CKRecordValue)
+        r.set("reflection",                reflection as? CKRecordValue)
+        r.set("reflectionImageFilename",   reflectionImageFilename as? CKRecordValue)
+        r.set("finishedAt",                finishedAt as? CKRecordValue)
         r["modifiedAt"]                  = modifiedAt as CKRecordValue
         return r
     }
@@ -88,6 +92,10 @@ extension Book {
             estimatedPageCount: r["estimatedPageCount"] as? Int,
             estimatedReadingTimeMinutes: r["estimatedReadingTimeMinutes"] as? Int,
             lastReadAt: r["lastReadAt"] as? Date,
+            rating: r["rating"] as? Int,
+            reflection: r["reflection"] as? String,
+            reflectionImageFilename: r["reflectionImageFilename"] as? String,
+            finishedAt: r["finishedAt"] as? Date,
             modifiedAt: modifiedAt
         )
     }

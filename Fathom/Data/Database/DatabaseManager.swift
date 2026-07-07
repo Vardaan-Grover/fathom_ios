@@ -570,6 +570,24 @@ final class DatabaseManager {
                 """)
         }
 
+        // v26 — AI Companion is dormant (kept in codebase, not user-facing).
+        // Live chats are stored in ai_threads.json (AIThreadStore), so the
+        // aiConversations CDC triggers only queued rows that could never be
+        // pushed with real data. Drop the triggers and purge queued entries.
+        // Recreate the triggers in a future migration if the feature ships.
+        migrator.registerMigration("v26_disable_ai_conversation_sync") { db in
+            for trigger in [
+                "aiConversations_ck_insert",
+                "aiConversations_ck_update",
+                "aiConversations_ck_delete",
+                "aiMessages_ck_insert",
+            ] {
+                try db.execute(sql: "DROP TRIGGER IF EXISTS \(trigger)")
+            }
+            try db.execute(
+                sql: "DELETE FROM cloudkit_pending_changes WHERE recordType = 'AIConversation'")
+        }
+
         return migrator
     }
 

@@ -111,6 +111,35 @@ actor SyncEngine {
         notificationTokens = [posToken, settingsToken, profileToken]
     }
 
+    // MARK: - Singleton-record save helper
+
+    /// Saves a freshly constructed record with the `.changedKeys` policy.
+    ///
+    /// `CKDatabase.save` defaults to `.ifServerRecordUnchanged`, and a record
+    /// built from scratch carries no server change tag — so once the record
+    /// exists on the server, every subsequent save fails with
+    /// `serverRecordChanged`. Reading position, reader settings, and user
+    /// profile are last-write-wins singletons (conflicts are resolved by
+    /// comparing timestamps on pull), so overwriting server keys is correct.
+    private func saveOverwriting(_ record: CKRecord) async throws {
+        let op = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
+        op.savePolicy = .changedKeys
+        var recordError: Error?
+        op.perRecordSaveBlock = { _, result in
+            if case .failure(let e) = result { recordError = e }
+        }
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            op.modifyRecordsResultBlock = { result in
+                switch result {
+                case .success: cont.resume()
+                case .failure(let e): cont.resume(throwing: e)
+                }
+            }
+            self.database.add(op)
+        }
+        if let recordError { throw recordError }
+    }
+
     // MARK: - Reading position push
 
     func pushReadingPosition(bookID: UUID) async {
@@ -125,7 +154,7 @@ actor SyncEngine {
         r["savedAt"]     = (ReadingStateStore.shared.savedAt(forBookID: bookID) ?? Date()) as CKRecordValue
 
         do {
-            _ = try await database.save(r)
+            try await saveOverwriting(r)
             AppLogger.log(tag: "SyncEngine", "Reading position pushed for book \(bookID)")
         } catch {
             AppLogger.log(tag: "SyncEngine", "Reading position push failed: \(error)")
@@ -147,7 +176,7 @@ actor SyncEngine {
         r["modifiedAt"]   = modifiedAt as CKRecordValue
 
         do {
-            _ = try await database.save(r)
+            try await saveOverwriting(r)
             AppLogger.log(tag: "SyncEngine", "Reader settings pushed")
         } catch {
             AppLogger.log(tag: "SyncEngine", "Reader settings push failed: \(error)")
@@ -170,7 +199,7 @@ actor SyncEngine {
         r["modifiedAt"]     = modifiedAt as CKRecordValue
 
         do {
-            _ = try await database.save(r)
+            try await saveOverwriting(r)
             AppLogger.log(tag: "SyncEngine", "User profile pushed")
         } catch {
             AppLogger.log(tag: "SyncEngine", "User profile push failed: \(error)")
@@ -347,6 +376,11 @@ actor SyncEngine {
                     case CKRecordType.savedWord:
                         return try SavedWord.fetchAll(db: db, ids: ids, zoneID: zoneID)
                     case CKRecordType.aiConversation:
+                        // Dormant: chats currently live in ai_threads.json
+                        // (AIThreadStore), not in the aiConversations tables this
+                        // reads from. Migration v26 drops the CDC triggers; this
+                        // guard covers rows queued by older builds.
+                        guard FeatureFlags.aiCompanionEnabled else { return [] }
                         return try AIThread.fetchAll(db: db, ids: ids, zoneID: zoneID)
                     default:
                         return []

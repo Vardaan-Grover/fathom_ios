@@ -10,31 +10,37 @@ final class BookmarkStore {
 
     private init() {}
 
+    // Writes are asynchronous so callers (often on the main thread) never
+    // block on the database — observers refresh via didChangeNotification
+    // once the write commits.
+
     func add(_ bookmark: Bookmark) {
-        do {
-            try dbQueue.write { db in
-                try bookmark.insert(db)
+        dbQueue.asyncWrite({ db in
+            try bookmark.insert(db)
+        }, completion: { _, result in
+            switch result {
+            case .success:
+                Self.notifyChange(bookID: bookmark.bookID)
+            case .failure(let error):
+                AppLogger.log(tag: "BookmarkStore", "Error adding bookmark: \(error)")
             }
-            notifyChange(bookID: bookmark.bookID)
-        } catch {
-            AppLogger.log(tag: "BookmarkStore", "Error adding bookmark: \(error)")
-        }
+        })
     }
 
     func delete(id: UUID) {
-        var bookID: UUID?
-        do {
-            try dbQueue.write { db in
-                if var bookmark = try Bookmark.fetchOne(db, id: id) {
-                    bookID = bookmark.bookID
-                    bookmark.deletedAt = Date()
-                    try bookmark.update(db)
-                }
+        dbQueue.asyncWrite({ db -> UUID? in
+            guard var bookmark = try Bookmark.fetchOne(db, id: id) else { return nil }
+            bookmark.deletedAt = Date()
+            try bookmark.update(db)
+            return bookmark.bookID
+        }, completion: { _, result in
+            switch result {
+            case .success(let bookID):
+                if let bookID { Self.notifyChange(bookID: bookID) }
+            case .failure(let error):
+                AppLogger.log(tag: "BookmarkStore", "Error soft-deleting bookmark: \(error)")
             }
-            if let bookID { notifyChange(bookID: bookID) }
-        } catch {
-            AppLogger.log(tag: "BookmarkStore", "Error soft-deleting bookmark: \(error)")
-        }
+        })
     }
 
     func bookmarks(forBookID bookID: UUID) -> [Bookmark] {
@@ -96,7 +102,7 @@ final class BookmarkStore {
         }
     }
 
-    private func notifyChange(bookID: UUID) {
+    private static func notifyChange(bookID: UUID) {
         DispatchQueue.main.async {
             NotificationCenter.default.post(
                 name: Self.didChangeNotification,

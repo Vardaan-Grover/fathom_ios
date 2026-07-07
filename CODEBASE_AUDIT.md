@@ -25,6 +25,14 @@ Severity legend: 🔴 Critical (data loss / broken feature) · 🟠 High (real b
 - ✅ 1.12 Fixed: a pending import continuation is cancelled (resumed with `CancellationError`) before a new one is stored.
 - ⏭️ 1.6 Skipped (AI dormant): resumed-thread history fix deferred until the AI Companion ships; noted inline where relevant.
 
+**Phase 3 — done (2026-07-08):**
+- ✅ 3.1 Fixed: `ReadingStateStore` rewritten — in-memory cache (file read once, not per access), NSLock for main-thread/SyncEngine cross access, disk writes debounced 2 s on a background queue, sync notification fires once per flush instead of per page turn. `flush()` is called from the scenePhase handler when the app resigns active. Same treatment for `ReaderSettingsStore` (slider drags were producing a CloudKit push per tick).
+- ✅ 3.2 Fixed: `BookRepositorySQLite` and `VocabularyRepositorySQLite` use GRDB's native async `read`/`write` — no more sync-blocking `withCheckedContinuation` on the cooperative pool.
+- ✅ 3.3 Fixed (mutations): `NoteStore`/`HighlightStore`/`BookmarkStore` writes use `asyncWrite`; the `didChangeNotification` posts after commit, so UI refresh flow is unchanged and call sites didn't move. Reads stay synchronous (small per-book tables) — revisit under the Phase 4 DI/storage unification if list screens grow.
+- ✅ 3.4 Fixed: `VocabularyTabViewModel` caches decoded dictionary entries and per-word lowercase search text (invalidated on load/update/remove); `firstDefinitionSnippet` (per-word JSON decode driving the masonry layout every render) is NSCache'd keyed by id+modifiedAt.
+- ✅ 3.5 Fixed: `ReadiumNavigatorView.updateUIViewController` diffs against coordinator-held last-applied state — preferences submit only on settings change, AI highlight only on locator change, note decorations only on notesVersion change.
+- Known trade-off: a hard crash (not backgrounding) can lose up to the debounce window — ~2 s of reading position / ~1 s of settings.
+
 ---
 
 ## 1. Critical correctness bugs

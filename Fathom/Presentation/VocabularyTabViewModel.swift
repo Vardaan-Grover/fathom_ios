@@ -80,6 +80,12 @@ final class VocabularyTabViewModel: ObservableObject {
     private var expandTask: Task<Void, Never>? = nil
     private let vocabularyRepo: VocabularyRepository
 
+    // Decoding fullDictionaryJSON is far too expensive to repeat per
+    // keystroke/render (`filteredWords` is evaluated several times per body
+    // pass), so decoded entries and searchable text are cached per word.
+    private var entryCache: [UUID: DictionaryWordEntry] = [:]
+    private var searchTextCache: [UUID: String] = [:]
+
     init(vocabularyRepo: VocabularyRepository) {
         self.vocabularyRepo = vocabularyRepo
     }
@@ -98,20 +104,30 @@ final class VocabularyTabViewModel: ObservableObject {
         let query = searchQuery.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return words }
         let q = query.lowercased()
-        return words.filter { word in
-            if word.word.lowercased().contains(q) { return true }
-            if let data = word.fullDictionaryJSON,
-                let entry = try? JSONDecoder().decode(DictionaryWordEntry.self, from: data),
-                entry.entries.contains(where: {
-                    $0.senses.contains { $0.definition.lowercased().contains(q) }
-                })
-            {
-                return true
+        return words.filter { searchText(for: $0).contains(q) }
+    }
+
+    /// Lowercased haystack for search: the word itself, its definitions, book
+    /// title, and parts of speech. Built once per word and cached.
+    private func searchText(for word: SavedWord) -> String {
+        if let cached = searchTextCache[word.id] { return cached }
+        var parts: [String] = [word.word.lowercased(), word.partsOfSpeech.lowercased()]
+        if let title = word.bookTitle { parts.append(title.lowercased()) }
+        if let entry = cachedEntry(for: word) {
+            for e in entry.entries {
+                for sense in e.senses {
+                    parts.append(sense.definition.lowercased())
+                }
             }
-            if let title = word.bookTitle, title.lowercased().contains(q) { return true }
-            if word.partsOfSpeech.lowercased().contains(q) { return true }
-            return false
         }
+        let joined = parts.joined(separator: "\n")
+        searchTextCache[word.id] = joined
+        return joined
+    }
+
+    private func invalidateCaches(for id: UUID) {
+        entryCache[id] = nil
+        searchTextCache[id] = nil
     }
 
     var wordCount: Int { filteredWords.count }
@@ -133,11 +149,15 @@ final class VocabularyTabViewModel: ObservableObject {
     func load() async {
         isLoading = true
         allWords = await vocabularyRepo.listSavedWords()
+        // Word content may have changed outside this session (e.g. CloudKit pull).
+        entryCache.removeAll()
+        searchTextCache.removeAll()
         isLoading = false
     }
 
     func removeWord(_ word: SavedWord) async {
         allWords.removeAll { $0.id == word.id }
+        invalidateCaches(for: word.id)
         await vocabularyRepo.removeSavedWord(id: word.id)
     }
 
@@ -208,6 +228,7 @@ final class VocabularyTabViewModel: ObservableObject {
         if let idx = allWords.firstIndex(where: { $0.id == existing.id }) {
             allWords[idx] = updated
         }
+        invalidateCaches(for: existing.id)
         await vocabularyRepo.updateSavedWord(updated)
     }
 
@@ -298,8 +319,12 @@ final class VocabularyTabViewModel: ObservableObject {
     }
 
     func cachedEntry(for word: SavedWord) -> DictionaryWordEntry? {
-        guard let data = word.fullDictionaryJSON else { return nil }
-        return try? JSONDecoder().decode(DictionaryWordEntry.self, from: data)
+        if let hit = entryCache[word.id] { return hit }
+        guard let data = word.fullDictionaryJSON,
+              let entry = try? JSONDecoder().decode(DictionaryWordEntry.self, from: data)
+        else { return nil }
+        entryCache[word.id] = entry
+        return entry
     }
 
     // MARK: - Card Expansion

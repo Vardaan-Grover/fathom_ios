@@ -47,17 +47,31 @@ func assignMasonryColors(to words: [SavedWord]) -> [UUID: Color] {
     return result
 }
 
+// Snippets require decoding the word's dictionary JSON blob, and the masonry
+// layout asks for one per word per render pass — cache them. Keyed by
+// id + modifiedAt so an edited word gets a fresh snippet.
+private let definitionSnippetCache = NSCache<NSString, NSString>()
+
 func firstDefinitionSnippet(for word: SavedWord) -> String {
+    let key = "\(word.id.uuidString)-\(word.modifiedAt.timeIntervalSince1970)" as NSString
+    if let cached = definitionSnippetCache.object(forKey: key) {
+        return cached as String
+    }
+
+    let snippet: String
     if let data = word.fullDictionaryJSON,
         let entry = try? JSONDecoder().decode(DictionaryWordEntry.self, from: data),
         let def = entry.entries.first?.senses.first?.definition
     {
-        return def.count > 120 ? String(def.prefix(120)) + "…" : def
+        snippet = def.count > 120 ? String(def.prefix(120)) + "…" : def
+    } else if let ctx = word.contextSentence {
+        snippet = ctx.count > 120 ? String(ctx.prefix(120)) + "…" : ctx
+    } else {
+        snippet = ""
     }
-    if let ctx = word.contextSentence {
-        return ctx.count > 120 ? String(ctx.prefix(120)) + "…" : ctx
-    }
-    return ""
+
+    definitionSnippetCache.setObject(snippet as NSString, forKey: key)
+    return snippet
 }
 
 func estimatedCardHeight(for word: SavedWord) -> CGFloat {

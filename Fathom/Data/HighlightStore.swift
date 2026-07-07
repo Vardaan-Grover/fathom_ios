@@ -4,6 +4,8 @@ import GRDB
 final class HighlightStore {
     static let shared = HighlightStore()
 
+    /// Posted on the main queue after any write commits.
+    /// `object` is the affected `bookID: UUID`.
     static let didChangeNotification = Notification.Name("HighlightStore.didChange")
 
     private var dbQueue: DatabaseQueue { DatabaseManager.shared.dbQueue }
@@ -12,47 +14,53 @@ final class HighlightStore {
         migrateFromJSONIfNeeded()
     }
 
+    // Writes are asynchronous so callers (often on the main thread, e.g. the
+    // reader's edit menu) never block on the database — observers refresh via
+    // didChangeNotification once the write commits.
+
     func add(_ highlight: Highlight) {
-        do {
-            try dbQueue.write { db in
-                try highlight.insert(db)
+        dbQueue.asyncWrite({ db in
+            try highlight.insert(db)
+        }, completion: { _, result in
+            switch result {
+            case .success:
+                Self.notifyChange(bookID: highlight.bookID)
+            case .failure(let error):
+                AppLogger.log(tag: "HighlightStore", "Error adding highlight: \(error)")
             }
-            notifyChange(bookID: highlight.bookID)
-        } catch {
-            AppLogger.log(tag: "HighlightStore", "Error adding highlight: \(error)")
-        }
+        })
     }
 
     func delete(id: UUID) {
-        var bookID: UUID?
-        do {
-            try dbQueue.write { db in
-                if var highlight = try Highlight.fetchOne(db, id: id) {
-                    bookID = highlight.bookID
-                    highlight.deletedAt = Date()
-                    try highlight.update(db)
-                }
+        dbQueue.asyncWrite({ db -> UUID? in
+            guard var highlight = try Highlight.fetchOne(db, id: id) else { return nil }
+            highlight.deletedAt = Date()
+            try highlight.update(db)
+            return highlight.bookID
+        }, completion: { _, result in
+            switch result {
+            case .success(let bookID):
+                if let bookID { Self.notifyChange(bookID: bookID) }
+            case .failure(let error):
+                AppLogger.log(tag: "HighlightStore", "Error soft-deleting highlight: \(error)")
             }
-            if let bookID { notifyChange(bookID: bookID) }
-        } catch {
-            AppLogger.log(tag: "HighlightStore", "Error soft-deleting highlight: \(error)")
-        }
+        })
     }
 
     func updateColor(id: UUID, color: HighlightColor) {
-        var affectedBookID: UUID?
-        do {
-            try dbQueue.write { db in
-                if var highlight = try Highlight.fetchOne(db, id: id) {
-                    highlight.color = color
-                    try highlight.update(db)
-                    affectedBookID = highlight.bookID
-                }
+        dbQueue.asyncWrite({ db -> UUID? in
+            guard var highlight = try Highlight.fetchOne(db, id: id) else { return nil }
+            highlight.color = color
+            try highlight.update(db)
+            return highlight.bookID
+        }, completion: { _, result in
+            switch result {
+            case .success(let bookID):
+                if let bookID { Self.notifyChange(bookID: bookID) }
+            case .failure(let error):
+                AppLogger.log(tag: "HighlightStore", "Error updating highlight color: \(error)")
             }
-            if let bookID = affectedBookID { notifyChange(bookID: bookID) }
-        } catch {
-            AppLogger.log(tag: "HighlightStore", "Error updating highlight color: \(error)")
-        }
+        })
     }
 
     func highlights(forBookID bookID: UUID) -> [Highlight] {
@@ -84,7 +92,7 @@ final class HighlightStore {
         }
     }
 
-    private func notifyChange(bookID: UUID) {
+    private static func notifyChange(bookID: UUID) {
         DispatchQueue.main.async {
             NotificationCenter.default.post(
                 name: Self.didChangeNotification,

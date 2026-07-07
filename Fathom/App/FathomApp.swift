@@ -54,6 +54,11 @@ struct FathomApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
                         Task { await SyncEngine.shared.fetchChangesIfNeeded() }
+                    } else {
+                        // Positions and settings are disk-written on a debounce;
+                        // force the pending writes out before we can be killed.
+                        ReadingStateStore.shared.flush()
+                        ReaderSettingsStore.shared.flush()
                     }
                 }
             }

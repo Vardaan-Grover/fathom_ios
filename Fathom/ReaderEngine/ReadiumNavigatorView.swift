@@ -542,6 +542,14 @@ import SwiftUI
 
             weak var container: ReaderContainerViewController?
 
+            // Last-applied inputs, so updateUIViewController (which SwiftUI
+            // calls on every state change — page turns, bar toggles, …) only
+            // does work when something it owns actually changed.
+            var lastAppliedSettings: ReaderSettings?
+            var lastNotesVersion: Int?
+            var lastAIQueryLocatorJSON: String?
+            var hasAppliedAIQuery = false
+
             init(onLocationChange: @escaping (Locator) -> Void, commands: NavigatorCommands?) {
                 self.onLocationChange = onLocationChange
                 self.commands = commands
@@ -729,31 +737,48 @@ import SwiftUI
                 let navigator = container.navigator
             else { return }
 
-            let bg = ReadiumNavigator.Color(hex: settings.colorTheme.backgroundHex)
-            let fg = ReadiumNavigator.Color(hex: settings.colorTheme.foregroundHex)
+            let coordinator = context.coordinator
 
-            let fontFamily: ReadiumNavigator.FontFamily? = settings.font.cssFamily
-                .map { ReadiumNavigator.FontFamily(rawValue: $0) }
+            if coordinator.lastAppliedSettings != settings {
+                coordinator.lastAppliedSettings = settings
 
-            let preferences = EPUBPreferences(
-                backgroundColor: bg,
-                fontFamily: fontFamily,
-                fontSize: settings.fontSize,
-                fontWeight: settings.boldText ? 1.75 : nil,
-                lineHeight: settings.lineHeight,
-                pageMargins: settings.margin,
-                publisherStyles: settings.font == .original ? nil : false,
-                scroll: settings.layout == .scrolling,
-                textAlign: settings.justifyText ? .justify : .start,
-                textColor: fg
-            )
+                let bg = ReadiumNavigator.Color(hex: settings.colorTheme.backgroundHex)
+                let fg = ReadiumNavigator.Color(hex: settings.colorTheme.foregroundHex)
 
-            Task {
-                await navigator.submitPreferences(preferences)
+                let fontFamily: ReadiumNavigator.FontFamily? = settings.font.cssFamily
+                    .map { ReadiumNavigator.FontFamily(rawValue: $0) }
+
+                let preferences = EPUBPreferences(
+                    backgroundColor: bg,
+                    fontFamily: fontFamily,
+                    fontSize: settings.fontSize,
+                    fontWeight: settings.boldText ? 1.75 : nil,
+                    lineHeight: settings.lineHeight,
+                    pageMargins: settings.margin,
+                    publisherStyles: settings.font == .original ? nil : false,
+                    scroll: settings.layout == .scrolling,
+                    textAlign: settings.justifyText ? .justify : .start,
+                    textColor: fg
+                )
+
+                Task {
+                    await navigator.submitPreferences(preferences)
+                }
             }
 
-            container.applyAIQueryHighlight(locatorJSON: aiQueryLocatorJSON)
-            container.applyNoteHighlights(NoteStore.shared.notes(forBookID: bookID))
+            if !coordinator.hasAppliedAIQuery
+                || coordinator.lastAIQueryLocatorJSON != aiQueryLocatorJSON {
+                coordinator.hasAppliedAIQuery = true
+                coordinator.lastAIQueryLocatorJSON = aiQueryLocatorJSON
+                container.applyAIQueryHighlight(locatorJSON: aiQueryLocatorJSON)
+            }
+
+            // Live note edits are re-applied by the NoteStore notification
+            // observer; this only covers explicit notesVersion bumps.
+            if coordinator.lastNotesVersion != notesVersion {
+                coordinator.lastNotesVersion = notesVersion
+                container.applyNoteHighlights(NoteStore.shared.notes(forBookID: bookID))
+            }
         }
     }
 #endif

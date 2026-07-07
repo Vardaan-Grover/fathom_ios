@@ -10,22 +10,38 @@ enum BackendError: Error {
 }
 
 struct UploadURLResponse: Decodable, Sendable {
-    let upload_url: String
-    let s3_key: String
+    let uploadURL: String
+    let s3Key: String
+
+    enum CodingKeys: String, CodingKey {
+        case uploadURL = "upload_url"
+        case s3Key = "s3_key"
+    }
 }
 
 struct InitBookRequest: Encodable, Sendable {
-    let s3_key: String
+    let s3Key: String
     let title: String
     let author: String?
     let language: String
-    let content_hash: String
+    let contentHash: String
+
+    enum CodingKeys: String, CodingKey {
+        case s3Key = "s3_key"
+        case title, author, language
+        case contentHash = "content_hash"
+    }
 }
 
 struct InitBookResponse: Decodable, Sendable {
-    let book_id: UUID
+    let bookID: UUID
     let status: String
     let duplicate: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case bookID = "book_id"
+        case status, duplicate
+    }
 }
 
 struct BookPollResponse: Decodable, Sendable {
@@ -34,7 +50,12 @@ struct BookPollResponse: Decodable, Sendable {
     let author: String?
     let language: String
     let status: String
-    let created_at: String
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, author, language, status
+        case createdAt = "created_at"
+    }
 }
 
 struct ConversationMessage: Codable, Sendable {
@@ -43,9 +64,14 @@ struct ConversationMessage: Codable, Sendable {
 }
 
 struct AIQueryRequest: Encodable, Sendable {
-    let absolute_index: Int
+    let absoluteIndex: Int
     let query: String
     let messages: [ConversationMessage]
+
+    enum CodingKeys: String, CodingKey {
+        case absoluteIndex = "absolute_index"
+        case query, messages
+    }
 }
 
 struct AIQueryResponse: Decodable, Sendable {
@@ -131,8 +157,8 @@ actor BackendService {
 
     func initBook(s3Key: String, title: String, author: String?, language: String?, contentHash: String) async throws -> InitBookResponse {
         let reqBody = InitBookRequest(
-            s3_key: s3Key, title: title, author: author, language: language ?? "en",
-            content_hash: contentHash)
+            s3Key: s3Key, title: title, author: author, language: language ?? "en",
+            contentHash: contentHash)
         let body = try JSONEncoder().encode(reqBody)
         let request = try await makeRequest(path: "/books", method: "POST", body: body)
 
@@ -158,7 +184,7 @@ actor BackendService {
     }
 
     func queryBook(bookID: UUID, absoluteIndex: Int, query: String, messages: [ConversationMessage] = []) async throws -> String {
-        let reqBody = AIQueryRequest(absolute_index: absoluteIndex, query: query, messages: messages)
+        let reqBody = AIQueryRequest(absoluteIndex: absoluteIndex, query: query, messages: messages)
         let body = try JSONEncoder().encode(reqBody)
         let request = try await makeRequest(
             path: "/books/\(bookID.uuidString)/query", method: "POST", body: body)

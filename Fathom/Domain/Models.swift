@@ -76,29 +76,6 @@ struct BookCategoryMembership: Codable, FetchableRecord, PersistableRecord {
     var modifiedAt: Date = Date()
 }
 
-struct Passage: Identifiable, Equatable {
-    let id: UUID
-    let bookID: UUID
-    let chapterTitle: String?
-    let selectedText: String
-    let beforeText: String
-    let afterText: String
-}
-
-struct ContextBundle: Equatable {
-    let bookID: UUID
-    let selectedText: String
-    let localWindow: String
-    let chapterTitle: String?
-    let readingPositionHint: String?
-}
-
-struct Explanation: Equatable {
-    let output: String
-    let model: String
-    let cached: Bool
-}
-
 enum ReaderColorTheme: Int, Codable, CaseIterable {
     case parchment = 0
     case night     = 1

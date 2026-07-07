@@ -170,7 +170,6 @@ struct ClassicLibraryView: View {
     }
   }
 
-
     // MARK: collectionsRow
   private var collectionsRow: some View {
     NavigationLink {

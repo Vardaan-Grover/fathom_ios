@@ -5,7 +5,7 @@ struct ImageGradient: View {
     var image: UIImage?
     var count: Int = 2
     var animation: Animation? = .none
-    var onFinished: ([Color]) -> () = { _ in }
+    var onFinished: ([Color]) -> Void = { _ in }
     @State private var colors: [Color] = []
 
     var body: some View {

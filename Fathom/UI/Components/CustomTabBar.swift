@@ -70,9 +70,6 @@ struct CustomTabBar<TabItemView: View>: UIViewRepresentable {
     let homeVM = HomeViewModel(bookRepository: container.bookRepo, categoryRepository: container.categoryRepo)
     let libraryVM = LibraryViewModel(
         bookRepo: container.bookRepo,
-        readerService: container.readerService,
-        contextEngine: container.contextEngine,
-        aiClient: container.aiClient,
         preprocessingCoordinator: container.preprocessingCoordinator
     )
     RootView(homeViewModel: homeVM, libraryViewModel: libraryVM, bookRepository: container.bookRepo, vocabularyRepo: container.vocabularyRepo)

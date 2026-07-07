@@ -81,7 +81,7 @@ final class BookDetailsViewModel: ObservableObject {
             // Flow C: same upload/register flow as Flow B, from book settings.
             let uploadInfo = try await backendService.getUploadURL(filename: localURL.lastPathComponent)
             let response = try await backendService.initBook(
-                s3Key: uploadInfo.s3_key,
+                s3Key: uploadInfo.s3Key,
                 title: current.title,
                 author: current.author,
                 language: current.language,
@@ -89,21 +89,21 @@ final class BookDetailsViewModel: ObservableObject {
             )
 
             current.aiEnabled = true
-            current.backendBookID = response.book_id
+            current.backendBookID = response.bookID
 
             if response.duplicate {
                 switch response.status {
                 case "ready":
                     current.preprocessingStatus = .completed
                 case "failed":
-                    try await backendService.startIngestion(bookID: response.book_id)
+                    try await backendService.startIngestion(bookID: response.bookID)
                     current.preprocessingStatus = .inProgress
                 default:
                     current.preprocessingStatus = .inProgress
                 }
             } else {
-                try await backendService.uploadEPUB(uploadURL: uploadInfo.upload_url, fileURL: localURL)
-                try await backendService.startIngestion(bookID: response.book_id)
+                try await backendService.uploadEPUB(uploadURL: uploadInfo.uploadURL, fileURL: localURL)
+                try await backendService.startIngestion(bookID: response.bookID)
                 current.preprocessingStatus = .inProgress
             }
 
@@ -113,7 +113,7 @@ final class BookDetailsViewModel: ObservableObject {
             if current.preprocessingStatus == .inProgress {
                 while true {
                     try await Task.sleep(nanoseconds: 3_000_000_000)
-                    let pollResponse = try await backendService.pollProcessingStatus(bookID: response.book_id)
+                    let pollResponse = try await backendService.pollProcessingStatus(bookID: response.bookID)
                     switch pollResponse.status {
                     case "ready":
                         current.preprocessingStatus = .completed

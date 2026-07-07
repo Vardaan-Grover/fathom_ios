@@ -154,7 +154,7 @@ final class ICloudDownloadMonitor: ObservableObject {
             // and this call.  Check the filesystem as a final safety net.
             if let url = ICloudFileStore.shared.bookURL(for: filename) {
                 var isDownloaded: AnyObject?
-                let _ = try? (url as NSURL).getResourceValue(&isDownloaded,
+                _ = try? (url as NSURL).getResourceValue(&isDownloaded,
                     forKey: .ubiquitousItemDownloadingStatusKey)
                 if let status = isDownloaded as? String,
                    status == URLUbiquitousItemDownloadingStatus.current.rawValue {

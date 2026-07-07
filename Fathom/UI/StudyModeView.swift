@@ -253,12 +253,16 @@ private struct StudyPromptView: View {
     private func buildBlankText(from text: String) -> Text {
         let parts = text.components(separatedBy: "________")
         guard parts.count >= 2 else { return Text(text) }
+        // SwiftUI.Text supports `+` but not `+=`, so the shorthand rule's
+        // suggestion would not compile here.
         var result = Text(parts[0])
+        // swiftlint:disable:next shorthand_operator
         result = result + Text("________")
             .foregroundColor(Color.accentColor)
             .underline()
             .bold()
         for i in 1..<parts.count {
+            // swiftlint:disable:next shorthand_operator
             result = result + Text(parts[i])
         }
         return result

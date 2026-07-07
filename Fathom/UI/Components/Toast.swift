@@ -13,7 +13,7 @@ struct ToastRootView<Content: View>: View {
         .overlay(alignment: .bottom) {
             Group {
                 if let activeToast {
-                    ToastView(activeToast)
+                    toastView(activeToast)
                 }
             }
             .opacity(activeToast == nil ? 0 : 1)
@@ -24,7 +24,6 @@ struct ToastRootView<Content: View>: View {
                 if activeToast != nil {
                     activeToast = nil
                 }
-
 
             } completion: {
                 toastDismissWorkItem?.cancel()
@@ -50,7 +49,7 @@ struct ToastRootView<Content: View>: View {
     }
 
     @ViewBuilder
-    private func ToastView(_ toast: Toast) -> some View {
+    private func toastView(_ toast: Toast) -> some View {
         HStack(spacing: 10) {
             if let symbol = toast.symbol {
                 Image(systemName: symbol)
@@ -123,8 +122,8 @@ struct Toast: Identifiable {
 }
 
 extension EnvironmentValues {
-    @Entry var showToast: (Toast) -> () = { _ in }
-    @Entry var dismissToast: () -> () = {  }
+    @Entry var showToast: (Toast) -> Void = { _ in }
+    @Entry var dismissToast: () -> Void = {  }
 }
 
 private extension View {

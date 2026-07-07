@@ -1,8 +1,15 @@
-Readora/readora.sqlite
-Readora.xcodeproj/project.xcworkspace/xcuserdata/
-Readora.xcodeproj/xcuserdata/
+# Xcode user state
+Fathom.xcodeproj/project.xcworkspace/xcuserdata/
+Fathom.xcodeproj/xcuserdata/
 *.xcuserstate
+
+# Build artifacts
 .build
-.claude
+DerivedData/
+
+# Instruments traces
 *.trace
 *.trace.gz
+
+# Tooling
+.claude

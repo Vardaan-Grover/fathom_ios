@@ -13,10 +13,22 @@
 		935ACFCA2F5A1954004C6F3F /* ReadiumAdapterGCDWebServer in Frameworks */ = {isa = PBXBuildFile; productRef = 935ACFC92F5A1954004C6F3F /* ReadiumAdapterGCDWebServer */; };
 		938A27162F646CB4007716BC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 938A27152F646CB4007716BC /* GRDB */; };
 		93CE40E22FA7590A00EAEFAB /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = 93CE40E12FA7590A00EAEFAB /* Auth */; };
+		FA7E570BAA000000000A000B /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = FA7E570AAA000000000A000A /* GRDB */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		93DD53232FFDC2A30090659C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 935ACF442F597EE8004C6F3F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 935ACF4B2F597EE8004C6F3F;
+			remoteInfo = Fathom;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		935ACF4C2F597EE8004C6F3F /* Fathom.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fathom.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FA7E5701AA0000000000A001 /* FathomTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FathomTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -38,6 +50,11 @@
 			path = Fathom;
 			sourceTree = "<group>";
 		};
+		FA7E5702AA0000000000A002 /* FathomTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FathomTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,6 +71,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FA7E5706AA0000000000A006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FA7E570BAA000000000A000B /* GRDB in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -61,6 +86,7 @@
 			isa = PBXGroup;
 			children = (
 				935ACF4E2F597EE8004C6F3F /* Fathom */,
+				FA7E5702AA0000000000A002 /* FathomTests */,
 				935ACFC82F5A1954004C6F3F /* Frameworks */,
 				935ACF4D2F597EE8004C6F3F /* Products */,
 			);
@@ -70,6 +96,7 @@
 			isa = PBXGroup;
 			children = (
 				935ACF4C2F597EE8004C6F3F /* Fathom.app */,
+				FA7E5701AA0000000000A001 /* FathomTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -88,6 +115,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 935ACF572F597EE9004C6F3F /* Build configuration list for PBXNativeTarget "Fathom" */;
 			buildPhases = (
+				FA7E570CAA000000000A000C /* SwiftLint */,
 				935ACF482F597EE8004C6F3F /* Sources */,
 				935ACF492F597EE8004C6F3F /* Frameworks */,
 				935ACF4A2F597EE8004C6F3F /* Resources */,
@@ -112,6 +140,29 @@
 			productReference = 935ACF4C2F597EE8004C6F3F /* Fathom.app */;
 			productType = "com.apple.product-type.application";
 		};
+		FA7E5703AA0000000000A003 /* FathomTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FA7E5704AA0000000000A004 /* Build configuration list for PBXNativeTarget "FathomTests" */;
+			buildPhases = (
+				FA7E5705AA0000000000A005 /* Sources */,
+				FA7E5706AA0000000000A006 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FA7E5707AA0000000000A007 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				FA7E5702AA0000000000A002 /* FathomTests */,
+			);
+			name = FathomTests;
+			packageProductDependencies = (
+				FA7E570AAA000000000A000A /* GRDB */,
+			);
+			productName = FathomTests;
+			productReference = FA7E5701AA0000000000A001 /* FathomTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -124,6 +175,10 @@
 				TargetAttributes = {
 					935ACF4B2F597EE8004C6F3F = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					FA7E5703AA0000000000A003 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = 935ACF4B2F597EE8004C6F3F;
 					};
 				};
 			};
@@ -147,6 +202,7 @@
 			projectRoot = "";
 			targets = (
 				935ACF4B2F597EE8004C6F3F /* Fathom */,
+				FA7E5703AA0000000000A003 /* FathomTests */,
 			);
 		};
 /* End PBXProject section */
@@ -161,6 +217,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		FA7E570CAA000000000A000C /* SwiftLint */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = SwiftLint;
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Homebrew on Apple Silicon is not on Xcode's PATH by default.\nif command -v swiftlint >/dev/null 2>&1; then\n  swiftlint\nelif [ -x /opt/homebrew/bin/swiftlint ]; then\n  /opt/homebrew/bin/swiftlint\nelse\n  echo \"warning: SwiftLint not installed — brew install swiftlint\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		935ACF482F597EE8004C6F3F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -169,7 +247,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FA7E5705AA0000000000A005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		FA7E5707AA0000000000A007 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 935ACF4B2F597EE8004C6F3F /* Fathom */;
+			targetProxy = 93DD53232FFDC2A30090659C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		935ACF552F597EE9004C6F3F /* Debug */ = {
@@ -300,6 +393,7 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Fathom/Info.plist;
@@ -350,6 +444,7 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Fathom/Info.plist;
@@ -387,6 +482,54 @@
 			};
 			name = Release;
 		};
+		FA7E5708AA0000000000A008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = D8B7HB9L2J;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.Vardaan.FathomTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Fathom.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Fathom";
+			};
+			name = Debug;
+		};
+		FA7E5709AA0000000000A009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = D8B7HB9L2J;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.Vardaan.FathomTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Fathom.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Fathom";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -404,6 +547,15 @@
 			buildConfigurations = (
 				935ACF582F597EE9004C6F3F /* Debug */,
 				935ACF592F597EE9004C6F3F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FA7E5704AA0000000000A004 /* Build configuration list for PBXNativeTarget "FathomTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA7E5708AA0000000000A008 /* Debug */,
+				FA7E5709AA0000000000A009 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -467,6 +619,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 93CE40E02FA7590A00EAEFAB /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Auth;
+		};
+		FA7E570AAA000000000A000A /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 938A27142F646CB4007716BC /* XCRemoteSwiftPackageReference "GRDB" */;
+			productName = GRDB;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

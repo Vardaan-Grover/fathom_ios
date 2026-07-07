@@ -12,7 +12,7 @@ struct ScrollHeroContentView: View {
                         SourceHeroEffectScrollView(
                             config: $config, namespace: namespace, data: sceneric, id: \.id
                         ) { item in
-                            ImageView(item)
+                            imageView(item)
                                 .onTapGesture {
                                     if let index = sceneric.firstIndex(where: { $0.id == item.id })
                                     {
@@ -31,7 +31,7 @@ struct ScrollHeroContentView: View {
                         SourceHeroEffectScrollView(
                             config: $config1, namespace: namespace, data: illustrations, id: \.id
                         ) { item in
-                            ImageView(item)
+                            imageView(item)
                                 .onTapGesture {
                                     if let index = illustrations.firstIndex(where: {
                                         $0.id == item.id
@@ -74,7 +74,7 @@ struct ScrollHeroContentView: View {
 
     /// Image View
     @ViewBuilder
-    func ImageView(_ item: Photo) -> some View {
+    func imageView(_ item: Photo) -> some View {
         Rectangle()
             .foregroundStyle(.clear)
             .overlay {
@@ -118,7 +118,7 @@ struct DetailItemView: View {
             .padding(15)
         }
         .safeAreaInset(edge: .bottom) {
-            BottomBar()
+            bottomBar()
                 .opacity(opacity)
         }
         .overlay(alignment: .topTrailing) {
@@ -139,7 +139,7 @@ struct DetailItemView: View {
 
     /// Custom Buttom bar
     @ViewBuilder
-    func BottomBar() -> some View {
+    func bottomBar() -> some View {
         HStack(spacing: 10) {
             Button {
 

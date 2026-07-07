@@ -57,8 +57,7 @@ struct MonthGardenView: View {
         .gesture(
             DragGesture(minimumDistance: 40)
                 .onEnded { value in
-                    if value.translation.width < -40 { step(1) }
-                    else if value.translation.width > 40 { step(-1) }
+                    if value.translation.width < -40 { step(1) } else if value.translation.width > 40 { step(-1) }
                 }
         )
         .onChange(of: revealTrigger) { _, _ in playReveal() }

@@ -14,22 +14,13 @@ final class LibraryViewModel: ObservableObject {
     private var pendingLocalURL: URL?
 
     private let bookRepo: BookRepository
-    private let readerService: ReaderService
-    private let contextEngine: ContextEngine
-    private let aiClient: AIClient
     private let preprocessingCoordinator: BookPreprocessingCoordinator
 
     init(
         bookRepo: BookRepository,
-        readerService: ReaderService,
-        contextEngine: ContextEngine,
-        aiClient: AIClient,
         preprocessingCoordinator: BookPreprocessingCoordinator
     ) {
         self.bookRepo = bookRepo
-        self.readerService = readerService
-        self.contextEngine = contextEngine
-        self.aiClient = aiClient
         self.preprocessingCoordinator = preprocessingCoordinator
     }
 
@@ -49,16 +40,6 @@ final class LibraryViewModel: ObservableObject {
                 await preprocessingCoordinator.preprocess(book: book)
             }
         }
-    }
-
-    func openBook(_ book: Book) async -> ReaderViewModel {
-        let passage = await readerService.openSamplePassage(for: book)
-
-        return ReaderViewModel(
-            passage: passage,
-            contextEngine: contextEngine,
-            aiClient: aiClient
-        )
     }
 
     enum ImportError: Error, LocalizedError {
@@ -172,7 +153,7 @@ final class LibraryViewModel: ObservableObject {
                 AppLogger.log(tag: "LibraryViewModel", "Initializing book record on backend...")
                 // Backend always receives original EPUB metadata — user edits are local-only.
                 let backendBookResponse = try await backendService.initBook(
-                    s3Key: uploadInfo.s3_key,
+                    s3Key: uploadInfo.s3Key,
                     title: finalCustomization.originalTitle,
                     author: finalCustomization.originalAuthor,
                     language: finalCustomization.originalLanguage,
@@ -180,7 +161,7 @@ final class LibraryViewModel: ObservableObject {
                 )
 
                 book.aiEnabled = true
-                book.backendBookID = backendBookResponse.book_id
+                book.backendBookID = backendBookResponse.bookID
 
                 if backendBookResponse.duplicate {
                     switch backendBookResponse.status {
@@ -191,7 +172,7 @@ final class LibraryViewModel: ObservableObject {
                     case "failed":
                         // Branch 4: duplicate + failed → re-trigger ingestion, file already in R2.
                         AppLogger.log(tag: "LibraryViewModel", "Branch 4: duplicate + failed. Re-triggering ingestion.")
-                        try await backendService.startIngestion(bookID: backendBookResponse.book_id)
+                        try await backendService.startIngestion(bookID: backendBookResponse.bookID)
                         book.preprocessingStatus = .inProgress
                     default:
                         // Branch 2: duplicate + processing/pending → already enqueued, just poll.
@@ -201,9 +182,9 @@ final class LibraryViewModel: ObservableObject {
                 } else {
                     // Branch 3: new book → upload to R2, trigger ingestion.
                     AppLogger.log(tag: "LibraryViewModel", "Branch 3: new book. Uploading EPUB to R2...")
-                    try await backendService.uploadEPUB(uploadURL: uploadInfo.upload_url, fileURL: localURL)
+                    try await backendService.uploadEPUB(uploadURL: uploadInfo.uploadURL, fileURL: localURL)
                     AppLogger.log(tag: "LibraryViewModel", "Triggering ingestion...")
-                    try await backendService.startIngestion(bookID: backendBookResponse.book_id)
+                    try await backendService.startIngestion(bookID: backendBookResponse.bookID)
                     book.preprocessingStatus = .inProgress
                 }
             }

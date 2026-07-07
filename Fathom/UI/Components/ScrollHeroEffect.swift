@@ -42,7 +42,7 @@ where Data.Element: Identifiable {
     var id: KeyPath<Data.Element, UUID>
 
     @ViewBuilder var content: (Data.Element) -> Content
-    //View Properties
+    // View Properties
     @State private var scrollPosition:  ScrollPosition = .init()
 
     var body: some View {
@@ -69,7 +69,7 @@ where Data.Element: Identifiable {
             }
             .scrollPosition($scrollPosition)
             .scrollClipDisabled()
-            .onChange(of: config.dismissIndex) { oldValue, newValue in 
+            .onChange(of: config.dismissIndex) { _, newValue in 
                 guard let index = newValue else { return }
 
                 /// Updating Scroll Position

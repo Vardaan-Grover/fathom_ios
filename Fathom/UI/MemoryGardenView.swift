@@ -277,7 +277,7 @@ struct MemoryGardenView: View {
     /// the layer(s) actually visible are kept in the tree, so pure year/month
     /// rest states pay for one view, not two.
     private var zoomContainer: some View {
-        GeometryReader { geo in
+        GeometryReader { _ in
             ZStack {
                 // Always mounted so zooming out never re-creates it (which would
                 // reset its state and replay the whole bloom, flashing blank).

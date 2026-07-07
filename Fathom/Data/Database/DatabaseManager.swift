@@ -31,7 +31,9 @@ final class DatabaseManager {
         try Self.makeMigrator().migrate(dbQueue)
     }
 
-    private static func makeMigrator() -> DatabaseMigrator {
+    // Internal (not private) so FathomTests can run the full migration chain
+    // against an in-memory database.
+    static func makeMigrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
         migrator.registerMigration("v1_create_narrative_graph_schema") { db in

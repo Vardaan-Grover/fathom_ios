@@ -1,0 +1,38 @@
+# SwiftLint configuration for Fathom.
+#
+# Philosophy: correctness signals stay on; pure-style rules that would bury
+# real warnings under hundreds of legacy-format violations are disabled until
+# a dedicated formatting pass. Tighten incrementally — remove entries from
+# disabled_rules as areas get cleaned up.
+
+excluded:
+  - .build
+  - .claude
+  - DerivedData
+
+disabled_rules:
+  # Style noise — revisit with a swiftformat pass.
+  - trailing_whitespace
+  - redundant_optional_initialization
+  - comma
+  - colon
+  - opening_brace
+  - trailing_comma
+  - multiple_closures_with_trailing_closure
+  - line_length
+  # Size heuristics — the audit tracks oversized files/functions instead.
+  - file_length
+  - function_body_length
+  - type_body_length
+  - cyclomatic_complexity
+  - todo
+
+identifier_name:
+  min_length: 1        # db, fg, bg, r … are idiomatic in GRDB/UI code
+  max_length: 60
+
+large_tuple:
+  warning: 4
+
+function_parameter_count:
+  warning: 8

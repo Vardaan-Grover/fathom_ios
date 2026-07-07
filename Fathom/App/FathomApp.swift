@@ -21,9 +21,6 @@ struct FathomApp: App {
         ))
         _libraryViewModel = StateObject(wrappedValue: LibraryViewModel(
             bookRepo: container.bookRepo,
-            readerService: container.readerService,
-            contextEngine: container.contextEngine,
-            aiClient: container.aiClient,
             preprocessingCoordinator: container.preprocessingCoordinator
         ))
     }

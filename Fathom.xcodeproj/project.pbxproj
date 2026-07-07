@@ -291,7 +291,7 @@
 		935ACF582F597EE9004C6F3F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = FathomIcon3;
+				ASSETCATALOG_COMPILER_APPICON_NAME = FathomIcon4;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
@@ -304,6 +304,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Fathom/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Fathom;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = NO;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -340,7 +341,7 @@
 		935ACF592F597EE9004C6F3F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = FathomIcon3;
+				ASSETCATALOG_COMPILER_APPICON_NAME = FathomIcon4;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
@@ -353,6 +354,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Fathom/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Fathom;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = NO;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -411,10 +413,10 @@
 /* Begin XCRemoteSwiftPackageReference section */
 		935ACF8E2F5A0A0D004C6F3F /* XCRemoteSwiftPackageReference "swift-toolkit" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/readium/swift-toolkit.git";
+			repositoryURL = "https://github.com/Vardaan-Grover/swift-toolkit.git";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 3.7.0;
+				branch = "fathom-highlight-anchor-fix";
+				kind = branch;
 			};
 		};
 		938A27142F646CB4007716BC /* XCRemoteSwiftPackageReference "GRDB" */ = {

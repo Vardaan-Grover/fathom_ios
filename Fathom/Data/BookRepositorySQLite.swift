@@ -145,4 +145,18 @@ final actor BookRepositorySQLite: BookRepository {
             }
         }
     }
+
+    func deleteAllReadingActivity(forYear year: Int) async {
+        await withCheckedContinuation { continuation in
+            do {
+                try dbQueue.write { db in
+                    try db.execute(sql: "DELETE FROM readingActivity WHERE date LIKE ?", arguments: ["\(year)-%"])
+                }
+                continuation.resume()
+            } catch {
+                AppLogger.logError(tag: "BookRepository", error)
+                continuation.resume()
+            }
+        }
+    }
 }

@@ -628,7 +628,7 @@ struct WordSharePreviewSheet: View {
             .environment(\.colorScheme, .light)
         let renderer = ImageRenderer(content: card)
         renderer.proposedSize = ProposedViewSize(width: 500, height: 500)
-        renderer.scale = 3.0
+        renderer.scale = 2.5
         renderedImage = renderer.uiImage
     }
 }

@@ -8,6 +8,7 @@ struct NewShelfSheet: View {
 
     @State private var name: String
     @State private var selectedColorHex: String
+    @State private var showNameError = false
     @FocusState private var nameFocused: Bool
 
     var isNameEmpty: Bool {
@@ -43,19 +44,42 @@ struct NewShelfSheet: View {
                 .font(.title2.bold())
                 .padding(.top, 24)
 
-            TextField("e.g. Favourites, To Read…", text: $name)
-                .font(.body)
-                .focused($nameFocused)
-                .submitLabel(.done)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 13)
-                .background(Color(.systemFill), in: RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 6) {
+                TextField("e.g. Favourites, To Read…", text: $name)
+                    .font(.body)
+                    .focused($nameFocused)
+                    .submitLabel(.done)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 13)
+                    .background(Color(.systemFill), in: RoundedRectangle(cornerRadius: 12))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.red, lineWidth: 1.5)
+                            .opacity(showNameError ? 1 : 0)
+                    }
+                    .onChange(of: name) { _, _ in
+                        if showNameError { showNameError = false }
+                    }
+
+                if showNameError {
+                    Text("Please enter a name for your shelf")
+                        .font(.caption)
+                        .foregroundStyle(Color.red)
+                }
+            }
+            .animation(.easeInOut(duration: 0.15), value: showNameError)
 
             ShelfColorPicker(selectedHex: $selectedColorHex).equatable()
 
             Spacer()
+                .frame(maxHeight: showNameError ? 12 : 40)
 
             ShelfCreateButton(isEmpty: isNameEmpty, selectedHex: selectedColorHex, isEditing: isEditing) {
+                if isNameEmpty {
+                    showNameError = true
+                    nameFocused = true
+                    return
+                }
                 onCommit(name.trimmingCharacters(in: .whitespaces), selectedColorHex)
                 dismiss()
             }
@@ -147,7 +171,6 @@ private struct ShelfCreateButton: View {
             .foregroundStyle(isEmpty ? Color.secondary : Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 14))
         }
-        .disabled(isEmpty)
         .animation(.easeInOut(duration: 0.15), value: selectedHex)
         .animation(.easeInOut(duration: 0.15), value: isEmpty)
     }

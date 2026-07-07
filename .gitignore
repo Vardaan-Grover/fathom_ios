@@ -4,3 +4,5 @@ Readora.xcodeproj/xcuserdata/
 *.xcuserstate
 .build
 .claude
+*.trace
+*.trace.gz

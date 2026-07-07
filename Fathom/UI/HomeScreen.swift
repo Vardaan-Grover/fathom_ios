@@ -26,13 +26,19 @@ struct HomeScreen: View {
     // after the dissolve completes, creating a two-phase deletion.
     @State private var removingCategoryIDs: Set<UUID> = []
 
+    @AppStorage("fathom.home.showRecentlyRead") private var showRecentlyRead = true
+
+    // The observatory entry point into the Memory Garden.
+    @State private var showMemoryGarden = false
+    @State private var observatoryRefresh = 0
+
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: theme.layout.sectionSpacing) {
 
                 pageHeader
                     .padding(.horizontal, theme.layout.horizontalPadding)
-                    .padding(.top, 40)
+                    .padding(.top, 12)
 
                 Divider()
                     .padding(.horizontal, 20)
@@ -41,7 +47,7 @@ struct HomeScreen: View {
                     ProgressView()
                         .padding(.top, 60)
                 } else {
-                    if let recentBook = viewModel.recentBook {
+                    if showRecentlyRead, let recentBook = viewModel.recentBook {
                         RecentlyReadTile(
                             book: recentBook,
                             progress: viewModel.recentBookProgress,
@@ -54,6 +60,15 @@ struct HomeScreen: View {
                             }
                         )
                         .padding(.horizontal, 20)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                    showRecentlyRead = false
+                                }
+                            } label: {
+                                Label("Hide Recently Read", systemImage: "eye.slash")
+                            }
+                        }
                     }
 
                     let userShelves = viewModel.categories.filter { !$0.shelfColorHex.isEmpty }
@@ -99,6 +114,9 @@ struct HomeScreen: View {
                                     viewModel.toggleBookInCategory(
                                         bookID: bookID, categoryID: categoryID)
                                 }
+                            },
+                            onCreateShelf: { name, colorHex in
+                                viewModel.createCategory(name: name, colorHex: colorHex)
                             },
                             onEditBook: { bookID in
                                 Task { @MainActor in
@@ -286,7 +304,8 @@ struct HomeScreen: View {
                     coverImageData: coverData,
                     originalTitle: book.title,
                     originalAuthor: book.author,
-                    originalLanguage: book.language
+                    originalLanguage: book.language,
+                    epubURL: book.localURL
                 ),
                 isEditing: true,
                 onConfirm: { edited in
@@ -380,7 +399,16 @@ struct HomeScreen: View {
             } else {
                 // Reload after reader dismissal so progress reflects latest position.
                 Task { await viewModel.load() }
+                // (The observatory refreshes itself via .fathomReadingSessionLogged,
+                // which fires *after* the session write commits — no race.)
             }
+        }
+        .fullScreenCover(isPresented: $showMemoryGarden) {
+            MemoryGardenView(bookRepository: bookRepository)
+        }
+        .onChange(of: showMemoryGarden) { _, isOpen in
+            // Refresh when returning from the garden (a reveal may have happened).
+            if !isOpen { observatoryRefresh &+= 1 }
         }
         .onReceive(NotificationCenter.default.publisher(for: .homeScreenOpenReader)) { note in
             guard let bookID = note.userInfo?["bookID"] as? UUID else { return }
@@ -391,6 +419,9 @@ struct HomeScreen: View {
                 else { return }
                 await MainActor.run { readerBook = book }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .dismissReader)) { _ in
+            readerBook = nil
         }
         .fullScreenCover(item: $bookToMarkFinished) { book in
             BookCompletionScreen(book: book, bookRepository: bookRepository)
@@ -420,16 +451,14 @@ struct HomeScreen: View {
 
     // MARK: - Page Header
     private var pageHeader: some View {
-        VStack(spacing: 0) {
-            Text("My Favourite")
-                .font(theme.typography.subheadline)
-                .foregroundColor(theme.colors.primary)
-                .tracking(0.05)
-            Text("BOOKS")
-                .font(theme.typography.displaySerif)
-                .tracking(0.5)
+        HStack(alignment: .center) {
+            Text("Fathom")
+                .font(.system(size: 34, weight: .bold, design: .serif))
+            Spacer(minLength: 12)
+            ObservatoryView(bookRepository: bookRepository, refreshTrigger: observatoryRefresh) {
+                showMemoryGarden = true
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .center)
     }
 }
 

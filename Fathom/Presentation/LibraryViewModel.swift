@@ -8,6 +8,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var books: [Book] = []
     @Published var isLoading = false
     @Published var pendingCustomization: BookCustomization? = nil
+    @Published var pendingIncomingURL: URL? = nil
 
     private var importContinuation: CheckedContinuation<BookCustomization, Error>?
     private var pendingLocalURL: URL?
@@ -223,6 +224,10 @@ final class LibraryViewModel: ObservableObject {
     func confirmImport(with customization: BookCustomization) {
         importContinuation?.resume(returning: customization)
         importContinuation = nil
+    }
+
+    func handleIncomingEPUB(_ url: URL) {
+        pendingIncomingURL = url
     }
 
     func cancelImport() {

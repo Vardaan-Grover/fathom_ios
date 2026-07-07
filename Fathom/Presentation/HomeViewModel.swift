@@ -76,17 +76,19 @@ class HomeViewModel: ObservableObject {
     // Synchronous optimistic updates — callers can wrap these in withAnimation directly.
     // Each fires a background Task to persist; no load() needed.
 
-    func createCategory(name: String, colorHex: String) {
+    @discardableResult
+    func createCategory(name: String, colorHex: String) -> HomeCategory? {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return nil }
         let record = BookCategory(
             id: UUID(), name: trimmed, shelfColorHex: colorHex, createdAt: Date())
-        categories.append(
-            HomeCategory(
-                id: record.id, name: trimmed, books: [],
-                shelfColor: Color(hex: colorHex), shelfColorHex: colorHex
-            ))
+        let category = HomeCategory(
+            id: record.id, name: trimmed, books: [],
+            shelfColor: Color(hex: colorHex), shelfColorHex: colorHex
+        )
+        categories.append(category)
         Task { await categoryRepository.addCategory(record) }
+        return category
     }
 
     func updateCategory(id: UUID, name: String, colorHex: String) {

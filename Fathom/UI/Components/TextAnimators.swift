@@ -25,7 +25,7 @@ struct StreamingTextRenderer: TextRenderer, Animatable {
         }
 
         let totalCount = max(Double(allSlices.count), 1.0)
-        let currentTargetIndex = progress * (totalCount + 3.0)
+        let currentTargetIndex = progress * (totalCount + 2.5)
 
         for (index, slice) in allSlices.enumerated() {
             var copy = ctx
@@ -35,11 +35,11 @@ struct StreamingTextRenderer: TextRenderer, Animatable {
                 // Determine how close we are to the leading edge (the cursor)
                 let distanceToEdge = currentTargetIndex - sliceDoubleIndex
 
-                if distanceToEdge < 3.0 {  // Affect the latest 3 slices
-                    let intensity = 1.0 - (distanceToEdge / 3.0)
+                if distanceToEdge < 2.5 {  // Affect the latest 3 slices
+                    let intensity = 1.0 - (distanceToEdge / 2.5)
 
                     // Pop up slightly
-                    copy.translateBy(x: 0, y: -sin(intensity * .pi) * 3.0)
+                    copy.translateBy(x: 0, y: -sin(intensity * .pi) * 2.5)
                     // Slight glow or opacity bump
                     copy.opacity = 1.0
                 } else {

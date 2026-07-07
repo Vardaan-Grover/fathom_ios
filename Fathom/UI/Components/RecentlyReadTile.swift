@@ -52,10 +52,7 @@ struct RecentlyReadTile: View {
 
     private var coverView: some View {
         Group {
-            if let filename = book.coverFilename,
-                let url = BookFileStore.coverURL(for: filename),
-                let uiImage = UIImage(contentsOfFile: url.path)
-            {
+            if let uiImage = BookFileStore.coverImage(for: book.coverFilename) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()
@@ -179,10 +176,7 @@ struct RecentlyReadTile: View {
         let coverFilename = book.coverFilename
         let coverColor = book.coverColor
         let extracted = await Task.detached(priority: .userInitiated) {
-            if let filename = coverFilename,
-                let url = BookFileStore.coverURL(for: filename),
-                let image = UIImage(contentsOfFile: url.path)
-            {
+            if let image = BookFileStore.coverImage(for: coverFilename) {
                 return extractDominantColors(from: image, count: 4)
             } else {
                 return deriveColors(from: coverColor ?? .blue)

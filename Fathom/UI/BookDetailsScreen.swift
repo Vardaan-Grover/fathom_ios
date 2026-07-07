@@ -181,7 +181,9 @@ struct BookDetailsScreen: View {
                 }
             }
 
-            aiStatusChip
+            // AI status chip / "Enable AI Reading Companion" CTA is hidden
+            // from the UI for now (kept in codebase).
+            // aiStatusChip
 
             ctaButton
         }
@@ -471,6 +473,7 @@ struct BookDetailsScreen: View {
         func logReadingSession(for bookID: UUID, duration: TimeInterval) async {}
         func listReadingActivity(forYear year: Int) async -> [ReadingActivity] { [] }
         func insertMockReadingActivity(_ activity: ReadingActivity) async {}
+        func deleteAllReadingActivity(forYear year: Int) async {}
     }
 
     #Preview {

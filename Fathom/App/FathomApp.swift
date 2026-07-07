@@ -42,7 +42,11 @@ struct FathomApp: App {
                 .task { await authService.startListening() }
                 .task { await homeViewModel.load() }
                 .onOpenURL { url in
-                    Task { try? await authService.handleDeepLink(url) }
+                    if url.isFileURL && url.pathExtension.lowercased() == "epub" {
+                        libraryViewModel.handleIncomingEPUB(url)
+                    } else {
+                        Task { try? await authService.handleDeepLink(url) }
+                    }
                 }
                 .themed(with: themeManager)
                 // Pull remote changes whenever the app comes to the foreground.

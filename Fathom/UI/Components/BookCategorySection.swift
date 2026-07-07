@@ -9,6 +9,7 @@ struct BookCategorySection: View {
     // All user-created shelves, so any book can be added to any of them.
     var userCategories: [HomeCategory] = []
     var onToggleCategoryMembership: ((UUID, UUID) -> Void)? = nil  // (bookID, categoryID)
+    var onCreateShelf: ((String, String) -> HomeCategory?)? = nil
     var onEditBook: ((UUID) -> Void)? = nil
     var onDeleteBook: ((UUID) -> Void)? = nil
     var onMarkFinished: ((UUID) -> Void)? = nil
@@ -87,6 +88,7 @@ struct BookCategorySection: View {
                             onToggleCategory: { categoryID in
                                 onToggleCategoryMembership?(book.id, categoryID)
                             },
+                            onCreateShelf: onCreateShelf,
                             onEdit: onEditBook != nil ? { onEditBook?(book.id) } : nil,
                             onDelete: onDeleteBook != nil ? { onDeleteBook?(book.id) } : nil,
                             onMarkFinished: onMarkFinished != nil ? { onMarkFinished?(book.id) } : nil

@@ -24,6 +24,10 @@ struct ProfileView: View {
     // Sign out
     @State private var showSignOutConfirm = false
 
+    @AppStorage("fathom.home.showRecentlyRead") private var showRecentlyRead = true
+    @AppStorage("fathom.home.viewStyle") private var viewStyle: HomeViewStyle = .glassShelves
+    @AppStorage("fathom.home.classic.showMetadata") private var showGridMetadata = false
+
     var body: some View {
         NavigationStack {
             List {
@@ -116,6 +120,15 @@ struct ProfileView: View {
 
     private var librarySection: some View {
         Section {
+            Toggle(isOn: $showRecentlyRead) {
+                ProfileRow(
+                    icon: "book.closed.fill",
+                    iconColor: Color(.systemOrange),
+                    title: "Recently Read Tile"
+                )
+            }
+            .tint(Color(.systemOrange))
+
             NavigationLink {
                 AllFinishedBooksScreen(bookRepository: bookRepository)
             } label: {
@@ -169,9 +182,21 @@ struct ProfileView: View {
                 ProfileRow(
                     icon: "circle.lefthalf.filled",
                     iconColor: Color(.systemPurple),
-                    title: "Appearance",
+                    title: "Theme",
                     trailing: appearanceBinding.wrappedValue.displayName
                 )
+            }
+            
+            Picker("Library Layout", selection: $viewStyle) {
+                ForEach(HomeViewStyle.allCases, id: \.self) { style in
+                    Text(style.rawValue).tag(style)
+                }
+            }
+            .pickerStyle(.menu)
+            
+            if viewStyle == .classicGrid {
+                Toggle("Show Info in Grid", isOn: $showGridMetadata)
+                    .tint(Color.accentColor)
             }
 
         } header: {
@@ -328,6 +353,13 @@ enum AppearanceMode: Hashable {
         case .dark:   "Dark"
         }
     }
+}
+
+// MARK: - HomeViewStyle
+
+enum HomeViewStyle: String, CaseIterable {
+    case glassShelves = "Glass Shelves"
+    case classicGrid = "Classic Grid"
 }
 
 // MARK: - AppearancePickerScreen

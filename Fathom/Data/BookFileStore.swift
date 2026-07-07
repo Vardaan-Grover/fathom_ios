@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// Thin compatibility shim — all real work is delegated to `ICloudFileStore`.
 ///
@@ -35,5 +36,25 @@ enum BookFileStore {
     /// Resolves the full URL for a reflection image filename.
     static func reflectionImageURL(for filename: String) -> URL? {
         ICloudFileStore.shared.reflectionImageURL(for: filename)
+    }
+
+    /// In-memory cache of decoded cover images, keyed by cover filename.
+    /// Cover art is read from disk frequently (shelf rows, recently-read tile,
+    /// reorder sheets, etc.); caching the decoded image avoids re-reading and
+    /// re-decoding from disk on every view re-render, which is a major source
+    /// of scroll jank.
+    private static let coverImageCache = NSCache<NSString, UIImage>()
+
+    /// Loads and caches the cover image for the given filename.
+    static func coverImage(for filename: String?) -> UIImage? {
+        guard let filename else { return nil }
+        let key = filename as NSString
+        if let cached = coverImageCache.object(forKey: key) {
+            return cached
+        }
+        guard let url = coverURL(for: filename), let image = UIImage(contentsOfFile: url.path)
+        else { return nil }
+        coverImageCache.setObject(image, forKey: key)
+        return image
     }
 }

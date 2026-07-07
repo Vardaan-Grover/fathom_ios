@@ -1,4 +1,12 @@
 import SwiftUI
+import UIKit
+
+private struct NoteScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
 
 struct NoteSheetView: View {
     let selectedText: String
@@ -16,7 +24,8 @@ struct NoteSheetView: View {
     @State private var selectedColor: HighlightColor
     @State private var isExpanded = false
     @State private var showDiscardAlert = false
-    @FocusState private var editorFocused: Bool
+    @State private var editorFocused = false
+    @State private var scrollOffset: CGFloat = 0
 
     private let createdAt: Date
     private let initialNoteText: String
@@ -63,6 +72,7 @@ struct NoteSheetView: View {
     }
     private var isLongText: Bool { selectedText.count > 240 }
     private var isEditMode: Bool { existingNote != nil }
+    private var isHeaderCollapsed: Bool { scrollOffset > 24 }
 
     private var hasUnsavedChanges: Bool {
         noteText != initialNoteText || selectedColor != initialColor
@@ -75,7 +85,21 @@ struct NoteSheetView: View {
             VStack(spacing: 0) {
                 header
                 Divider().overlay(fg.opacity(0.12))
-                content
+                ScrollView(.vertical, showsIndicators: false) {
+                    content
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear.preference(
+                                    key: NoteScrollOffsetKey.self,
+                                    value: geo.frame(in: .named("noteScroll")).minY
+                                )
+                            }
+                        )
+                }
+                .coordinateSpace(name: "noteScroll")
+                .onPreferenceChange(NoteScrollOffsetKey.self) { value in
+                    scrollOffset = -value
+                }
             }
         }
         .presentationDetents([.medium, .large])
@@ -123,11 +147,14 @@ struct NoteSheetView: View {
 
             VStack(alignment: .center, spacing: 2) {
                 Text(isEditMode ? "Edit Note" : "Note")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: isHeaderCollapsed ? 15 : 17, weight: .semibold))
                     .foregroundStyle(fg)
-                Text(createdAt, format: .dateTime.hour().minute())
-                    .font(.system(size: 13))
-                    .foregroundStyle(dim)
+                if !isHeaderCollapsed {
+                    Text(createdAt, format: .dateTime.hour().minute())
+                        .font(.system(size: 13))
+                        .foregroundStyle(dim)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
 
             Spacer()
@@ -145,20 +172,19 @@ struct NoteSheetView: View {
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
-        .padding(.bottom, 16)
+        .padding(.bottom, isHeaderCollapsed ? 10 : 16)
+        .animation(.easeInOut(duration: 0.2), value: isHeaderCollapsed)
     }
 
     // MARK: - Content
 
     private var content: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                quoteBlock
-                colorPicker
-                noteEditor
-            }
-            .padding(20)
+        VStack(alignment: .leading, spacing: 16) {
+            quoteBlock
+            colorPicker
+            noteEditor
         }
+        .padding(20)
     }
 
     // MARK: - Quote block
@@ -255,18 +281,23 @@ struct NoteSheetView: View {
         ZStack(alignment: .topLeading) {
             if noteText.isEmpty {
                 Text("Add a note…")
-                    .font(.system(size: 16))
+                    .font(.system(size: 16, weight: .regular, design: .serif))
                     .foregroundStyle(dim)
                     .padding(.top, 8)
                     .padding(.leading, 5)
                     .allowsHitTesting(false)
             }
-            TextEditor(text: $noteText)
-                .focused($editorFocused)
-                .font(.system(size: 16))
-                .foregroundStyle(fg)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 150, alignment: .topLeading)
+            GrowingTextEditor(
+                text: $noteText,
+                isFocused: $editorFocused,
+                font: .serif(ofSize: 16, weight: .regular),
+                textColor: UIColor(fg),
+                tintColor: UIColor(accent),
+                // No floating bottom bar here (save lives in the header), so the caret
+                // only needs a little breathing room above the keyboard.
+                caretBottomInset: 24
+            )
+            .frame(minHeight: 180, alignment: .top)
         }
     }
 

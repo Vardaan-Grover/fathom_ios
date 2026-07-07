@@ -9,6 +9,7 @@ import UIKit
 extension Notification.Name {
     static let vocabularyJumpToBook = Notification.Name("VocabularyTab.jumpToBook")
     static let homeScreenOpenReader = Notification.Name("HomeScreen.openReader")
+    static let dismissReader = Notification.Name("HomeScreen.dismissReader")
 }
 
 // MARK: - Supporting Types
@@ -78,7 +79,6 @@ final class VocabularyTabViewModel: ObservableObject {
 
     private var expandTask: Task<Void, Never>? = nil
     private let vocabularyRepo: VocabularyRepository
-    private var hasPlayedLoadHaptics = false
 
     init(vocabularyRepo: VocabularyRepository) {
         self.vocabularyRepo = vocabularyRepo
@@ -134,10 +134,6 @@ final class VocabularyTabViewModel: ObservableObject {
         isLoading = true
         allWords = await vocabularyRepo.listSavedWords()
         isLoading = false
-        if !allWords.isEmpty && !hasPlayedLoadHaptics {
-            hasPlayedLoadHaptics = true
-            fireLoadHaptics()
-        }
     }
 
     func removeWord(_ word: SavedWord) async {
@@ -237,20 +233,6 @@ final class VocabularyTabViewModel: ObservableObject {
         )
         await vocabularyRepo.addSavedWord(newWord)
         allWords.insert(newWord, at: 0)
-    }
-
-    // MARK: - Haptics
-
-    private func fireLoadHaptics() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.prepare()
-        Task { @MainActor in
-            generator.impactOccurred()
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            generator.impactOccurred()
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            generator.impactOccurred()
-        }
     }
 
     // MARK: - Question Building

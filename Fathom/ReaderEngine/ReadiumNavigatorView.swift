@@ -17,6 +17,8 @@ import SwiftUI
         var onAddNote: (@MainActor (String, String) -> Void)?
         var onEditNote: (@MainActor (UUID, String, String) -> Void)?
         var onDefine: (@MainActor (String, String, String?) -> Void)?
+        var onTranslate: (@MainActor (String) -> Void)?
+        var onSearchText: (@MainActor (String) -> Void)?
         var applySearchHighlight: (@MainActor (String) -> Void)?
     }
 
@@ -28,6 +30,8 @@ import SwiftUI
         var onAddNote: ((String, String) -> Void)?
         var onEditNote: ((UUID, String, String) -> Void)?
         var onDefine: ((String, String, String?) -> Void)?
+        var onTranslate: ((String) -> Void)?
+        var onSearchText: ((String) -> Void)?
         var bookID: UUID = UUID()
         var aiEnabled: Bool = true
         private(set) var pendingNoteID: UUID?
@@ -59,8 +63,16 @@ import SwiftUI
             pendingIsSingleWord = text.split(whereSeparator: \.isWhitespace).count == 1
             pendingNoteID = nil  // fresh selection: not a note tap
 
-            // Convert to self.view coordinates and store for targetRectFor delegate
-            lastSelectionRect = navView.convert(frame, to: view)
+            // Convert to self.view coordinates and store for targetRectFor delegate.
+            // The menu's width tracks this rect's width, so widen narrow (e.g. single-word)
+            // selections to a minimum so the segmented buttons aren't cramped.
+            var rect = navView.convert(frame, to: view)
+            let minWidth: CGFloat = 280
+            if rect.width < minWidth {
+                rect.origin.x -= (minWidth - rect.width) / 2
+                rect.size.width = minWidth
+            }
+            lastSelectionRect = rect
             presentMenu()
         }
 
@@ -155,8 +167,9 @@ import SwiftUI
                 }
             }
 
-            // Lead action: Define for single words, Ask AI for phrases.
-            let leadAction: UIAction
+            // Lead action: Define for single words. "Ask AI" for phrases is
+            // hidden from the UI for now (kept here in case it's re-enabled).
+            let leadAction: UIAction?
             if pendingIsSingleWord {
                 leadAction = UIAction(
                     title: "Define", image: UIImage(systemName: "character.book.closed")
@@ -170,31 +183,36 @@ import SwiftUI
                     onDefine?(term, locatorJSON, pendingContextSentence)
                 }
             } else {
-                leadAction = UIAction(
-                    title: "Ask AI", image: UIImage(systemName: "sparkles")
-                ) { [weak self] _ in
-                    guard let self else { return }
-                    let text = pendingText
-                    let locatorJSON = pendingLocatorJSON
-                    if !isTappingDecoration { navigator?.clearSelection() }
-                    pendingNoteID = nil
-                    pendingHighlightID = nil
-                    onExplain?(text, locatorJSON)
-                }
+                leadAction = nil
+                // let askAIAction = UIAction(
+                //     title: "Ask AI", image: UIImage(systemName: "sparkles")
+                // ) { [weak self] _ in
+                //     guard let self else { return }
+                //     let text = pendingText
+                //     let locatorJSON = pendingLocatorJSON
+                //     if !isTappingDecoration { navigator?.clearSelection() }
+                //     pendingNoteID = nil
+                //     pendingHighlightID = nil
+                //     onExplain?(text, locatorJSON)
+                // }
             }
 
-            // Primary group: visible immediately in the pill
-            let primaryGroup = UIMenu(
-                options: .displayInline,
-                children: [leadAction, highlightAction, noteAction])
-
-            // Secondary group: Copy and Share appear behind the > chevron
+            // Copy, Search, Share, Translate
             let copyAction = UIAction(
                 title: "Copy", image: UIImage(systemName: "doc.on.doc")
             ) { [weak self] _ in
                 guard let self else { return }
                 UIPasteboard.general.string = pendingText
                 navigator?.clearSelection()
+            }
+
+            let searchAction = UIAction(
+                title: "Search", image: UIImage(systemName: "doc.text.magnifyingglass")
+            ) { [weak self] _ in
+                guard let self else { return }
+                let text = pendingText
+                navigator?.clearSelection()
+                onSearchText?(text)
             }
 
             let shareAction = UIAction(
@@ -213,14 +231,44 @@ import SwiftUI
                 present(activityVC, animated: true)
             }
 
+            let translateAction = UIAction(
+                title: "Translate", image: UIImage(systemName: "translate")
+            ) { [weak self] _ in
+                guard let self else { return }
+                let text = pendingText
+                navigator?.clearSelection()
+                onTranslate?(text)
+            }
+
+            // Primary group: top 3 actions shown immediately as a segmented row.
+            // Single word  → Define, Highlight, Add Note
+            // Multi word   → Highlight, Add Note, Copy
+            let primaryActions: [UIAction]
+            if let leadAction {
+                primaryActions = [leadAction, highlightAction, noteAction]
+            } else {
+                primaryActions = [highlightAction, noteAction, copyAction]
+            }
+            let primaryGroup = UIMenu(
+                options: .displayInline,
+                children: primaryActions)
+            primaryGroup.preferredElementSize = .medium
+
+            // Secondary group: remaining actions appear behind the > chevron
+            var secondaryActions: [UIAction] = []
+            if leadAction != nil {
+                secondaryActions.append(copyAction)
+            }
+            secondaryActions.append(contentsOf: [searchAction, translateAction,shareAction])
+
             let secondaryGroup = UIMenu(
                 options: .displayInline,
-                children: [copyAction, shareAction])
+                children: secondaryActions)
 
-            // System actions (Translate, Look Up, etc.) — filter out Copy since we supply our own
+            // System actions (Look Up, etc.) — filter out Copy and Translate since we supply our own
             let systemActions = suggestedActions.filter { element in
                 guard let action = element as? UIAction else { return true }
-                return action.title != "Copy"
+                return action.title != "Copy" && action.title != "Translate"
             }
 
             return UIMenu(children: [primaryGroup, secondaryGroup] + systemActions)
@@ -578,6 +626,13 @@ import SwiftUI
             let navigator: EPUBNavigatorViewController
             do {
                 let config = EPUBNavigatorViewController.Configuration(
+                    // Readium spawns one WKWebView (backed by a separate WebKit.WebContent
+                    // process) per preloaded position. The defaults (2 before / 6 after) keep
+                    // ~8 web views warm, which dominates the app's memory coalition and makes
+                    // it a prime jetsam target under system-wide memory pressure. Trim to the
+                    // immediate neighbours — enough for smooth page turns, far less resident RAM.
+                    preloadPreviousPositionCount: 1,
+                    preloadNextPositionCount: 2,
                     decorationTemplates: HTMLDecorationTemplate.defaultTemplates(
                         lineWeight: 2,
                         cornerRadius: 5,
@@ -639,6 +694,12 @@ import SwiftUI
             }
             container.onDefine = { [commands] text, locatorJSON, contextSentence in
                 commands?.onDefine?(text, locatorJSON, contextSentence)
+            }
+            container.onTranslate = { [commands] text in
+                commands?.onTranslate?(text)
+            }
+            container.onSearchText = { [commands] text in
+                commands?.onSearchText?(text)
             }
 
             commands?.applySearchHighlight = { [weak container] locatorJSON in

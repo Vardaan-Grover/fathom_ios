@@ -241,7 +241,7 @@ struct VocabularyTabView: View {
         let colors = assignMasonryColors(to: words)
         let cols = masonryColumns(from: words)
         return HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 12) {
+            LazyVStack(spacing: 12) {
                 ForEach(cols.left) { word in
                     let color = colors[word.id] ?? wordAccentColor(for: word)
                     VocabWordCard(
@@ -254,7 +254,7 @@ struct VocabularyTabView: View {
                     )
                 }
             }
-            VStack(spacing: 12) {
+            LazyVStack(spacing: 12) {
                 ForEach(cols.right) { word in
                     let color = colors[word.id] ?? wordAccentColor(for: word)
                     VocabWordCard(
@@ -439,6 +439,13 @@ private struct ShimmerLabel: View {
 
 // MARK: - Word Card
 
+/// Holds a card's last-known global frame outside of SwiftUI's state system,
+/// so a GeometryReader can keep it up to date during scrolling without
+/// triggering a re-render on every frame.
+private final class CardFrameHolder {
+    var rect: CGRect = .zero
+}
+
 struct VocabWordCard: View {
     let word: SavedWord
     let cardColor: Color
@@ -450,13 +457,16 @@ struct VocabWordCard: View {
     let onPin: () -> Void
 
     @Environment(\.appTheme) var theme
-    @State private var cardFrame: CGRect = .zero
+    // Plain reference holder (not @State) — the GeometryReader below updates this
+    // directly on every layout pass without going through SwiftUI state, so
+    // scrolling doesn't trigger a re-render of the card on every frame.
+    @State private var frameHolder = CardFrameHolder()
 
     private var snippet: String { firstDefinitionSnippet(for: word) }
 
     var body: some View {
         Button {
-            onExpand(cardFrame)
+            onExpand(frameHolder.rect)
         } label: {
             ZStack(alignment: .bottomLeading) {
                 RoundedRectangle(cornerRadius: theme.layout.cornerRadiusLarge, style: .continuous)
@@ -533,11 +543,7 @@ struct VocabWordCard: View {
         .scaleEffect(isAppeared ? 1 : 0.92)
         .background(
             GeometryReader { geo -> Color in
-                let frame = geo.frame(in: .global)
-                // Guard prevents the set → re-render → GeometryReader → set cascade.
-                if frame != cardFrame {
-                    DispatchQueue.main.async { cardFrame = frame }
-                }
+                frameHolder.rect = geo.frame(in: .global)
                 return Color.clear
             }
         )

@@ -2,6 +2,7 @@ import Combine
 import ReadiumNavigator
 import ReadiumShared
 import SwiftUI
+import Translation
 
 struct ReaderScreen: View {
     let bookFileURL: URL
@@ -61,6 +62,10 @@ struct ReaderScreen: View {
     @State private var tableOfContents: [ReadiumShared.Link] = []
     @State private var aiSelectedText: String?
     @State private var aiSelectedLocatorJSON: String?
+
+    // Translate State
+    @State private var translateText: String?
+    @State private var isShowingTranslation = false
 
     @Environment(\.dismiss) private var dismiss
 
@@ -254,6 +259,9 @@ struct ReaderScreen: View {
             if duration > 10 { // Changed to 10s for easier testing, maybe 60s in production
                 Task {
                     await bookRepository?.logReadingSession(for: bookID, duration: duration)
+                    // Signal *after* the write commits so listeners (e.g. the
+                    // home observatory) refresh against fresh data, not a race.
+                    NotificationCenter.default.post(name: .fathomReadingSessionLogged, object: nil)
                 }
             }
         }
@@ -370,6 +378,10 @@ extension ReaderScreen {
         }
         .onAppear { setupOnAppear() }
         .overlay { readerOverlayContent }
+        .translationPresentation(
+            isPresented: $isShowingTranslation,
+            text: translateText ?? ""
+        )
     }
 
     func onLocationChange(_ locator: Locator) {
@@ -401,6 +413,15 @@ extension ReaderScreen {
             definedLocatorJSON = locatorJSON
             definedWord = text
             definedContextSentence = contextSentence
+        }
+        commands.onTranslate = { text in
+            translateText = text
+            isShowingTranslation = true
+        }
+        commands.onSearchText = { text in
+            searchState.query = text
+            searchState.scheduleSearch()
+            isShowingSearch = true
         }
         commands.onAddNote = { text, locatorJSON in
             pendingNoteLocatorJSON = locatorJSON

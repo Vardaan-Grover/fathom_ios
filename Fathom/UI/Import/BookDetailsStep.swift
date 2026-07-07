@@ -8,6 +8,7 @@ struct BookDetailsStep: View {
     @Binding var author: String
     @Binding var coverImageData: Data?
     @Binding var isCoverChanged: Bool
+    let originalCoverImageData: Data?
     let isEditing: Bool
     let onNext: () -> Void
 
@@ -187,6 +188,16 @@ struct BookDetailsStep: View {
                 .foregroundStyle(.secondary)
                 .transition(.opacity.combined(with: .scale(scale: 0.85)))
             }
+
+            if let originalCoverImageData, coverImageData != originalCoverImageData {
+                Button("Revert to original") {
+                    withAnimation(.easeInOut(duration: 0.25)) { coverImageData = originalCoverImageData }
+                    isCoverChanged = true
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .transition(.opacity.combined(with: .scale(scale: 0.85)))
+            }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: coverImageData == nil)
     }
@@ -227,6 +238,7 @@ struct BookDetailsStep: View {
             author: .constant("Don Norman"),
             coverImageData: .constant(nil),
             isCoverChanged: .constant(false),
+            originalCoverImageData: nil,
             isEditing: false,
             onNext: {}
         )
@@ -241,6 +253,7 @@ struct BookDetailsStep: View {
             author: .constant("Frank Herbert"),
             coverImageData: .constant(nil),
             isCoverChanged: .constant(false),
+            originalCoverImageData: nil,
             isEditing: true,
             onNext: {}
         )

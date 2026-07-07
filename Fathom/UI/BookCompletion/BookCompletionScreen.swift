@@ -17,7 +17,12 @@ struct BookCompletionScreen: View {
     @State private var rating: Int
     @State private var reflection: String
     @State private var screenAlpha: Double = 0
-    @FocusState private var reflectionFocused: Bool
+    @State private var reflectionFocused: Bool = false
+    @State private var showDiscardAlert: Bool = false
+
+    private let originalRating: Int
+    private let originalReflection: String
+    private let hadOriginalImage: Bool
 
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var attachedImage: UIImage?
@@ -25,7 +30,6 @@ struct BookCompletionScreen: View {
     // Polaroid & Full Screen
     @State private var polaroidAngle: Double = 0
     @State private var isFullScreenImage = false
-    @Namespace private var imageAnimation
     @State private var dragOffset: CGSize = .zero
     @State private var zoomScale: CGFloat = 1.0
     @State private var steadyStateZoomScale: CGFloat = 1.0
@@ -50,8 +54,42 @@ struct BookCompletionScreen: View {
         _rating = State(initialValue: book.rating ?? 0)
         _reflection = State(initialValue: book.reflection ?? "")
 
+        originalRating = book.rating ?? 0
+        originalReflection = book.reflection ?? ""
+        hadOriginalImage = book.reflectionImageURL != nil
+
         if let url = book.reflectionImageURL, let image = UIImage(contentsOfFile: url.path) {
             _attachedImage = State(initialValue: image)
+        }
+    }
+
+    private var hasUnsavedChanges: Bool {
+        let trimmedReflection = reflection.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rating != originalRating { return true }
+        if trimmedReflection != originalReflection { return true }
+        if selectedPhotoItem != nil { return true }
+        if (attachedImage != nil) != hadOriginalImage { return true }
+        return false
+    }
+
+    private func requestDismiss() {
+        reflectionFocused = false
+        if hasUnsavedChanges {
+            showDiscardAlert = true
+        } else {
+            performDismiss()
+        }
+    }
+
+    /// Resigns the keyboard first, then dismisses on the next runloop turn.
+    /// Calling `dismiss()` while the text view is still first responder makes the
+    /// `fullScreenCover` dismissal animation and the keyboard dismissal animation
+    /// fight each other, which can leave the cover visually stuck.
+    private func performDismiss() {
+        reflectionFocused = false
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            dismiss()
         }
     }
 
@@ -63,29 +101,33 @@ struct BookCompletionScreen: View {
                     reflectionFocused = false
                 }
 
-            // Main scrollable content
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 24) {
-                    // Spacer for top bar
-                    Color.clear.frame(height: 70)
-
-                    if !reflectionFocused {
-                        coverSection
-                    }
-
-                    if let img = attachedImage, !isFullScreenImage {
-                        polaroidView(image: img)
-                    }
-
-                    reflectionSection
-                        .padding(.horizontal, 32)
-                }
-                .padding(.bottom, 120) // Space for bottom pill
-            }
-            .contentShape(Rectangle()) // Allows tapping on empty space
-            .onTapGesture {
-                reflectionFocused = false
-            }
+            // Apple Notes-style editor: the UITextView owns its own scroll, with the
+            // cover + photo hosted *inside* it as a header that scrolls away with the
+            // text. Single scroll owner => native caret tracking, no scroll fighting.
+            NotesStyleEditor(
+                text: $reflection,
+                isFocused: $reflectionFocused,
+                configuration: .init(
+                    font: .serif(ofSize: 18, weight: .regular),
+                    textColor: UIColor(theme.colors.primary),
+                    tintColor: UIColor(theme.colors.shelfAccent),
+                    placeholder: "Start writing...",
+                    placeholderColor: UIColor(theme.colors.secondary),
+                    textHorizontalPadding: 32,
+                    textTopPadding: 8,
+                    bottomInset: 120 // clears the floating bottom pill
+                ),
+                headerID: AnyHashable([
+                    AnyHashable(reflectionFocused),
+                    AnyHashable(attachedImage.map { ObjectIdentifier($0).hashValue } ?? 0),
+                    AnyHashable(polaroidAngle),
+                    AnyHashable(colorScheme == .dark)
+                ]),
+                header: { reflectionHeader }
+            )
+            // The editor manages its own keyboard inset; keep SwiftUI's keyboard
+            // avoidance out of the loop so it can't nudge the editor on each keystroke.
+            .ignoresSafeArea(.keyboard, edges: .bottom)
 
             // Top Bar Overlay with proper Blur
             VStack(spacing: 0) {
@@ -109,6 +151,7 @@ struct BookCompletionScreen: View {
             // Full Screen Image Overlay
             if let img = attachedImage, isFullScreenImage {
                 fullScreenImageView(image: img)
+                    .transition(.scale(scale: 0.92).combined(with: .opacity))
             }
         }
         .opacity(screenAlpha)
@@ -118,11 +161,20 @@ struct BookCompletionScreen: View {
             }
             polaroidAngle = Double.random(in: -3...3)
         }
+        .alert("Discard changes?", isPresented: $showDiscardAlert) {
+            Button("Discard", role: .destructive) {
+                performDismiss()
+            }
+            Button("Keep Editing", role: .cancel) {}
+        } message: {
+            Text("Your changes will not be saved.")
+        }
         .onChange(of: selectedPhotoItem) { _, newItem in
             Task {
                 if let data = try? await newItem?.loadTransferable(type: Data.self),
                    let image = UIImage(data: data) {
                     await MainActor.run {
+                        self.reflectionFocused = false
                         self.attachedImage = image
                         self.polaroidAngle = Double.random(in: -3...3)
                     }
@@ -151,10 +203,23 @@ struct BookCompletionScreen: View {
 
             Spacer()
         }
+        .overlay(alignment: .leading) {
+            Button {
+                requestDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.colors.primary)
+                    .frame(width: 32, height: 32)
+                    .background(theme.colors.surface, in: Circle())
+                    .overlay(Circle().strokeBorder(theme.colors.separator.opacity(0.5), lineWidth: 1))
+            }
+            .padding(.leading, theme.layout.horizontalPadding)
+        }
         .overlay(alignment: .trailing) {
             if !isEditing {
                 Button("Skip") {
-                    dismiss()
+                    requestDismiss()
                 }
                 .font(theme.typography.subheadline)
                 .foregroundColor(theme.colors.secondary)
@@ -213,16 +278,15 @@ struct BookCompletionScreen: View {
     }
     
     // MARK: - Polaroid Image
-
     private func polaroidView(image: UIImage) -> some View {
         VStack(spacing: 0) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .matchedGeometryEffect(id: "hero_image", in: imageAnimation)
-                // Fixed square-ish aspect ratio inside the polaroid
-                .aspectRatio(1.0, contentMode: .fill)
-                .frame(maxWidth: .infinity)
+            Color.clear
+                .aspectRatio(1.0, contentMode: .fit)
+                .overlay(
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                )
                 .clipped()
                 .overlay(alignment: .topTrailing) {
                     // Delete button relative to the image
@@ -255,9 +319,8 @@ struct BookCompletionScreen: View {
         .padding(.horizontal, 48)
         .rotationEffect(.degrees(polaroidAngle))
         .onTapGesture {
-            // Straighten out rotation to prevent matchedGeometryEffect glitch
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                polaroidAngle = 0
+            reflectionFocused = false
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                 isFullScreenImage = true
             }
         }
@@ -293,7 +356,6 @@ struct BookCompletionScreen: View {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
-                .matchedGeometryEffect(id: "hero_image", in: imageAnimation)
                 .scaleEffect(scale * zoomScale)
                 .offset(zoomScale > 1.0 ? clampedPanOffset(panOffset, scale: zoomScale) : dragOffset)
                 .ignoresSafeArea()
@@ -359,29 +421,30 @@ struct BookCompletionScreen: View {
         .zIndex(100)
     }
 
-    // MARK: - Reflection
+    // MARK: - Reflection header (scrolls inside the editor)
 
-    private var reflectionSection: some View {
-        ZStack(alignment: .topLeading) {
-            if reflection.isEmpty && !reflectionFocused {
-                Text("Start writing...")
-                    .font(.system(size: 18, weight: .regular, design: .serif))
-                    .foregroundColor(theme.colors.secondary)
-                    .padding(.top, 8)
-                    .padding(.leading, 4)
-                    .allowsHitTesting(false)
+    private var reflectionHeader: some View {
+        VStack(spacing: 24) {
+            // Spacer so the first line clears the top bar overlay.
+            Color.clear.frame(height: 70)
+
+            // Cover + photo are hidden while writing for a clean, distraction-free
+            // surface (and so they're out of the text view's scroll content during
+            // typing). They return when the editor loses focus.
+            if !reflectionFocused {
+                coverSection
+
+                if let img = attachedImage {
+                    polaroidView(image: img)
+                }
             }
-
-            TextEditor(text: $reflection)
-                .font(.system(size: 18, weight: .regular, design: .serif))
-                .foregroundColor(theme.colors.primary)
-                .focused($reflectionFocused)
-                .frame(minHeight: 240)
-                .scrollContentBackground(.hidden)
-                .tint(theme.colors.shelfAccent)
         }
+        .padding(.bottom, reflectionFocused ? 4 : 24)
+        .contentShape(Rectangle())
         .onTapGesture {
-            reflectionFocused = true
+            // Tapping the non-text header area dismisses the keyboard. The polaroid's
+            // own tap (zoom) takes precedence over this on the polaroid itself.
+            reflectionFocused = false
         }
     }
 
@@ -499,8 +562,15 @@ struct BookCompletionScreen: View {
             try? await Task.sleep(nanoseconds: 200_000_000)
 
             await MainActor.run {
-                NotificationCenter.default.post(name: .bookCompletionDidSave, object: updated.id)
                 dismiss()
+            }
+
+            // Post after dismiss so the parent's reload doesn't re-render the
+            // presenting view while the cover is still animating away.
+            try? await Task.sleep(nanoseconds: 50_000_000)
+
+            await MainActor.run {
+                NotificationCenter.default.post(name: .bookCompletionDidSave, object: updated.id)
             }
         }
     }
@@ -524,6 +594,7 @@ private final actor PreviewBookRepo: BookRepository {
     func logReadingSession(for bookID: UUID, duration: TimeInterval) async {}
     func listReadingActivity(forYear year: Int) async -> [ReadingActivity] { [] }
     func insertMockReadingActivity(_ activity: ReadingActivity) async {}
+    func deleteAllReadingActivity(forYear year: Int) async {}
 }
 
 #Preview {

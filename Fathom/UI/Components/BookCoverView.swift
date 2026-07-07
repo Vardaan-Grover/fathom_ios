@@ -6,11 +6,13 @@ struct BookCoverView: View {
     let height: CGFloat
     var userCategories: [HomeCategory] = []
     var onToggleCategory: ((UUID) -> Void)? = nil
+    var onCreateShelf: ((String, String) -> HomeCategory?)? = nil
     var onEdit: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
     var onMarkFinished: (() -> Void)? = nil
 
     @State private var showShelfPicker = false
+    @State private var coverImage: UIImage? = nil
 
     init(
         book: HomeBook,
@@ -18,6 +20,7 @@ struct BookCoverView: View {
         height: CGFloat = 168,
         userCategories: [HomeCategory] = [],
         onToggleCategory: ((UUID) -> Void)? = nil,
+        onCreateShelf: ((String, String) -> HomeCategory?)? = nil,
         onEdit: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
         onMarkFinished: (() -> Void)? = nil
@@ -27,6 +30,7 @@ struct BookCoverView: View {
         self.height = height
         self.userCategories = userCategories
         self.onToggleCategory = onToggleCategory
+        self.onCreateShelf = onCreateShelf
         self.onEdit = onEdit
         self.onDelete = onDelete
         self.onMarkFinished = onMarkFinished
@@ -42,10 +46,14 @@ struct BookCoverView: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .shadow(color: .black.opacity(0.18), radius: 8, x: 2, y: 4)
         .contextMenu { contextMenuContent }
+        .task(id: book.coverFilename) {
+            coverImage = Self.loadCoverImage(filename: book.coverFilename)
+        }
         .sheet(isPresented: $showShelfPicker) {
             ShelfPickerSheet(
                 categories: userCategories,
-                initialSelectedIDs: book.categoryIDs
+                initialSelectedIDs: book.categoryIDs,
+                onCreateShelf: { name, colorHex in onCreateShelf?(name, colorHex) }
             ) { added, removed in
                 for id in added { onToggleCategory?(id) }
                 for id in removed { onToggleCategory?(id) }
@@ -87,11 +95,8 @@ struct BookCoverView: View {
 
     @ViewBuilder
     private var coverBackground: some View {
-        if let filename = book.coverFilename,
-            let url = BookFileStore.coverURL(for: filename),
-            let uiImage = UIImage(contentsOfFile: url.path)
-        {
-            Image(uiImage: uiImage)
+        if let coverImage {
+            Image(uiImage: coverImage)
                 .resizable()
                 .scaledToFill()
                 .frame(width: width, height: height)
@@ -100,6 +105,10 @@ struct BookCoverView: View {
             book.coverColor
                 .frame(width: width, height: height)
         }
+    }
+
+    private static func loadCoverImage(filename: String?) -> UIImage? {
+        BookFileStore.coverImage(for: filename)
     }
 
     // Subtle left-edge spine shading — only visible on the color fallback,
@@ -133,201 +142,6 @@ struct BookCoverView: View {
                     .lineLimit(2)
             }
             .padding(10)
-        }
-    }
-}
-
-// MARK: - Flow layout for variable-width pills
-
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        layout(in: proposal.replacingUnspecifiedDimensions().width, subviews: subviews).size
-    }
-
-    func placeSubviews(
-        in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
-    ) {
-        for (frame, subview) in zip(layout(in: bounds.width, subviews: subviews).frames, subviews) {
-            subview.place(
-                at: CGPoint(x: frame.minX + bounds.minX, y: frame.minY + bounds.minY),
-                proposal: .unspecified
-            )
-        }
-    }
-
-    private func layout(in maxWidth: CGFloat, subviews: Subviews) -> (
-        frames: [CGRect], size: CGSize
-    ) {
-        var frames: [CGRect] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth, x > 0 {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            frames.append(CGRect(origin: .init(x: x, y: y), size: size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        return (frames, CGSize(width: maxWidth, height: y + rowHeight))
-    }
-}
-
-// MARK: - Shelf pill
-
-private struct ShelfPill: View, Equatable {
-    let category: HomeCategory
-    let isSelected: Bool
-    let onTap: () -> Void
-
-    // Closures are never equal, so compare only the inputs that affect rendering.
-    static func == (lhs: ShelfPill, rhs: ShelfPill) -> Bool {
-        lhs.category.id == rhs.category.id && lhs.isSelected == rhs.isSelected
-    }
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 6) {
-                Image(systemName: isSelected ? "checkmark" : "books.vertical.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 16, alignment: .center)
-                    .contentTransition(.symbolEffect(.replace.offUp.byLayer))
-                Text(category.name)
-                    .font(.system(size: 14, weight: .medium))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(isSelected ? category.shelfColor : category.shelfColor.opacity(0.12))
-            .foregroundStyle(isSelected ? .white : category.shelfColor)
-            .clipShape(Capsule())
-            .overlay {
-                if !isSelected {
-                    Capsule()
-                        .strokeBorder(category.shelfColor.opacity(0.4), lineWidth: 1)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(isSelected ? 1.04 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.65), value: isSelected)
-    }
-}
-
-// MARK: - Sheet
-
-private struct ShelfPickerSheet: View {
-    let categories: [HomeCategory]
-    let initialSelectedIDs: Set<UUID>
-    let onCommit: (_ added: Set<UUID>, _ removed: Set<UUID>) -> Void
-
-    @State private var selectedIDs: Set<UUID> = []
-    @State private var snapshot: Set<UUID> = []
-    @State private var showDiscardAlert = false
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 0) {
-
-            // Header — title centered, X button anchored top-right
-            ZStack(alignment: .topTrailing) {
-                VStack(spacing: 6) {
-                    Image(systemName: "books.vertical.fill")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.bottom, 2)
-                    Text("Manage Shelves")
-                        .font(.title3.weight(.semibold))
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .contentTransition(.numericText())
-                        .animation(.default, value: selectedIDs.count)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 28)
-                .padding(.bottom, 20)
-
-                Button {
-                    if hasChanges { showDiscardAlert = true } else { dismiss() }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .symbolRenderingMode(.hierarchical)
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .padding(16)
-            }
-
-            Divider()
-
-            ScrollView {
-                FlowLayout(spacing: 10) {
-                    ForEach(categories) { category in
-                        ShelfPill(
-                            category: category,
-                            isSelected: selectedIDs.contains(category.id)
-                        ) {
-                            if selectedIDs.contains(category.id) {
-                                selectedIDs.remove(category.id)
-                            } else {
-                                selectedIDs.insert(category.id)
-                            }
-                        }
-                        .equatable()
-                    }
-                }
-                .padding(20)
-            }
-
-            Divider()
-
-            Button {
-                onCommit(selectedIDs.subtracting(snapshot), snapshot.subtracting(selectedIDs))
-                dismiss()
-            } label: {
-                Text("Done")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 14))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 20)
-            .padding(.top, 20)
-        }
-        .onAppear {
-            selectedIDs = initialSelectedIDs
-            snapshot = initialSelectedIDs
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .interactiveDismissDisabled(hasChanges)
-        .confirmationDialog(
-            "Discard Changes?", isPresented: $showDiscardAlert, titleVisibility: .visible
-        ) {
-            Button("Discard Changes", role: .destructive) { dismiss() }
-            Button("Keep Editing", role: .cancel) {}
-        } message: {
-            Text("Your shelf changes will be lost.")
-        }
-    }
-
-    private var hasChanges: Bool { selectedIDs != snapshot }
-
-    private var subtitle: String {
-        switch selectedIDs.count {
-        case 0: "Tap a shelf to add this book"
-        case 1: "1 shelf selected"
-        default: "\(selectedIDs.count) shelves selected"
         }
     }
 }

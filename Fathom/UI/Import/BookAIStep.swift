@@ -84,7 +84,7 @@ struct BookAIStep: View {
                 )
                 .onAppear {
                     gradientPhase = false
-                    withAnimation(.linear(duration: 3.0).repeatForever(autoreverses: true)) {
+                    withAnimation(.linear(duration: 2.5).repeatForever(autoreverses: true)) {
                         gradientPhase = true
                     }
                 }

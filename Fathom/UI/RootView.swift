@@ -33,6 +33,8 @@ struct RootView: View {
     @Environment(\.showToast) private var showToast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.appTheme) private var theme
+    
+    @AppStorage("fathom.home.viewStyle") private var viewStyle: HomeViewStyle = .glassShelves
 
     init(
         homeViewModel: HomeViewModel,
@@ -136,7 +138,7 @@ struct RootView: View {
         .sheet(isPresented: $showShelfSheet) {
             NewShelfSheet { name, colorHex in
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                    homeViewModel.createCategory(name: name, colorHex: colorHex)
+                    _ = homeViewModel.createCategory(name: name, colorHex: colorHex)
                 }
             }
             .presentationDetents([.height(380)])
@@ -145,7 +147,16 @@ struct RootView: View {
         .sheet(item: $libraryViewModel.pendingCustomization) { customization in
             BookImportFlow(
                 initial: customization,
-                onConfirm: { edited in libraryViewModel.confirmImport(with: edited) },
+                categories: homeViewModel.categories.filter { !$0.shelfColorHex.isEmpty },
+                onCreateShelf: { name, colorHex in
+                    homeViewModel.createCategory(name: name, colorHex: colorHex)
+                },
+                onConfirm: { edited in
+                    libraryViewModel.confirmImport(with: edited)
+                    for categoryID in edited.selectedCategoryIDs {
+                        homeViewModel.toggleBookInCategory(bookID: edited.id, categoryID: categoryID)
+                    }
+                },
                 onCancel: { libraryViewModel.cancelImport() }
             )
             .presentationDetents([.large])
@@ -164,26 +175,41 @@ struct RootView: View {
                 )
             }
         }
+        // Handle epubs shared/opened from other apps.
+        // Fires both on cold launch (view appears with URL already set) and
+        // hot launch (URL arrives while app is running).
+        .task {
+            if let url = libraryViewModel.pendingIncomingURL {
+                handleIncomingFile(url)
+            }
+        }
+        .onChange(of: libraryViewModel.pendingIncomingURL) { _, url in
+            guard let url else { return }
+            handleIncomingFile(url)
+        }
     }
 
-    // All tab screens laid out side-by-side and shifted by activeTab.index so
-    // switching tabs slides the correct screen in from the right direction.
-    // All three views stay mounted so scroll position and state are preserved.
+    // All tab screens stay mounted so scroll position and state are preserved,
+    // but only the active one is visible/hit-testable.
     private var contentLayer: some View {
-        GeometryReader { geo in
-            HStack(spacing: 0) {
-                HomeScreen(viewModel: homeViewModel, bookRepository: bookRepository)
-                    .frame(width: geo.size.width)
-                VocabularyTabView(viewModel: vocabularyTabViewModel)
-                    .frame(width: geo.size.width)
-                ProfileView(bookRepository: bookRepository)
-                    .frame(width: geo.size.width)
+        ZStack {
+            Group {
+                if viewStyle == .classicGrid {
+                    ClassicLibraryView(viewModel: homeViewModel, bookRepository: bookRepository)
+                } else {
+                    HomeScreen(viewModel: homeViewModel, bookRepository: bookRepository)
+                }
             }
-            .offset(x: -CGFloat(activeTab.index) * geo.size.width)
-            .animation(
-                reduceMotion ? nil : .snappy(duration: 0.38, extraBounce: 0.05),
-                value: activeTab
-            )
+            .opacity(activeTab == .library ? 1 : 0)
+            .allowsHitTesting(activeTab == .library)
+
+            VocabularyTabView(viewModel: vocabularyTabViewModel)
+                .opacity(activeTab == .vocabulary ? 1 : 0)
+                .allowsHitTesting(activeTab == .vocabulary)
+
+            ProfileView(bookRepository: bookRepository)
+                .opacity(activeTab == .profile ? 1 : 0)
+                .allowsHitTesting(activeTab == .profile)
         }
         .fileImporter(
             isPresented: $showImporter,
@@ -209,6 +235,42 @@ struct RootView: View {
                                 title: "Failed to import book", duration: 3, placementOffset: -72,
                                 symbol: "exclamationmark.triangle"))
                     }
+                }
+            }
+        }
+    }
+
+    private func handleIncomingFile(_ url: URL) {
+        libraryViewModel.pendingIncomingURL = nil
+        // Cancel any in-progress import so we can start fresh.
+        libraryViewModel.cancelImport()
+        activeTab = .library
+        NotificationCenter.default.post(name: .dismissReader, object: nil)
+        Task {
+            // Brief pause so the tab switch and reader dismissal animate before
+            // the import sheet appears.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            do {
+                try await libraryViewModel.importBook(from: url)
+                await homeViewModel.load()
+                // The system copies the file into the app's Inbox before delivery;
+                // once imported we no longer need that copy.
+                if url.deletingLastPathComponent().lastPathComponent == "Inbox" {
+                    try? FileManager.default.removeItem(at: url)
+                }
+            } catch is CancellationError {
+                // User cancelled the import — nothing to do.
+            } catch {
+                if let localizedError = error as? LocalizedError,
+                   let message = localizedError.errorDescription
+                {
+                    showToast(
+                        Toast(title: message, duration: 3, placementOffset: -72,
+                              symbol: "exclamationmark.triangle"))
+                } else {
+                    showToast(
+                        Toast(title: "Failed to import book", duration: 3, placementOffset: -72,
+                              symbol: "exclamationmark.triangle"))
                 }
             }
         }

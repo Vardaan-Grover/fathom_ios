@@ -150,17 +150,18 @@ struct ReaderActionMenu: View {
             .frame(width: 250, height: 45)
 
             HStack(spacing: 10) {
-                if hasBackendBookID {
-                    CustomSectionButton(
-                        symbol: "sparkles",
-                        isPresented: $isPresented,
-                        foregroundColor: fg, backgroundColor: elevatedBg
-                    ) {
-                        isPresented = false
-                        onOpenAIChats()
-                    }
-                    .opacity(aiEnabled ? 1.0 : 0.35)
-                }
+                // Ask AI: hidden from UI for now, kept in codebase.
+                // if hasBackendBookID {
+                //     CustomSectionButton(
+                //         symbol: "sparkles",
+                //         isPresented: $isPresented,
+                //         foregroundColor: fg, backgroundColor: elevatedBg
+                //     ) {
+                //         isPresented = false
+                //         onOpenAIChats()
+                //     }
+                //     .opacity(aiEnabled ? 1.0 : 0.35)
+                // }
                 CustomSectionButton(
                     symbol: "highlighter",
                     isPresented: $isPresented,

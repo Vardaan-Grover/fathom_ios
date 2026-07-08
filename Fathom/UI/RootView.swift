@@ -298,7 +298,7 @@ struct RootView: View {
                     .symbolVariant(.fill)
                     .frame(maxWidth: .infinity)
                 }
-                .interactiveGlassEffect()
+                .glassCapsule(interactive: true)
             }
 
             ZStack {
@@ -344,7 +344,7 @@ struct RootView: View {
                 .animation(.snappy, value: activeTab)
             }
             .frame(width: 60, height: 60)
-            .interactiveGlassEffect()
+            .glassCapsule(interactive: true)
         }
     }
 }
@@ -356,17 +356,6 @@ private struct AddWordIcon: View {
                 .font(.system(size: 20, weight: .medium))
             Image(systemName: "plus")
                 .font(.system(size: 12, weight: .semibold))
-        }
-    }
-}
-
-extension View {
-    @ViewBuilder
-    fileprivate func interactiveGlassEffect() -> some View {
-        if #available(iOS 26, *) {
-            self.glassEffect(.regular.interactive(), in: .capsule)
-        } else {
-            self.background(.ultraThinMaterial, in: .capsule)
         }
     }
 }

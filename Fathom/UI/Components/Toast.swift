@@ -83,7 +83,7 @@ struct ToastRootView<Content: View>: View {
         .frame(minHeight: 50)
         .clipShape(.capsule)
         .contentShape(.capsule)
-        .capsuleGlassEffect()
+        .glassCapsule()
         .padding(.horizontal, 15)
         /// placement offset
         .offset(y: toast.placementOffset)
@@ -124,19 +124,4 @@ struct Toast: Identifiable {
 extension EnvironmentValues {
     @Entry var showToast: (Toast) -> Void = { _ in }
     @Entry var dismissToast: () -> Void = {  }
-}
-
-private extension View {
-    @ViewBuilder
-    func capsuleGlassEffect() -> some View {
-        if #available(iOS 26, *) {
-            self.glassEffect(.regular, in: .capsule)
-        } else {
-            self.background(.ultraThinMaterial, in: .capsule)
-        }
-    }
-}
-
-#Preview {
-
 }

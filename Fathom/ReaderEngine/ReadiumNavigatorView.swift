@@ -184,6 +184,7 @@ import SwiftUI
                 }
             } else {
                 leadAction = nil
+                // Ask AI: hidden from UI for now, kept in codebase.
                 // let askAIAction = UIAction(
                 //     title: "Ask AI", image: UIImage(systemName: "sparkles")
                 // ) { [weak self] _ in
@@ -593,7 +594,7 @@ import SwiftUI
             }
 
             func navigator(_ navigator: Navigator, presentError error: NavigatorError) {
-                print("Navigation error: \(error)")
+                AppLogger.logError(tag: "ReadiumNavigatorView", error)
             }
 
             @objc func handleTap(_ recognizer: UITapGestureRecognizer) {

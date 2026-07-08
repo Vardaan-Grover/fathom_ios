@@ -17,10 +17,6 @@ struct ObservatoryView: View {
     @StateObject private var viewModel: ObservatoryViewModel
     @State private var showReveal = false
 
-    /// Cap the live states to 30fps — the sweep/pulse are slow, so the display's
-    /// full (up to 120Hz) refresh would just burn energy for no visible gain.
-    private let frameInterval = 1.0 / 30.0
-
     init(bookRepository: BookRepository, refreshTrigger: Int = 0, onTap: @escaping () -> Void) {
         self.bookRepository = bookRepository
         self.refreshTrigger = refreshTrigger
@@ -113,78 +109,10 @@ struct ObservatoryView: View {
         }
     }
 
-    /// The dependency-free composition — the fallback (and current look) until the
-    /// Lottie assets are added.
+    /// The dependency-free celestial emblem — the fallback (and current look)
+    /// until the Lottie assets are added.
     private var nativeGlyph: some View {
-        ZStack {
-            // The lens.
-            Circle()
-                .fill(ink.opacity(colorScheme == .dark ? 0.16 : 0.08))
-                .overlay(Circle().stroke(ink.opacity(0.18), lineWidth: 1))
-
-            // Live decoration only for the state that needs it — `.idle` draws
-            // nothing animated, so the home screen does zero continuous work.
-            if !reduceMotion {
-                switch phase {
-                case .pending:  pendingPulse
-                case .spotting: radarSweep
-                case .idle:     EmptyView()
-                }
-            }
-
-            // The core: a little telescope, dim at rest, lit while active.
-            Image("Telescope")
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(ink)
-                .frame(width: 22, height: 22)
-                .opacity(phase == .idle ? 0.45 : 1)
-
-            // Pending badge — a tiny "new" spark in the corner.
-            if phase == .pending {
-                Circle()
-                    .fill(ink)
-                    .frame(width: 14, height: 14)
-                    .overlay(
-                        Image(systemName: "sparkle")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundColor(.white)
-                    )
-                    .offset(x: 17, y: -17)
-            }
-        }
-    }
-
-    /// A radar sweep rotating around the lens (spotting). Frame-capped TimelineView
-    /// instead of a forever-running implicit animation.
-    private var radarSweep: some View {
-        TimelineView(.animation(minimumInterval: frameInterval)) { timeline in
-            let cycle = 2.4
-            let angle = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: cycle) / cycle * 360
-            Circle()
-                .trim(from: 0, to: 0.3)
-                .stroke(
-                    AngularGradient(colors: [ink.opacity(0), ink.opacity(0.7)], center: .center),
-                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
-                )
-                .rotationEffect(.degrees(angle))
-                .padding(3)
-        }
-    }
-
-    /// A soft halo radiating outward (pending). Same frame-capped clock.
-    private var pendingPulse: some View {
-        TimelineView(.animation(minimumInterval: frameInterval)) { timeline in
-            let cycle = 1.6
-            let t = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: cycle) / cycle
-            Circle()
-                .stroke(ink.opacity(0.5), lineWidth: 2)
-                .scaleEffect(0.9 + 0.45 * t)
-                .opacity(0.7 * (1 - t))
-        }
+        ObservatoryGlyph(phase: phase, ink: ink, reduceMotion: reduceMotion)
     }
 
     private var accessibilityText: String {

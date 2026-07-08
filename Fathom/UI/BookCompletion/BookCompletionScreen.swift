@@ -289,7 +289,6 @@ struct BookCompletionScreen: View {
                 )
                 .clipped()
                 .overlay(alignment: .topTrailing) {
-                    // Delete button relative to the image
                     Button {
                         withAnimation {
                             attachedImage = nil
@@ -480,10 +479,8 @@ struct BookCompletionScreen: View {
                         .fill(dotBg)
                         .frame(width: 14, height: 14)
                         .scaleEffect(isSelected ? 1.4 : 1.0)
-                        // Add glow shadow
                         .shadow(color: color.opacity(0.6), radius: glowRadius)
                         .overlay(
-                            // Add inner shadow/stroke for depth
                             Circle()
                                 .stroke(color.opacity(isSelected ? 1.0 : 0.0), lineWidth: 1)
                         )
@@ -538,7 +535,6 @@ struct BookCompletionScreen: View {
             updated.reflection = trimmedReflection.isEmpty ? nil : trimmedReflection
             updated.finishedAt = book.finishedAt ?? Date()
 
-            // Handle image save
             if let img = attachedImage {
                 if selectedPhotoItem != nil {
                     // New image selected, compress and save

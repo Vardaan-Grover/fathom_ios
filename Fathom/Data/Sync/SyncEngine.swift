@@ -286,10 +286,8 @@ actor SyncEngine {
         let upserts = pending.filter { $0.operation == "upsert" }
         let deletes = pending.filter { $0.operation == "delete" }
 
-        // Build CKRecord array for upserts.
         let records = await buildRecords(for: upserts, zoneID: zoneID)
 
-        // Build CKRecord.ID array for deletes.
         let deleteIDs = deletes.map {
             CKRecord.ID(recordName: $0.recordID, zoneID: zoneID)
         }
@@ -550,7 +548,6 @@ private extension AIThread {
     static func fetchAll(db: Database, ids: [String], zoneID: CKRecordZone.ID) throws -> [CKRecord] {
         try ids.compactMap { idStr -> CKRecord? in
             guard let uuid = UUID(uuidString: idStr) else { return nil }
-            // Fetch conversation header
             guard let row = try Row.fetchOne(db, sql: """
                 SELECT id, bookID, passageText, locatorJSON, chapterTitle, createdAt
                 FROM   aiConversations
@@ -566,7 +563,6 @@ private extension AIThread {
                 let createdAt   = row["createdAt"] as? Date
             else { return nil }
 
-            // Fetch messages
             let msgRows = try Row.fetchAll(db, sql: """
                 SELECT id, role, content, createdAt
                 FROM   aiMessages

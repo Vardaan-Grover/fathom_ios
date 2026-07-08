@@ -47,6 +47,13 @@ Severity legend: 🔴 Critical (data loss / broken feature) · 🟠 High (real b
 - ✅ `.gitignore` rewritten for the Fathom project name (was still ignoring `Readora.*` paths).
 - 📐 5.2 (storage policy, documented rather than migrated): **SQLite** for structured or synced data; **JSON file stores** (with debounced writes + `flush()` on resign-active) only for single-blob device state (reading positions, reader settings, profile); **UserDefaults** only for tiny flags/timestamps (change tokens, savedAt stamps, migration flags); **no new storage mechanism** without updating this rule. Existing data stays where it is — migrations aren't worth the risk until a feature forces them.
 
+**Phase 6 — code organization & slop cleanup (2026-07-08):** no behavior changes; build + all 20 tests green.
+- UI reorganized into feature folders: `UI/Vocabulary`, `UI/Reader`, `UI/Garden`, `UI/Library`, and `ProfileView` joined `UI/Profile` (project uses filesystem-synced groups, so no pbxproj surgery).
+- Monolith files split by type: `VocabularyTabView` (1,167 → 5 files), `ReaderScreen` (926 → +`BookmarkOverlay`/`ScrubPreviewPopover`/`ReaderNavigationHistory`), `MemoryGardenView` (705 → +`GardenCanvas`/`GardenHaptics`), `WordDetailView` (+`WordShareCard`), `CollectionsListView` (+`CollectionDetailView`; `StickerStore` moved to `Data/`), `ProfileView` (+`AppearanceSettings`/`ProfileComponents`).
+- Deduplicated: TOC chapter-title marker matching (now `tocChapterTitle` in `Domain/TOCHelpers.swift`, was copied in ReaderScreen + ScrubPreviewPopover); reader sheet-dismiss navigation (now `ReaderScreen.jump(toLocatorJSON:)`, was 5 copies); masonry column rendering; `ShareSheet` UIActivityViewController wrapper (was 2 private copies); iOS 26 glass fallbacks (`View+Glass.swift`: `glassCapsule` / `glassFill`, was 5 ad-hoc copies).
+- Dead code deleted: abandoned hero-transition experiment (`BookDetailHeroView`, `BookDetailHeroViewModel`, `ScrollHeroEffect`, `ScrollHeroContentView` — no call sites, contained lorem-ipsum placeholder UI).
+- Hygiene: edit-artifact comments stripped (NewShelfSheet, BookCompletionScreen, SyncEngine); raw `print` in ReadiumNavigatorView routed through `AppLogger`; `CollectionsListView` reindented from 2- to 4-space to match the codebase; unlabeled dormant-AI comment block in ReadiumNavigatorView annotated like its siblings; dead `arrowY` computation and no-op `onChange` removed from ExpandedWordCard.
+
 ---
 
 ## 1. Critical correctness bugs

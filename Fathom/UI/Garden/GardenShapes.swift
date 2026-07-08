@@ -273,3 +273,5 @@ func buildDoodleSprites(durations: [TimeInterval], size: CGSize, columns: Int) -
     }
     return sprites
 }
+
+func clamp01(_ x: Double) -> Double { max(0, min(1, x)) }

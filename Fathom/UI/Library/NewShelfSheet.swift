@@ -31,7 +31,6 @@ struct NewShelfSheet: View {
         self.isEditing = isEditing
         self.onCommit = onCommit
 
-        // Add the fallback back in using the new tuple structure
         let hex = initialColorHex.isEmpty ? Self.palette[0].hex : initialColorHex
 
         _name = State(initialValue: initialName)
@@ -105,11 +104,10 @@ private struct ShelfColorPicker: View, Equatable {
                 columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 6),
                 spacing: 10
             ) {
-                // Iterate using \.hex and pass both values to the swatch
                 ForEach(NewShelfSheet.palette, id: \.hex) { item in
                     ShelfColorSwatch(
                         hex: item.hex,
-                        themeColor: item.color,  // Pass pre-computed color
+                        themeColor: item.color,
                         isSelected: item.hex == selectedHex
                     )
                     .onTapGesture { selectedHex = item.hex }
@@ -121,7 +119,7 @@ private struct ShelfColorPicker: View, Equatable {
 
 private struct ShelfColorSwatch: View {
     let hex: String
-    let themeColor: Color  // Accept the pre-computed color
+    let themeColor: Color
     let isSelected: Bool
 
     var body: some View {
@@ -152,7 +150,6 @@ private struct ShelfCreateButton: View {
     let isEditing: Bool
     let action: () -> Void
 
-    // Look up the pre-computed color from our static palette
     private var themeColor: Color {
         NewShelfSheet.palette.first(where: { $0.hex == selectedHex })?.color ?? .blue
     }

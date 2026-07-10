@@ -20,12 +20,7 @@ struct MemoryGardenView: View {
 
     /// The sky's one dominant hue — a deep, bright blue used for both the
     /// doodles and the empty-day dots (a touch brighter on the dark background).
-    private var ink: Color {
-        let base = Color(hex: "1530E6")  // deep bright blue
-        return colorScheme == .dark
-            ? base.adjusted(saturationScale: 1.0, brightnessDelta: 0.12)
-            : base
-    }
+    private var ink: Color { .gardenInk(colorScheme) }
 
     let year: Int
     let daysInYear: [Date]
@@ -83,6 +78,17 @@ struct MemoryGardenView: View {
     private enum RevealStage { case none, frosted, unveiled, landed }
     @State private var revealStage: RevealStage = .none
     @State private var revealDay: Date?
+
+    @State private var showShare = false
+    @State private var showRevealShare = false
+
+    /// The book that most of a day's reading came from (for the reveal share card).
+    private func revealMajorBook(for date: Date) -> Book? {
+        let key = Self.dayKeyFormatter.string(from: date)
+        guard let activity = viewModel.dailyActivities[key] else { return nil }
+        let majorID = activity.bookDurations.max(by: { $0.value < $1.value })?.key
+        return majorID.flatMap { viewModel.loadedBooks[$0] }
+    }
     /// True while a pinch is in flight — suspends cell taps so a pinch over the
     /// calendar can't be mistaken for a day selection.
     @State private var isZooming = false
@@ -125,14 +131,15 @@ struct MemoryGardenView: View {
             HStack {
                 headerIcon("xmark") { dismiss() }
                 Spacer(minLength: 0)
-                #if DEBUG
                 HStack(spacing: 8) {
+                    headerIcon("square.and.arrow.up") { showShare = true }
+                    #if DEBUG
                     // Dev-only: wipe all reading data (so you can test "spotting").
                     headerIcon("trash") { Task { await viewModel.clearMockData(year: year) } }
                     // Dev-only: seed randomized mock data (clears the year first).
                     headerIcon("dice") { Task { await viewModel.injectDenseMockData(year: year) } }
+                    #endif
                 }
-                #endif
             }
             .padding(.horizontal, 16)
         }
@@ -197,7 +204,8 @@ struct MemoryGardenView: View {
                     isLeaving: revealStage == .landed,
                     onUnveil: unveil,
                     onLand: land,
-                    onSkip: skip
+                    onSkip: skip,
+                    onShare: { showRevealShare = true }
                 )
             }
         }
@@ -212,6 +220,29 @@ struct MemoryGardenView: View {
                 books: viewModel.loadedBooks,
                 ink: ink
             )
+        }
+        .sheet(isPresented: $showShare) {
+            ShareCardPreviewSheet(
+                year: year,
+                name: UserProfileStore.shared.load().displayName ?? "",
+                stats: ShareStats.forYear(year, activities: viewModel.dailyActivities, books: viewModel.loadedBooks),
+                durations: shareDurations,
+                columns: columnCount,
+                theme: shareTheme,
+                defaultLine: "a year of looking up"
+            )
+        }
+        .sheet(isPresented: $showRevealShare) {
+            if let req = revealRequest {
+                DoodleSharePreviewSheet(
+                    doodleName: req.doodleName,
+                    phrase: DoodleCatalog.phrase(for: req.doodleName),
+                    date: req.date,
+                    name: UserProfileStore.shared.load().displayName ?? "",
+                    book: revealMajorBook(for: req.date),
+                    theme: shareTheme
+                )
+            }
         }
         .onAppear {
             if let req = revealRequest {
@@ -395,4 +426,26 @@ struct MemoryGardenView: View {
         return f
     }()
 
+    // MARK: Share
+
+    /// Settled per-day durations for the share card (today/future stay dots).
+    private var shareDurations: [TimeInterval] {
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        return daysInYear.map { date in
+            guard date < todayStart else { return 0 }
+            return viewModel.dailyActivities[Self.dayKeyFormatter.string(from: date)]?.duration ?? 0
+        }
+    }
+
+    /// The app theme's colors resolved to concrete values for the share renderer
+    /// (which has no `@Environment`).
+    private var shareTheme: ShareCardTheme {
+        ShareCardTheme.resolved(
+            background: theme.colors.background,
+            ink: ink,   // the one garden ink — consistent everywhere
+            primary: theme.colors.primary,
+            secondary: theme.colors.secondary,
+            scheme: colorScheme
+        )
+    }
 }

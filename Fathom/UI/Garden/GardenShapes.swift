@@ -4,6 +4,14 @@ import UIKit
 // MARK: - Color adaptation
 
 extension Color {
+    /// The garden's single doodle ink, used on *every* surface (year grid, month
+    /// grid, day sheet, observatory, share cards) so the doodles are one
+    /// consistent color. Deep blue on light backgrounds; a brighter periwinkle on
+    /// dark, where the deep blue is too low-luminance to stand out.
+    static func gardenInk(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(hex: "8AA6FF") : Color(hex: "1530E6")
+    }
+
     /// Returns a copy with scaled saturation and a brightness delta (clamped 0...1).
     /// Used to derive the sky's ink from the app accent so it keeps proper
     /// contrast on whichever background the theme sets.

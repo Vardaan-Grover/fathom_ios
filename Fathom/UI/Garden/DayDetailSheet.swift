@@ -69,13 +69,44 @@ struct DayDetailSheet: View {
             .padding(.horizontal, 26)
             .padding(.bottom, 40)
         }
+        .overlay(alignment: .topTrailing) {
+            // Only a settled doodle is worth sharing.
+            if let doodleName {
+                Button { presentShare(doodleName) } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(ink)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(ink.opacity(colorScheme == .dark ? 0.16 : 0.08)))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 16)
+                .padding(.trailing, 18)
+            }
+        }
         .background(sheetBackground.ignoresSafeArea())
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .sheet(isPresented: $showShare) {
+            DoodleSharePreviewSheet(
+                doodleName: doodleName ?? "",
+                phrase: doodleName.map { DoodleCatalog.phrase(for: $0) } ?? "",
+                date: date,
+                name: UserProfileStore.shared.load().displayName ?? "",
+                book: rankedBooks.first?.book,
+                theme: ShareCardTheme.resolved(
+                    background: theme.colors.background, ink: ink,
+                    primary: theme.colors.primary, secondary: theme.colors.secondary,
+                    scheme: colorScheme)
+            )
+        }
         .onAppear {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.72)) { appeared = true }
         }
     }
+
+    @State private var showShare = false
+    private func presentShare(_ name: String) { showShare = true }
 
     // MARK: Doodle (no frame — just a soft glow behind it)
 
@@ -83,7 +114,7 @@ struct DayDetailSheet: View {
         ZStack {
             if doodleName != nil {
                 RadialGradient(
-                    colors: [ink.opacity(colorScheme == .dark ? 0.45 : 0.18), .clear],
+                    colors: [ink.opacity(colorScheme == .dark ? 0.3 : 0.12), .clear],
                     center: .center, startRadius: 2, endRadius: 120
                 )
                 .frame(width: 240, height: 210)
@@ -97,8 +128,8 @@ struct DayDetailSheet: View {
                     .scaledToFit()
                     .foregroundStyle(ink)
                     .frame(height: 120)
-                    .shadow(color: ink.opacity(colorScheme == .dark ? 0.55 : 0.18), radius: 8)
-                    .shadow(color: ink.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 16)
+                    .shadow(color: ink.opacity(colorScheme == .dark ? 0.38 : 0.12), radius: 7)
+                    .shadow(color: ink.opacity(colorScheme == .dark ? 0.2 : 0.06), radius: 13)
             } else if isForming {
                 // Today: still being spotted — a doodle-style dashed ring.
                 Circle()

@@ -24,11 +24,8 @@ struct ObservatoryView: View {
         _viewModel = StateObject(wrappedValue: ObservatoryViewModel(repository: bookRepository))
     }
 
-    /// The garden's deep-blue ink, matched here so the home emblem belongs to it.
-    private var ink: Color {
-        let base = Color(hex: "1530E6")
-        return colorScheme == .dark ? base.adjusted(saturationScale: 1, brightnessDelta: 0.12) : base
-    }
+    /// The one garden ink, so the home emblem matches the doodles everywhere.
+    private var ink: Color { .gardenInk(colorScheme) }
 
     private var phase: ObservatoryViewModel.Phase { viewModel.phase }
 

@@ -21,6 +21,7 @@ struct RevealOverlay: View {
     var onUnveil: () -> Void
     var onLand: () -> Void
     var onSkip: () -> Void = {}
+    var onShare: () -> Void = {}
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -95,10 +96,18 @@ struct RevealOverlay: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(Capsule().fill(ink))
-                        .shadow(color: ink.opacity(0.4), radius: 12, y: 6)
+                        .shadow(color: ink.opacity(0.22), radius: 8, y: 4)
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 10)
+
+                Button(action: onShare) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .font(.system(size: 14, weight: .semibold, design: .serif))
+                        .foregroundColor(ink)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
             }
         }
         .padding(28)
@@ -116,7 +125,7 @@ struct RevealOverlay: View {
     private var hero: some View {
         ZStack {
             // A glow that's brighter while frosted (the "something's there" pull).
-            RadialGradient(colors: [ink.opacity(isFrosted ? 0.5 : 0.32), .clear],
+            RadialGradient(colors: [ink.opacity(isFrosted ? 0.34 : 0.2), .clear],
                            center: .center, startRadius: 2, endRadius: 100)
                 .frame(width: 200, height: 160)
                 .blur(radius: 16)
@@ -127,7 +136,7 @@ struct RevealOverlay: View {
                 .scaledToFit()
                 .foregroundStyle(ink)
                 .frame(height: 116)
-                .shadow(color: ink.opacity(0.4), radius: 10)
+                .shadow(color: ink.opacity(0.25), radius: 8)
                 .matchedGeometryEffect(id: "revealHero", in: heroNamespace)
                 .blur(radius: isFrosted ? 13 : 0)
         }

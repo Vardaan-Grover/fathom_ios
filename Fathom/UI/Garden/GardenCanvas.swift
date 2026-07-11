@@ -12,6 +12,8 @@ struct GardenCanvas: View {
     let durations: [TimeInterval]
     let ink: Color
     let columns: Int
+    /// Per-day flag: a backfilled "remembered" night, rendered ghosted.
+    var remembered: [Bool] = []
     /// When false (e.g. the year is hidden behind a restored month view), the
     /// bloom + haptics are skipped and the garden shows settled immediately.
     var animateBloom: Bool = true
@@ -26,6 +28,7 @@ struct GardenCanvas: View {
     // it's built immediately; the doodles are (re)built when the data arrives.
     @State private var dotSprites: [GardenSprite] = []
     @State private var doodleSprites: [GardenSprite] = []
+    @State private var activeSymbols: [String] = []
     @State private var canvasSize: CGSize = .zero
     @State private var startDate = Date()
     @State private var revealComplete = false
@@ -64,7 +67,7 @@ struct GardenCanvas: View {
                     Canvas { context, _ in
                         drawDoodles(into: context, reveal: reveal)
                     } symbols: {
-                        ForEach(DoodleCatalog.allAssetNames, id: \.self) { name in
+                        ForEach(activeSymbols, id: \.self) { name in
                             symbol(for: name)
                         }
                     }
@@ -88,6 +91,8 @@ struct GardenCanvas: View {
             .onAppear { rebuild(size: geo.size, animate: !hasBloomed) }
             .onChange(of: geo.size) { _, newSize in rebuild(size: newSize, animate: !hasBloomed) }
             .onChange(of: durations) { _, _ in rebuild(size: geo.size, animate: true) }
+            // Backfilling a night updates the ghosted doodles without re-blooming.
+            .onChange(of: remembered) { _, _ in rebuild(size: geo.size, animate: false) }
         }
         // Modern selection feedback (replaces a manual UIImpactFeedbackGenerator).
         .sensoryFeedback(.selection, trigger: selectionTick)
@@ -105,7 +110,13 @@ struct GardenCanvas: View {
         canvasSize = size
         // Dots first — they paint immediately, even before any reading data loads.
         dotSprites = buildDotGrid(count: durations.count, size: size, columns: columns)
-        doodleSprites = buildDoodleSprites(durations: durations, size: size, columns: columns)
+        doodleSprites = buildDoodleSprites(durations: durations, size: size, columns: columns, remembered: remembered)
+        activeSymbols = Array(Set(doodleSprites.compactMap { sprite -> String? in
+            if case .doodle(let symbolID, _) = sprite.kind {
+                return symbolID
+            }
+            return nil
+        })).sorted()
         completionTask?.cancel()
 
         // No bloom: a non-animating relayout, the year isn't the active view,
@@ -173,11 +184,12 @@ struct GardenCanvas: View {
             guard let symbol = context.resolveSymbol(id: id) else { continue }
             let opacity = 1 - pow(1 - local, 3)               // easeOutCubic fade
             let dim = sprite.baseDim * CGFloat(0.4 + 0.6 * easeOutBack(local))  // subtle overshoot
-            context.drawLayer { layer in
-                layer.opacity = opacity
-                layer.translateBy(x: sprite.center.x, y: sprite.center.y)
-                layer.draw(symbol, in: CGRect(x: -dim / 2, y: -dim / 2, width: dim, height: dim))
-            }
+            
+            // Optimization: Copy context to apply opacity and transform, avoiding costly drawLayer allocations.
+            var spriteContext = context
+            spriteContext.opacity = opacity * Double(sprite.dimming)   // ghost remembered nights
+            spriteContext.translateBy(x: sprite.center.x, y: sprite.center.y)
+            spriteContext.draw(symbol, in: CGRect(x: -dim / 2, y: -dim / 2, width: dim, height: dim))
         }
     }
 

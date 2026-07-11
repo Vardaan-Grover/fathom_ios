@@ -113,12 +113,13 @@ struct DayDetailSheet: View {
     @ViewBuilder private var doodle: some View {
         ZStack {
             if doodleName != nil {
+                // A pure RadialGradient is highly optimized in CoreAnimation.
+                // Removed the expensive and redundant .blur modifier for performance.
                 RadialGradient(
                     colors: [ink.opacity(colorScheme == .dark ? 0.3 : 0.12), .clear],
                     center: .center, startRadius: 2, endRadius: 120
                 )
                 .frame(width: 240, height: 210)
-                .blur(radius: 18)
             }
 
             if let doodleName {
@@ -128,8 +129,13 @@ struct DayDetailSheet: View {
                     .scaledToFit()
                     .foregroundStyle(ink)
                     .frame(height: 120)
+                    // Apply drawingGroup on the image itself, caching the image and its shadows.
+                    // This allows CoreAnimation to perform scale transformations on a static texture.
                     .shadow(color: ink.opacity(colorScheme == .dark ? 0.38 : 0.12), radius: 7)
                     .shadow(color: ink.opacity(colorScheme == .dark ? 0.2 : 0.06), radius: 13)
+                    .padding(24) // Give the shadows enough room so they don't get clipped by drawingGroup
+                    .drawingGroup()
+                    .padding(-24) // Negate the padding to keep original layout bounds
             } else if isForming {
                 // Today: still being spotted — a doodle-style dashed ring.
                 Circle()

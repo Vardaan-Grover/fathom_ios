@@ -172,6 +172,9 @@ struct GardenSprite {
     /// How long a doodle takes to bloom, as a fraction of the reveal.
     let bloomSpan: Double
     let kind: Kind
+    /// Opacity multiplier applied on top of the bloom envelope — < 1 ghosts a
+    /// "remembered" (backfilled, pre-Fathom) night.
+    var dimming: CGFloat = 1
 }
 
 enum GardenLayout {
@@ -231,7 +234,8 @@ func buildDotGrid(count: Int, size: CGSize, columns: Int) -> [GardenSprite] {
 
 /// The blooming doodles — one per reading day. Built when the durations arrive
 /// (or change), and overlaid on the dot grid.
-func buildDoodleSprites(durations: [TimeInterval], size: CGSize, columns: Int) -> [GardenSprite] {
+func buildDoodleSprites(durations: [TimeInterval], size: CGSize, columns: Int,
+                        remembered: [Bool] = []) -> [GardenSprite] {
     guard size.width > 0, size.height > 0, !durations.isEmpty else { return [] }
     let (cellW, cellH, rows) = GardenLayout.metrics(count: durations.count, size: size, columns: columns)
     let cell = min(cellW, cellH)
@@ -243,6 +247,8 @@ func buildDoodleSprites(durations: [TimeInterval], size: CGSize, columns: Int) -
         guard let name = DoodleCatalog.assetName(forDayOfYear: index + 1, duration: durations[index]) else {
             continue
         }
+        // A backfilled "remembered" night renders ghosted (never fakes tracked history).
+        let isRemembered = index < remembered.count && remembered[index]
         let row = index / columns
 
         // Top-down sweep: each row starts a little after the one above it. A
@@ -276,7 +282,8 @@ func buildDoodleSprites(durations: [TimeInterval], size: CGSize, columns: Int) -
             radius: baseDim * 0.5,
             bloomStart: start,
             bloomSpan: window,
-            kind: .doodle(symbolID: name, hapticStrength: strength)
+            kind: .doodle(symbolID: name, hapticStrength: strength),
+            dimming: isRemembered ? 0.4 : 1
         ))
     }
     return sprites

@@ -19,6 +19,7 @@ struct BookCompletionScreen: View {
     @State private var screenAlpha: Double = 0
     @State private var reflectionFocused: Bool = false
     @State private var showDiscardAlert: Bool = false
+    @State private var showShare: Bool = false
 
     private let originalRating: Int
     private let originalReflection: String
@@ -169,6 +170,21 @@ struct BookCompletionScreen: View {
         } message: {
             Text("Your changes will not be saved.")
         }
+        .sheet(isPresented: $showShare) {
+            BookSharePreviewSheet(
+                book: book,
+                bookRepository: bookRepository,
+                rating: rating,
+                finishedDate: finishedDate,
+                name: UserProfileStore.shared.load().displayName ?? "",
+                theme: ShareCardTheme.resolved(
+                    background: theme.colors.background,
+                    ink: .gardenInk(colorScheme),
+                    primary: theme.colors.primary,
+                    secondary: theme.colors.secondary,
+                    scheme: colorScheme)
+            )
+        }
         .onChange(of: selectedPhotoItem) { _, newItem in
             Task {
                 if let data = try? await newItem?.loadTransferable(type: Data.self),
@@ -217,14 +233,22 @@ struct BookCompletionScreen: View {
             .padding(.leading, theme.layout.horizontalPadding)
         }
         .overlay(alignment: .trailing) {
-            if !isEditing {
-                Button("Skip") {
-                    requestDismiss()
+            HStack(spacing: 12) {
+                Button { showShare = true } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.colors.primary)
+                        .frame(width: 32, height: 32)
+                        .background(theme.colors.surface, in: Circle())
+                        .overlay(Circle().strokeBorder(theme.colors.separator.opacity(0.5), lineWidth: 1))
                 }
-                .font(theme.typography.subheadline)
-                .foregroundColor(theme.colors.secondary)
-                .padding(.trailing, theme.layout.horizontalPadding)
+                if !isEditing {
+                    Button("Skip") { requestDismiss() }
+                        .font(theme.typography.subheadline)
+                        .foregroundColor(theme.colors.secondary)
+                }
             }
+            .padding(.trailing, theme.layout.horizontalPadding)
         }
         .padding(.top, 16)
     }

@@ -82,6 +82,37 @@ struct MemoryGardenView: View {
     @State private var showShare = false
     @State private var showRevealShare = false
 
+    // Backfill: mark past nights you read before Fathom (ghosted, visual-only).
+    @State private var remembered: Set<String> = RememberedNights.load()
+    @State private var backfillMode = false
+
+    /// Toggle a past, untracked day as a "remembered" night.
+    private func toggleRemembered(_ date: Date) {
+        guard date < Calendar.current.startOfDay(for: Date()) else { return }  // past only
+        let key = Self.dayKeyFormatter.string(from: date)
+        // Never overwrite a real tracked night.
+        guard (viewModel.dailyActivities[key]?.duration ?? 0) == 0 else { return }
+        if remembered.contains(key) { remembered.remove(key) } else { remembered.insert(key) }
+        RememberedNights.save(remembered)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    /// Nights read + hours for the currently-shown month (settled nights only).
+    private func monthShareStats() -> (nights: Int, hours: String) {
+        let cal = Calendar.current
+        let todayStart = cal.startOfDay(for: Date())
+        var nights = 0
+        var seconds: TimeInterval = 0
+        for (_, activity) in viewModel.dailyActivities where activity.duration > 0 {
+            let c = cal.dateComponents([.year, .month], from: activity.date)
+            guard c.year == year, c.month == currentMonth else { continue }
+            seconds += activity.duration
+            if activity.date < todayStart { nights += 1 }
+        }
+        let h = seconds / 3600
+        return (nights, h >= 1 ? String(Int(h.rounded())) : "<1")
+    }
+
     /// The book that most of a day's reading came from (for the reveal share card).
     private func revealMajorBook(for date: Date) -> Book? {
         let key = Self.dayKeyFormatter.string(from: date)
@@ -132,6 +163,9 @@ struct MemoryGardenView: View {
                 headerIcon("xmark") { dismiss() }
                 Spacer(minLength: 0)
                 HStack(spacing: 8) {
+                    headerIcon(backfillMode ? "checkmark" : "wand.and.stars") {
+                        withAnimation(.easeInOut(duration: 0.2)) { backfillMode.toggle() }
+                    }
                     headerIcon("square.and.arrow.up") { showShare = true }
                     #if DEBUG
                     // Dev-only: wipe all reading data (so you can test "spotting").
@@ -186,11 +220,21 @@ struct MemoryGardenView: View {
                 header
                     .padding(.top, 14)
 
-                Text(mode == .year ? "Pinch to open a month" : "Pinch to step back")
-                    .font(.caption2)
-                    .foregroundColor(theme.colors.secondary)
-                    .opacity((hasZoomed || revealRequest != nil) ? 0 : 0.6)
-                    .animation(.easeInOut, value: hasZoomed)
+                if backfillMode {
+                    Text("Tap the nights you read before Fathom")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(ink)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(ink.opacity(colorScheme == .dark ? 0.16 : 0.08)))
+                        .transition(.opacity)
+                } else {
+                    Text(mode == .year ? "Pinch to open a month" : "Pinch to step back")
+                        .font(.caption2)
+                        .foregroundColor(theme.colors.secondary)
+                        .opacity((hasZoomed || revealRequest != nil) ? 0 : 0.6)
+                        .animation(.easeInOut, value: hasZoomed)
+                }
 
                 zoomContainer
             }
@@ -222,15 +266,29 @@ struct MemoryGardenView: View {
             )
         }
         .sheet(isPresented: $showShare) {
-            ShareCardPreviewSheet(
-                year: year,
-                name: UserProfileStore.shared.load().displayName ?? "",
-                stats: ShareStats.forYear(year, activities: viewModel.dailyActivities, books: viewModel.loadedBooks),
-                durations: shareDurations,
-                columns: columnCount,
-                theme: shareTheme,
-                defaultLine: "a year of looking up"
-            )
+            if mode == .month {
+                let s = monthShareStats()
+                MonthSharePreviewSheet(
+                    year: year,
+                    month: currentMonth,
+                    name: UserProfileStore.shared.load().displayName ?? "",
+                    nights: s.nights,
+                    hours: s.hours,
+                    activities: viewModel.dailyActivities,
+                    theme: shareTheme,
+                    defaultLine: "a month of looking up"
+                )
+            } else {
+                ShareCardPreviewSheet(
+                    year: year,
+                    name: UserProfileStore.shared.load().displayName ?? "",
+                    stats: ShareStats.forYear(year, activities: viewModel.dailyActivities, books: viewModel.loadedBooks),
+                    durations: shareDurations,
+                    columns: columnCount,
+                    theme: shareTheme,
+                    defaultLine: "a year of looking up"
+                )
+            }
         }
         .sheet(isPresented: $showRevealShare) {
             if let req = revealRequest {
@@ -325,12 +383,18 @@ struct MemoryGardenView: View {
                     ink: ink,
                     revealTrigger: monthRevealTrigger,
                     onSelectDate: { date in
-                        let doy = Calendar.current.ordinality(of: .day, in: .year, for: date) ?? 1
-                        select(date, dayOfYear: doy)
+                        if backfillMode {
+                            toggleRemembered(date)
+                        } else {
+                            let doy = Calendar.current.ordinality(of: .day, in: .year, for: date) ?? 1
+                            select(date, dayOfYear: doy)
+                        }
                     },
                     heroNamespace: heroNS,
                     revealDay: revealDay,
-                    revealLanded: revealLanded
+                    revealLanded: revealLanded,
+                    remembered: remembered,
+                    backfillMode: backfillMode
                 )
                 .scaleEffect(0.92 + zoomT * 0.08, anchor: zoomAnchor)
                 .opacity(Double(zoomT))
@@ -393,16 +457,29 @@ struct MemoryGardenView: View {
         // it's complete. Today (and any future day) stays a dot — its doodle is
         // still being spotted and is revealed the next day.
         let todayStart = Calendar.current.startOfDay(for: Date())
-        let durations = daysInYear.map { date -> TimeInterval in
-            guard date < todayStart else { return 0 }
-            return viewModel.dailyActivities[Self.dayKeyFormatter.string(from: date)]?.duration ?? 0
+        // Each day is either tracked (solid), remembered/backfilled (ghosted), or empty.
+        let dayData: [(duration: TimeInterval, remembered: Bool)] = daysInYear.enumerated().map { i, date in
+            guard date < todayStart else { return (0, false) }
+            let key = Self.dayKeyFormatter.string(from: date)
+            if let tracked = viewModel.dailyActivities[key]?.duration, tracked > 0 {
+                return (tracked, false)
+            }
+            if remembered.contains(key) {
+                return (RememberedNights.duration(forDayOfYear: i + 1), true)
+            }
+            return (0, false)
         }
         return GardenCanvas(
-            durations: durations, ink: ink, columns: columnCount,
+            durations: dayData.map(\.duration), ink: ink, columns: columnCount,
+            remembered: dayData.map(\.remembered),
             animateBloom: mode == .year   // stay silent if restored into month view
         ) { index in
-            // Open the day-detail sheet. (Selection haptic is inside GardenCanvas.)
-            select(daysInYear[index], dayOfYear: index + 1)
+            if backfillMode {
+                toggleRemembered(daysInYear[index])
+            } else {
+                // Open the day-detail sheet. (Selection haptic is inside GardenCanvas.)
+                select(daysInYear[index], dayOfYear: index + 1)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 90)  // clear the floating tab bar

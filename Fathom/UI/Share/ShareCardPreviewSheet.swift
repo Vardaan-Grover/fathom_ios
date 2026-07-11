@@ -97,7 +97,12 @@ struct ShareCardPreviewSheet: View {
     private var preview: some View {
         GeometryReader { geo in
             let s = format.renderSize
-            let scale = min((geo.size.width - 44) / s.width, (geo.size.height - 20) / s.height)
+            let scale: CGFloat = {
+                let w = (geo.size.width - 44) / s.width
+                let h = (geo.size.height - 20) / s.height
+                let val = min(w, h)
+                return val.isFinite && val > 0 ? val : 0
+            }()
             card(for: format)
                 .frame(width: s.width, height: s.height)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))

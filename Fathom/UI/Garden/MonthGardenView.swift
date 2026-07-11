@@ -22,11 +22,15 @@ struct MonthGardenView: View {
     var revealDay: Date? = nil
     var revealLanded: Bool = false
 
+    // Backfill: "remembered" nights render ghosted; `backfillMode` shows their
+    // placeholders as inviting slots (handled by the caller's tap routing).
+    var remembered: Set<String> = []
+    var backfillMode: Bool = false
+
     @Environment(\.appTheme) private var theme
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var revealProgress: Double = 0
     @State private var haptics = GardenHaptics()
 
     private let revealDuration: Double = 1.0
@@ -46,7 +50,33 @@ struct MonthGardenView: View {
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 6) {
                 ForEach(Array(cells.enumerated()), id: \.offset) { index, date in
-                    dayCell(date, index: index)
+                    if let date {
+                        let key = Self.key.string(from: date)
+                        let duration = activities[key]?.duration ?? 0
+                        let tracked = settledDoodle(for: date, duration: duration)
+                        let isRemembered = tracked == nil
+                            && remembered.contains(key)
+                            && date < calendar.startOfDay(for: Date())
+                        let doodle = tracked ?? (isRemembered ? rememberedDoodle(for: date) : nil)
+                        let isReveal = revealDay.map { calendar.isDate(date, inSameDayAs: $0) } ?? false
+
+                        MonthDayCell(
+                            date: date,
+                            index: index,
+                            totalCells: cells.count,
+                            duration: duration,
+                            doodleName: doodle,
+                            ghosted: isRemembered,
+                            isReveal: isReveal,
+                            revealLanded: revealLanded,
+                            ink: ink,
+                            onSelect: { onSelectDate(date) },
+                            heroNamespace: heroNamespace
+                        )
+                        .id("\(revealTrigger)-\(index)")
+                    } else {
+                        Color.clear.frame(height: 62)
+                    }
                 }
             }
 
@@ -77,82 +107,11 @@ struct MonthGardenView: View {
         }
     }
 
-    // MARK: Day cell
-
-    @ViewBuilder private func dayCell(_ date: Date?, index: Int) -> some View {
-        if let date {
-            let key = Self.key.string(from: date)
-            let duration = activities[key]?.duration ?? 0
-            let dayNum = calendar.component(.day, from: date)
-            let doodle = settledDoodle(for: date, duration: duration)
-            let today = calendar.isDateInToday(date)
-            let bloom = cellBloom(index)
-            let isReveal = revealDay.map { calendar.isDate(date, inSameDayAs: $0) } ?? false
-            // Suppress the reveal day's doodle until it has flown in.
-            let shownDoodle: String? = isReveal ? (revealLanded ? doodle : nil) : doodle
-
-            Button {
-                onSelectDate(date)
-            } label: {
-                VStack(spacing: 3) {
-                    ZStack {
-                        if let shownDoodle {
-                            doodleImage(shownDoodle)
-                                .modifier(RevealCellModifier(
-                                    isHero: isReveal && revealLanded,
-                                    namespace: heroNamespace,
-                                    bloom: bloom
-                                ))
-                        } else {
-                            Circle()
-                                .fill(ink.opacity(0.16))
-                                .frame(width: 5, height: 5)
-                        }
-                    }
-                    .frame(height: 40)
-
-                    Text("\(dayNum)")
-                        .font(.system(size: 10, weight: today ? .bold : .medium, design: .serif))
-                        .foregroundColor(today ? theme.colors.background : (shownDoodle != nil ? ink.opacity(0.75) : theme.colors.secondary.opacity(0.6)))
-                        .frame(width: 18, height: 16)
-                        .background(today ? Circle().fill(ink).frame(width: 18, height: 18) : nil)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 62)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        } else {
-            Color.clear.frame(height: 62)
-        }
-    }
-
-    private func doodleImage(_ name: String) -> some View {
-        Image(name)
-            .renderingMode(.template)
-            .resizable()
-            .scaledToFit()
-            .foregroundStyle(ink)
-            .frame(height: 38)
-            // Soft two-layer glow (gentler on light paper).
-            .shadow(color: ink.opacity(colorScheme == .dark ? 0.6 : 0.3), radius: 4)
-            .shadow(color: ink.opacity(colorScheme == .dark ? 0.35 : 0.14), radius: 9)
-    }
-
     // MARK: Reveal
-
-    /// Per-cell eased bloom 0→1, staggered top-to-bottom by grid position.
-    private func cellBloom(_ index: Int) -> Double {
-        let start = Double(index) / Double(max(1, cells.count)) * (1 - cellWindow)
-        let local = max(0, min(1, (revealProgress - start) / cellWindow))
-        return 1 - pow(1 - local, 3)  // easeOutCubic
-    }
 
     /// Restart the staggered bloom and fire one soft tick per doodle as it lands.
     private func playReveal() {
-        guard !reduceMotion else { revealProgress = 1; return }
-        revealProgress = 0
-        withAnimation(.easeOut(duration: revealDuration)) { revealProgress = 1 }
+        guard !reduceMotion else { return }
 
         guard !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
         var times: [Double] = []
@@ -186,6 +145,12 @@ struct MonthGardenView: View {
         return DoodleCatalog.assetName(forDayOfYear: doy, duration: duration)
     }
 
+    /// The doodle for a backfilled "remembered" night (deterministic pseudo-tier).
+    private func rememberedDoodle(for date: Date) -> String? {
+        let doy = calendar.ordinality(of: .day, in: .year, for: date) ?? 1
+        return DoodleCatalog.assetName(forDayOfYear: doy, duration: RememberedNights.duration(forDayOfYear: doy))
+    }
+
     // MARK: Calendar math
 
     private var startOfMonth: Date {
@@ -213,8 +178,97 @@ struct MonthGardenView: View {
         let next = month + delta
         guard (1...12).contains(next) else { return }
         // Navigating months doesn't re-bloom — the reveal is a one-time arrival
-        // moment. The new month's doodles are simply shown (revealProgress is 1).
+        // moment. The new month's doodles are simply shown.
         withAnimation(.easeInOut(duration: 0.2)) { month = next }
+    }
+}
+
+// MARK: - MonthDayCell
+
+struct MonthDayCell: View {
+    let date: Date
+    let index: Int
+    let totalCells: Int
+    let duration: TimeInterval
+    let doodleName: String?
+    var ghosted: Bool = false
+    let isReveal: Bool
+    let revealLanded: Bool
+    let ink: Color
+    let onSelect: () -> Void
+    let heroNamespace: Namespace.ID?
+
+    @Environment(\.appTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var isVisible: Bool = false
+
+    var body: some View {
+        let dayNum = Calendar.current.component(.day, from: date)
+        let today = Calendar.current.isDateInToday(date)
+        let shownDoodle = isReveal ? (revealLanded ? doodleName : nil) : doodleName
+
+        Button {
+            onSelect()
+        } label: {
+            VStack(spacing: 3) {
+                ZStack {
+                    if let shownDoodle {
+                        Image(shownDoodle)
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
+                            .foregroundStyle(ink)
+                            .frame(height: 38)
+                            // Soft two-layer glow (gentler on light paper).
+                            .shadow(color: ink.opacity(colorScheme == .dark ? 0.6 : 0.3), radius: 4)
+                            .shadow(color: ink.opacity(colorScheme == .dark ? 0.35 : 0.14), radius: 9)
+                            .padding(14) // Give the shadows enough room so they don't get clipped by drawingGroup
+                            .drawingGroup()
+                            .padding(-14) // Negate the padding to keep original layout bounds
+                            .opacity(ghosted ? 0.4 : 1)   // ghost a remembered night
+                            .modifier(RevealCellModifier(
+                                isHero: isReveal && revealLanded,
+                                namespace: heroNamespace,
+                                isVisible: isVisible
+                            ))
+                    } else {
+                        Circle()
+                            .fill(ink.opacity(0.16))
+                            .frame(width: 5, height: 5)
+                    }
+                }
+                .frame(height: 40)
+
+                Text("\(dayNum)")
+                    .font(.system(size: 10, weight: today ? .bold : .medium, design: .serif))
+                    .foregroundColor(today ? theme.colors.background : (shownDoodle != nil ? ink.opacity(0.75) : theme.colors.secondary.opacity(0.6)))
+                    .frame(width: 18, height: 16)
+                    .background(today ? Circle().fill(ink).frame(width: 18, height: 18) : nil)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 62)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onAppear {
+            triggerAnimation()
+        }
+    }
+
+    private func triggerAnimation() {
+        if reduceMotion {
+            isVisible = true
+            return
+        }
+        isVisible = false
+        // Staggered delay based on cell index.
+        let cellWindow = 0.5
+        let startDelay = (Double(index) / Double(max(1, totalCells))) * (1.0 - cellWindow)
+        withAnimation(.easeOut(duration: 0.5).delay(startDelay)) {
+            isVisible = true
+        }
     }
 }
 
@@ -223,13 +277,15 @@ struct MonthGardenView: View {
 private struct RevealCellModifier: ViewModifier {
     let isHero: Bool
     let namespace: Namespace.ID?
-    let bloom: Double
+    let isVisible: Bool
 
     func body(content: Content) -> some View {
         if isHero, let namespace {
             content.matchedGeometryEffect(id: "revealHero", in: namespace)
         } else {
-            content.scaleEffect(0.5 + 0.5 * bloom).opacity(bloom)
+            content
+                .scaleEffect(isVisible ? 1.0 : 0.5)
+                .opacity(isVisible ? 1.0 : 0.0)
         }
     }
 }

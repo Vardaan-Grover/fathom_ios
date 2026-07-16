@@ -165,9 +165,6 @@ import SwiftUI
 
         var themeBackground: UIColor {
             didSet {
-                pageCache.removeAll()
-                pageCacheKeys.removeAll()
-                pendingCachePage = nil
                 currentPageVC?.background = themeBackground
                 destinationPageVC?.background = themeBackground
                 backPageVC?.background = themeBackground
@@ -192,46 +189,12 @@ import SwiftUI
         private var currentPosition: Int?
         private var lastTotalProgression: Double?
         private var isRTL = false
-        
-        private struct CachedPage {
-            let image: UIImage
-            let frame: CGRect
-        }
 
-        /// A captured destination bitmap waiting for a position to be filed
-        /// under. `navigator.currentLocation` is debounced (it only recomputes
-        /// once the navigator returns to idle, on a 0.1s poll), so at capture
-        /// time it still reports the page we turned *away* from — keying on it
-        /// files every image one position off. `noteLocation` commits this once
-        /// the real destination location settles.
-        private struct PendingCachePage {
-            let image: UIImage
-            let frame: CGRect
-            /// Guards the revert path: a cancelled pre-turn settles back on the
-            /// source, and this image is not that page.
-            let sourcePosition: Int?
-        }
-        private var pendingCachePage: PendingCachePage?
-        /// Position the in-flight pre-turn started from, sampled before the
-        /// navigator moves.
-        private var turnSourcePosition: Int?
-        private var pageCache: [Int: CachedPage] = [:]
-        private var pageCacheKeys: [Int] = []
-        /// Lookups only ever ask for `currentPosition ± 1`, so a window this
-        /// small preserves every reachable hit. Each entry is a full-screen
-        /// bitmap (~12 MB at 3x) and the reader is already jetsam-sensitive,
-        /// so a larger bound would cost memory it can never repay.
-        private static let pageCacheLimit = 4
-        private func cachePage(image: UIImage, frame: CGRect, for position: Int) {
-            if pageCache[position] == nil {
-                pageCacheKeys.append(position)
-                if pageCacheKeys.count > Self.pageCacheLimit {
-                    let oldest = pageCacheKeys.removeFirst()
-                    pageCache.removeValue(forKey: oldest)
-                }
-            }
-            pageCache[position] = CachedPage(image: image, frame: frame)
-        }
+        // Both directions show the theme background until the destination
+        // bitmap lands (~50ms). There is deliberately no snapshot cache: it
+        // would need a destination position, and the only reliable source of
+        // one arrives too late to prime a placeholder with. See
+        // `captureDestinationSnapshot`.
 
         private(set) var isInstalled = false
 
@@ -317,19 +280,6 @@ import SwiftUI
         func noteLocation(_ locator: Locator) {
             currentPosition = locator.locations.position
             lastTotalProgression = locator.locations.totalProgression
-
-            // File any freshly captured bitmap under the position the navigator
-            // actually settled on. Skipped when we've landed back on the page
-            // the turn started from — that's a revert, and the pending image
-            // belongs to the destination we backed out of.
-            if let pending = pendingCachePage {
-                pendingCachePage = nil
-                if let position = locator.locations.position,
-                   position != pending.sourcePosition
-                {
-                    cachePage(image: pending.image, frame: pending.frame, for: position)
-                }
-            }
         }
 
         // MARK: - Programmatic turns (tap zones)
@@ -362,13 +312,6 @@ import SwiftUI
 
             state = .programmatic(direction)
             let destination = SnapshotPageViewController(background: themeBackground)
-            let forward = (direction == .right) != isRTL
-            if let current = currentPosition {
-                let targetPosition = forward ? current + 1 : current - 1
-                if let cached = pageCache[targetPosition] {
-                    destination.setImage(cached.image, frame: cached.frame)
-                }
-            }
             destinationPageVC = destination
             let back = SnapshotPageViewController(background: themeBackground)
             backPageVC = back
@@ -404,9 +347,6 @@ import SwiftUI
         /// Used on rotation, backgrounding and uninstall — the snapshots are
         /// stale for the new environment anyway.
         func abortForEnvironmentChange() {
-            pageCache.removeAll()
-            pageCacheKeys.removeAll()
-            pendingCachePage = nil
             guard !state.isIdle else { return }
             pendingTurns.removeAll()
             cancelPanGesture()
@@ -477,9 +417,6 @@ import SwiftUI
             backPage: SnapshotPageViewController?
         ) -> Task<Bool, Never> {
             hiddenTurnDirection = direction
-            // Sampled before the navigator moves: once it does, this is the
-            // only record of where the turn came from.
-            turnSourcePosition = currentPosition
             beginSuppression()
             suppressionActive = true
             let task = Task { [weak self] in
@@ -598,15 +535,9 @@ import SwiftUI
             if let image, !isSuspiciouslyBlank(image) {
                 destination.setImage(image, frame: frame)
                 backPage?.setFlippedImage(image, frame: frame, alpha: 0.15)
-                
-                pendingCachePage = PendingCachePage(
-                    image: image,
-                    frame: frame,
-                    sourcePosition: turnSourcePosition
-                )
 
                 let container = hostViewController as? ReaderContainerViewController
-            if let factory = container?.overlayForLocator {
+                if let factory = container?.overlayForLocator {
                     let anyView = factory(navigator.currentLocation)
                     // The destination page MUST render the UI for the new state.
                     let hosting = UIHostingController(rootView: anyView)
@@ -775,22 +706,14 @@ import SwiftUI
             guard canTurn(direction) else { return nil }
 
             let destination = SnapshotPageViewController(background: themeBackground)
-            let forward = (direction == .right) != isRTL
-            if let current = currentPosition {
-                let targetPosition = forward ? current + 1 : current - 1
-                if let cached = pageCache[targetPosition] {
-                    destination.setImage(cached.image, frame: cached.frame)
-                }
-            }
             destinationPageVC = destination
             let back = SnapshotPageViewController(background: themeBackground)
             backPageVC = back
-            
-            // The leaf curling up (current page) gets an overlay!
-            // Wait, currentPageVC is already populated via prepareOverlayShowingCurrentPage.
-            // In prepareOverlayShowingCurrentPage, it uses navigator.view.snapshotView()
-            // We should add the overlay there too.
-            
+
+            // Turning forward, the curling leaf is the current page, so its
+            // backside is a mirror of what's on screen right now. Turning back,
+            // the leaf is the destination, and its backside can only be filled
+            // once that page has been captured — hence `backPage:` below.
             if direction == .right {
                 if let backSnapshot = navigator?.view.snapshotView(afterScreenUpdates: false) {
                     back.setFlippedSnapshotView(backSnapshot, alpha: 0.15)

@@ -146,6 +146,7 @@
 			buildPhases = (
 				FA7E5705AA0000000000A005 /* Sources */,
 				FA7E5706AA0000000000A006 /* Frameworks */,
+				FA7E57F1AA0000000000AFF1 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -209,6 +210,13 @@
 
 /* Begin PBXResourcesBuildPhase section */
 		935ACF4A2F597EE8004C6F3F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FA7E57F1AA0000000000AFF1 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -567,7 +575,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/Vardaan-Grover/swift-toolkit.git";
 			requirement = {
-				branch = "fathom-highlight-anchor-fix";
+				branch = "fathom-page-curl";
 				kind = branch;
 			};
 		};

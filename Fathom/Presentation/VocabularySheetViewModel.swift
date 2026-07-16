@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import NaturalLanguage
 import SwiftUI
 
 @MainActor
@@ -13,6 +14,7 @@ final class VocabularySheetViewModel: ObservableObject {
 
     @Published public var isSaved: Bool = false
     @Published public var suggestedRootWord: String?
+    @Published public var rootWordRelationship: String?
     @Published public var canGoBack: Bool = false
     @Published private(set) var rankedDefinition: RankedDefinition?
     @Published private(set) var isRanking: Bool = false
@@ -25,8 +27,8 @@ final class VocabularySheetViewModel: ObservableObject {
         let isSaved: Bool
         let savedWordID: UUID?
         let suggestedRootWord: String?
-        let contextSentence: String?
-        let surfaceWord: String
+        let rootWordRelationship: String?
+        let sentenceContext: SentenceContext?
     }
     private var navigationStack: [WordSnapshot] = []
 
@@ -38,10 +40,15 @@ final class VocabularySheetViewModel: ObservableObject {
     let chapter: String?
     let pageNumber: Int?
     let locatorJSON: String?
-    private(set) var contextSentence: String?
-    // The exact surface form of the word as it appears in contextSentence (may differ
-    // from `word` when the user navigates to a root/lemma via the inflected-form banner).
-    private(set) var surfaceWord: String = ""
+    /// Sentence the word was selected in, with the selection's exact range.
+    /// Retained across inflected-form navigation, dropped for arbitrary lookups.
+    private(set) var sentenceContext: SentenceContext?
+    var contextSentence: String? { sentenceContext?.sentence }
+    // The exact surface form of the word as it appears in the context sentence
+    // (may differ from `word` when the user navigates to a root/lemma).
+    var surfaceWord: String { sentenceContext?.surfaceWord ?? word }
+
+    private let ranker: SenseRanker
 
     public init(
         word: String,
@@ -51,25 +58,27 @@ final class VocabularySheetViewModel: ObservableObject {
         chapter: String? = nil,
         pageNumber: Int? = nil,
         locatorJSON: String? = nil,
-        contextSentence: String? = nil,
+        sentenceContext: SentenceContext? = nil,
         service: VocabularyService = .shared,
-        repository: VocabularyRepository  // Injected properly via Container
+        repository: VocabularyRepository,  // Injected properly via Container
+        ranker: SenseRanker = EmbeddingSenseRanker.shared
     ) {
         self.word = word.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.surfaceWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
         self.language = language
         self.bookID = bookID
         self.bookTitle = bookTitle
         self.chapter = chapter
         self.pageNumber = pageNumber
         self.locatorJSON = locatorJSON
-        self.contextSentence = contextSentence
+        self.sentenceContext = sentenceContext
         self.service = service
         self.repository = repository
+        self.ranker = ranker
 
         Task {
             await checkSavedStatus()
             await fetchDefinition()
+            await rankContextually()
         }
     }
 
@@ -104,7 +113,19 @@ final class VocabularySheetViewModel: ObservableObject {
             self.entry = result
             detectRootWord()
         } catch VocabularyServiceError.notFound {
-            self.error = "No definition found for '\(word)'."
+            if let lemma = lemmatize(word), lemma.lowercased() != word.lowercased() {
+                do {
+                    let result = try await service.fetchWord(
+                        lemma, language: language, includeTranslations: false)
+                    self.entry = result
+                    self.suggestedRootWord = lemma
+                    self.rootWordRelationship = "Lemma form of"
+                } catch {
+                    self.error = "No definition found for '\(word)'."
+                }
+            } else {
+                self.error = "No definition found for '\(word)'."
+            }
         } catch {
             self.error = "Failed to load definition: \(error.localizedDescription)"
         }
@@ -112,17 +133,36 @@ final class VocabularySheetViewModel: ObservableObject {
         isLoading = false
     }
 
+    private func lemmatize(_ word: String) -> String? {
+        let tagger = NLTagger(tagSchemes: [.lemma])
+        tagger.string = word
+        let lang = NLLanguage(rawValue: language)
+        tagger.setLanguage(lang, range: word.startIndex..<word.endIndex)
+        var lemma: String?
+        tagger.enumerateTags(in: word.startIndex..<word.endIndex, unit: .word, scheme: .lemma, options: []) { tag, _ in
+            if let tag = tag {
+                lemma = tag.rawValue
+            }
+            return false // Stop after the first word
+        }
+        return lemma
+    }
+
+    /// Ranks the entry's senses against the sentence the word was selected in.
+    /// Runs automatically once the definition loads; safe to call again (the
+    /// ranker caches sense embeddings per word).
     public func rankContextually() async {
-        guard #available(iOS 17, *) else { return }
-        guard let sentence = contextSentence, let entry else { return }
+        guard let context = sentenceContext, let entry else { return }
         guard !isRanking else { return }
         isRanking = true
-        rankedDefinition = await ContextualRanker.shared.rank(
-            word: word,
-            surfaceWord: surfaceWord,
-            in: sentence,
+        let request = SenseRankingRequest(
+            word: entry.word,
+            surfaceWord: context.surfaceWord,
+            sentence: context.sentence,
+            wordRange: context.wordRange,
             entry: entry
         )
+        rankedDefinition = await ranker.rank(request)
         isRanking = false
     }
 
@@ -140,15 +180,14 @@ final class VocabularySheetViewModel: ObservableObject {
             isSaved: isSaved,
             savedWordID: savedWordID,
             suggestedRootWord: suggestedRootWord,
-            contextSentence: contextSentence,
-            surfaceWord: surfaceWord
+            rootWordRelationship: rootWordRelationship,
+            sentenceContext: sentenceContext
         ))
 
         if !isInflectedForm {
-            contextSentence = nil
-            surfaceWord = trimmed  // arbitrary lookup — surface form is the new word itself
+            sentenceContext = nil  // arbitrary lookup — the original sentence no longer applies
         }
-        // isInflectedForm: keep surfaceWord — it still points to the word in contextSentence
+        // isInflectedForm: keep sentenceContext — it still points at the word in its sentence
         rankedDefinition = nil
 
         withAnimation(.easeInOut(duration: 0.22)) {
@@ -159,10 +198,12 @@ final class VocabularySheetViewModel: ObservableObject {
             isSaved = false
             savedWordID = nil
             suggestedRootWord = nil
+            rootWordRelationship = nil
         }
 
         await checkSavedStatus()
         await fetchDefinition()
+        await rankContextually()
     }
 
     /// Restore the previous word from the navigation stack (no network call).
@@ -175,11 +216,13 @@ final class VocabularySheetViewModel: ObservableObject {
             isSaved = snapshot.isSaved
             savedWordID = snapshot.savedWordID
             suggestedRootWord = snapshot.suggestedRootWord
-            contextSentence = snapshot.contextSentence
-            surfaceWord = snapshot.surfaceWord
+            rootWordRelationship = snapshot.rootWordRelationship
+            sentenceContext = snapshot.sentenceContext
             rankedDefinition = nil
             canGoBack = !navigationStack.isEmpty
         }
+        // Sense embeddings are cached, so re-ranking the restored word is cheap.
+        Task { await rankContextually() }
     }
 
     // MARK: - Root word detection
@@ -189,28 +232,55 @@ final class VocabularySheetViewModel: ObservableObject {
         options: .caseInsensitive
     )
 
+    private static let alternativeFormRegex: NSRegularExpression? = try? NSRegularExpression(
+        pattern: #"\b(?:alternative\s+(?:spelling|form|pronunciation)\s+of)\s+([\w']+(?:\s+[\w']+)?)"#,
+        options: .caseInsensitive
+    )
+
     private func detectRootWord() {
         guard let entry else {
             suggestedRootWord = nil
+            rootWordRelationship = nil
             return
         }
         let definitions = entry.entries.flatMap { $0.senses.map(\.definition) }
-        guard let regex = Self.inflectedFormRegex else { return }
 
-        for definition in definitions {
-            let nsRange = NSRange(definition.startIndex..., in: definition)
-            if let match = regex.firstMatch(in: definition, range: nsRange),
-               let rootRange = Range(match.range(at: 1), in: definition)
-            {
-                let root = String(definition[rootRange])
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if root.lowercased() != word.lowercased() {
-                    suggestedRootWord = root
-                    return
+        if let regex = Self.inflectedFormRegex {
+            for definition in definitions {
+                let nsRange = NSRange(definition.startIndex..., in: definition)
+                if let match = regex.firstMatch(in: definition, range: nsRange),
+                   let rootRange = Range(match.range(at: 1), in: definition)
+                {
+                    let root = String(definition[rootRange])
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if root.lowercased() != word.lowercased() {
+                        suggestedRootWord = root
+                        rootWordRelationship = "Inflected form of"
+                        return
+                    }
                 }
             }
         }
+
+        if let regex = Self.alternativeFormRegex {
+            for definition in definitions {
+                let nsRange = NSRange(definition.startIndex..., in: definition)
+                if let match = regex.firstMatch(in: definition, range: nsRange),
+                   let rootRange = Range(match.range(at: 1), in: definition)
+                {
+                    let root = String(definition[rootRange])
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if root.lowercased() != word.lowercased() {
+                        suggestedRootWord = root
+                        rootWordRelationship = "Alternative spelling/form of"
+                        return
+                    }
+                }
+            }
+        }
+
         suggestedRootWord = nil
+        rootWordRelationship = nil
     }
 
     public func toggleSave() async {

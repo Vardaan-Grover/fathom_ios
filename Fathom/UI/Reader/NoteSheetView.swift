@@ -314,6 +314,12 @@ struct NoteSheetView: View {
             updated.highlightColor = selectedColor
             onSave(updated)
         } else {
+            // Saving an empty new note is a no-op: don't persist a blank note,
+            // and leave any underlying highlight untouched via the dismiss path.
+            if noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                onDismiss()
+                return
+            }
             let note = Note(
                 bookID: bookID,
                 locatorJSON: locatorJSON,

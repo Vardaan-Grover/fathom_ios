@@ -35,11 +35,15 @@ struct ReaderScreen: View {
     // Vocabulary State
     @State private var definedWord: String?
     @State private var definedLocatorJSON: String?
-    @State private var definedContextSentence: String?
+    @State private var definedSentenceContext: SentenceContext?
 
     // Note State
     @State private var pendingNoteText: String?
     @State private var pendingNoteLocatorJSON: String?
+    // Highlight the pending note is being created on top of, if any. The
+    // highlight is deleted only when the note is saved, so cancelling the
+    // note sheet leaves the original highlight intact.
+    @State private var pendingNoteHighlightID: UUID?
     @State private var pendingEditNote: Note?
     @State private var notesVersion: Int = 0
 
@@ -165,7 +169,7 @@ struct ReaderScreen: View {
                     if !$0 {
                         definedWord = nil
                         definedLocatorJSON = nil
-                        definedContextSentence = nil
+                        definedSentenceContext = nil
                     }
                 }
             )
@@ -179,7 +183,7 @@ struct ReaderScreen: View {
                         chapter: chapterTitle,
                         pageNumber: currentPage > 0 ? currentPage : nil,
                         locatorJSON: definedLocatorJSON,
-                        contextSentence: definedContextSentence,
+                        sentenceContext: definedSentenceContext,
                         repository: AppContainer.shared.vocabularyRepo
                     )
                 )
@@ -359,6 +363,7 @@ extension ReaderScreen {
         ReadiumNavigatorView(
             publication: publication,
             initialLocation: ReadingStateStore.shared.loadLocator(forBookID: bookID),
+            isOverlayInteractive: isActionButtonPresented || pendingNoteText != nil,
             onLocationChange: onLocationChange,
             onPositionsLoaded: { positions = $0; totalPages = $0.count },
             commands: commands,
@@ -366,7 +371,10 @@ extension ReaderScreen {
             bookID: bookID,
             aiQueryLocatorJSON: aiSelectedText != nil ? aiSelectedLocatorJSON : nil,
             aiEnabled: aiEnabled && backendBookID != nil,
-            notesVersion: notesVersion
+            notesVersion: notesVersion,
+            overlayForLocator: { locator in
+                AnyView(self.readerOverlayContent(for: locator))
+            }
         )
         .ignoresSafeArea()
         .task {
@@ -384,7 +392,7 @@ extension ReaderScreen {
             parsedBookmarkLocators = parseBookmarkLocators(bookmarks)
         }
         .onAppear { setupOnAppear() }
-        .overlay { readerOverlayContent }
+        
         .translationPresentation(
             isPresented: $isShowingTranslation,
             text: translateText ?? ""
@@ -416,10 +424,15 @@ extension ReaderScreen {
                 isShowingAIProcessingAlert = true
             }
         }
-        commands.onDefine = { text, locatorJSON, contextSentence in
+        commands.onDefine = { text, locatorJSON, sentenceContext in
             definedLocatorJSON = locatorJSON
             definedWord = text
-            definedContextSentence = contextSentence
+            definedSentenceContext = sentenceContext
+        }
+        // Load the sense-embedding model while the user reads, so the first
+        // definition lookup doesn't pay the cold-start cost.
+        Task.detached(priority: .utility) {
+            await EmbeddingSenseRanker.shared.prewarm()
         }
         commands.onTranslate = { text in
             translateText = text
@@ -430,9 +443,10 @@ extension ReaderScreen {
             searchState.scheduleSearch()
             isShowingSearch = true
         }
-        commands.onAddNote = { text, locatorJSON in
+        commands.onAddNote = { text, locatorJSON, highlightID in
             pendingNoteLocatorJSON = locatorJSON
             pendingNoteText = text
+            pendingNoteHighlightID = highlightID
         }
         commands.onEditNote = { noteID, _, _ in
             pendingEditNote = NoteStore.shared
@@ -453,7 +467,31 @@ extension ReaderScreen {
     }
 
     @ViewBuilder
-    var readerOverlayContent: some View {
+    func readerOverlayContent(for locator: Locator?) -> some View {
+        let overlayCurrentPage: Int = {
+            if let page = locator?.locations.position {
+                return page
+            } else if let prog = locator?.locations.totalProgression, totalPages > 0 {
+                return max(1, Int(prog * Double(totalPages)))
+            }
+            return currentPage
+        }()
+
+        let overlayProgression: Double = {
+            if let prog = locator?.locations.totalProgression {
+                return prog
+            }
+            return currentProgression
+        }()
+
+        let overlayIsBookmarked = bookmarkOnCurrentPage(
+            parsedLocators: parsedBookmarkLocators,
+            currentLocator: locator ?? currentLocator,
+            currentProgression: overlayProgression,
+            positions: positions,
+            isScrolling: settings.layout == .scrolling
+        )
+
         ZStack {
             ZStack(alignment: .bottomTrailing) {
                 Rectangle()
@@ -465,7 +503,7 @@ extension ReaderScreen {
 
                 ReaderOverlay(
                     bookTitle: bookTitle,
-                    currentPage: currentPage,
+                    currentPage: overlayCurrentPage,
                     totalPages: totalPages,
                     isActive: isShowingBars,
                     foregroundColor: settings.colorTheme.foregroundColor,
@@ -481,13 +519,13 @@ extension ReaderScreen {
                     settings: $settings,
                     isScrubbing: $isScrubbing,
                     scrubTargetProgression: $scrubTargetProgression,
-                    currentProgression: currentProgression,
+                    currentProgression: overlayProgression,
                     positions: positions,
                     tableOfContents: tableOfContents,
                     aiEnabled: aiEnabled,
                     ingestionReady: aiReady,
                     hasBackendBookID: backendBookID != nil,
-                    isCurrentPageBookmarked: isCurrentPageBookmarked,
+                    isCurrentPageBookmarked: overlayIsBookmarked,
                     onOpenSettings: { isShowingSettings = true },
                     onOpenAIChats: {
                         if aiReady {
@@ -515,8 +553,8 @@ extension ReaderScreen {
                 bookmarks: bookmarks,
                 parsedLocators: parsedBookmarkLocators,
                 positions: positions,
-                currentLocator: currentLocator,
-                currentProgression: currentProgression,
+                currentLocator: locator ?? currentLocator,
+                currentProgression: overlayProgression,
                 isScrolling: settings.layout == .scrolling,
                 isShowingBars: isShowingBars
             )
@@ -559,13 +597,20 @@ extension ReaderScreen {
                 settings: settings,
                 onSave: { note in
                     NoteStore.shared.add(note)
+                    // The note now owns this passage's decoration, so retire the
+                    // standalone highlight it was created on top of (if any).
+                    if let highlightID = pendingNoteHighlightID {
+                        HighlightStore.shared.delete(id: highlightID)
+                    }
                     pendingNoteText = nil
                     pendingNoteLocatorJSON = nil
+                    pendingNoteHighlightID = nil
                     notesVersion += 1
                 },
                 onDismiss: {
                     pendingNoteText = nil
                     pendingNoteLocatorJSON = nil
+                    pendingNoteHighlightID = nil
                 }
             )
         }

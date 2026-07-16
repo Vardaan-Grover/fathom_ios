@@ -114,8 +114,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Vardaan-Grover/swift-toolkit.git",
       "state" : {
-        "branch" : "fathom-highlight-anchor-fix",
-        "revision" : "2e9249e8a253b09f4d14f2cedcc0e6bb9783454b"
+        "branch" : "fathom-page-curl",
+        "revision" : "f012b98a6c2078cf1a6b6f23ff91db0ce07e2285"
       }
     },
     {

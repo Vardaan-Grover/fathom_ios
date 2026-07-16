@@ -36,7 +36,8 @@ public struct VocabularySheetView: View {
             contentScrollView
         }
         .animation(.easeInOut(duration: 0.22), value: viewModel.suggestedRootWord)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: viewModel.rankedDefinition?.sense.definition)
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: viewModel.isRanking)
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: viewModel.rankedDefinition)
     }
 
     // MARK: - Header
@@ -103,24 +104,6 @@ public struct VocabularySheetView: View {
                 Spacer()
 
                 HStack(spacing: 20) {
-                    if viewModel.contextSentence != nil {
-                        Button {
-                            Task { await viewModel.rankContextually() }
-                        } label: {
-                            if viewModel.isRanking {
-                                ProgressView()
-                                    .scaleEffect(0.75)
-                                    .frame(width: 18, height: 18)
-                            } else {
-                                Image(systemName: "sparkles")
-                                    .font(.body)
-                                    .foregroundColor(viewModel.rankedDefinition != nil ? .accentColor : .secondary)
-                                    .contentTransition(.symbolEffect(.replace))
-                            }
-                        }
-                        .disabled(viewModel.isRanking || viewModel.entry == nil)
-                    }
-
                     Button {
                         viewModel.playPronunciation()
                     } label: {
@@ -159,7 +142,7 @@ public struct VocabularySheetView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.turn.up.left")
                         .font(.caption2.weight(.semibold))
-                    Text("Inflected form of")
+                    Text(viewModel.rootWordRelationship ?? "Inflected form of")
                         .font(.caption)
                     Text(root)
                         .font(.caption.weight(.semibold))
@@ -182,46 +165,70 @@ public struct VocabularySheetView: View {
 
     @ViewBuilder
     private var contextualCard: some View {
-        if let ranked = viewModel.rankedDefinition,
-           let sentence = viewModel.contextSentence {
-            VStack(alignment: .leading, spacing: 10) {
-                Label(ranked.isHighConfidence ? "In this context" : "Possibly in this context", systemImage: "sparkles")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+        if let sentence = viewModel.contextSentence,
+           (viewModel.isRanking || viewModel.rankedDefinition != nil) {
+            VStack(alignment: .leading, spacing: 0) {
+                if viewModel.isRanking, viewModel.rankedDefinition == nil {
+                    HStack(spacing: 10) {
+                        Image(systemName: "sparkles")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .symbolEffect(.pulse, options: .repeating)
+                        Text("Finding the meaning in this context…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(14)
+                    .frame(minHeight: 48)
+                    .transition(.opacity)
+                } else if let ranked = viewModel.rankedDefinition {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label(ranked.isHighConfidence ? "In this context" : "Possibly in this context", systemImage: "sparkles")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
 
-                Text(attributedSentence(sentence: sentence, word: viewModel.word))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .italic()
-                    .lineLimit(3)
+                        Text(attributedSentence(sentence: sentence, word: viewModel.surfaceWord, range: viewModel.sentenceContext?.wordRange))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .italic()
+                            .lineLimit(3)
 
-                Divider()
+                        Divider()
 
-                HStack(alignment: .top, spacing: 8) {
-                    Text(ranked.partOfSpeech.uppercased())
-                        .font(.caption.bold())
-                        .foregroundColor(.accentColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.accentColor.opacity(0.1))
-                        .cornerRadius(6)
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(ranked.partOfSpeech.uppercased())
+                                .font(.caption.bold())
+                                .foregroundColor(.accentColor)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor.opacity(0.1))
+                                .cornerRadius(6)
 
-                    Text(ranked.sense.definition)
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
+                            Text(ranked.sense.definition)
+                                .font(.subheadline)
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                    .padding(14)
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.96)),
+                        removal: .opacity
+                    ))
                 }
             }
-            .padding(14)
             .background {
                 RoundedRectangle(cornerRadius: 14)
                     .fill(.ultraThinMaterial)
             }
             .borderBeam(
                 border: Color(UIColor.tertiarySystemBackground),
-                beam: ranked.isHighConfidence
-                    ? [Color(hex: "FF6EB4"), Color(hex: "7C86F0"), Color(hex: "4052E3")]
-                    : [Color(hex: "8E9AAF"), Color(hex: "B0B8C8"), Color(hex: "8E9AAF")],
-                beamBlur: ranked.isHighConfidence ? 6 : 10,
+                beam: viewModel.rankedDefinition == nil
+                    ? [Color(UIColor.separator)]
+                    : (viewModel.rankedDefinition?.isHighConfidence == true
+                        ? [Color(hex: "FF6EB4"), Color(hex: "7C86F0"), Color(hex: "4052E3")]
+                        : [Color(hex: "8E9AAF"), Color(hex: "B0B8C8"), Color(hex: "8E9AAF")]),
+                beamBlur: viewModel.rankedDefinition?.isHighConfidence == true ? 6 : 10,
                 cornerRadius: 14
             )
             .padding(.horizontal, 16)
@@ -230,9 +237,14 @@ public struct VocabularySheetView: View {
         }
     }
 
-    private func attributedSentence(sentence: String, word: String) -> AttributedString {
+    private func attributedSentence(sentence: String, word: String, range: Range<String.Index>?) -> AttributedString {
         var attributed = AttributedString(sentence)
-        if let range = attributed.range(of: word, options: .caseInsensitive) {
+        if let range = range,
+           let start = AttributedString.Index(range.lowerBound, within: attributed),
+           let end = AttributedString.Index(range.upperBound, within: attributed) {
+            attributed[start..<end].font = .subheadline.bold().italic()
+            attributed[start..<end].foregroundColor = .primary
+        } else if let range = attributed.range(of: word, options: .caseInsensitive) {
             attributed[range].font = .subheadline.bold().italic()
             attributed[range].foregroundColor = .primary
         }

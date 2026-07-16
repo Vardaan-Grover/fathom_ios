@@ -30,7 +30,7 @@ public class VocabularyService {
     private let baseURLStr = "https://freedictionaryapi.com/api/v1/entries"
     private let logger = Logger(subsystem: "com.fathom", category: "VocabularyService")
 
-    private init() {}
+    init() {}
 
     /// Retrieves dictionary entries for a specified word.
     /// - Parameters:

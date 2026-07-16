@@ -101,6 +101,14 @@ enum ReadingLayout: String, Codable {
     case scrolling
 }
 
+/// Visual transition used when turning pages in paginated layout.
+/// Optional in `ReaderSettings` so older app versions decoding the synced
+/// settings JSON ignore the unknown key instead of failing.
+enum PageTurnStyle: String, Codable {
+    case slide
+    case curl
+}
+
 struct ReaderSettings: Codable, Equatable {
     var fontSize: Double = 1.0
     var lineHeight: Double = 1.4
@@ -110,6 +118,11 @@ struct ReaderSettings: Codable, Equatable {
     var justifyText: Bool = false
     var layout: ReadingLayout = .paginated
     var boldText: Bool = false
+    var pageTurnStyle: PageTurnStyle? = .slide
+
+    var isCurlEnabled: Bool {
+        layout == .paginated && (pageTurnStyle ?? .slide) == .curl
+    }
 }
 
 extension ReaderColorTheme {

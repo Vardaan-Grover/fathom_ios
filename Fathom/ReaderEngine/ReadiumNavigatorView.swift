@@ -14,12 +14,28 @@ import SwiftUI
         var goToLocatorJSON: (@MainActor (String) async -> Void)?
         var onTap: (@MainActor (CGPoint, CGSize) -> Void)?
         var onExplain: (@MainActor (String, String) -> Void)?
-        var onAddNote: (@MainActor (String, String) -> Void)?
+        var onAddNote: (@MainActor (String, String, UUID?) -> Void)?
         var onEditNote: (@MainActor (UUID, String, String) -> Void)?
-        var onDefine: (@MainActor (String, String, String?) -> Void)?
+        var onDefine: (@MainActor (String, String, SentenceContext?) -> Void)?
         var onTranslate: (@MainActor (String) -> Void)?
         var onSearchText: (@MainActor (String) -> Void)?
         var applySearchHighlight: (@MainActor (String) -> Void)?
+    }
+
+    class OverlayPassthroughView: UIView {
+        var isOverlayInteractive: Bool = false
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            let hit = super.hitTest(point, with: event)
+            if hit != nil && !isOverlayInteractive {
+                let safeTop = window?.safeAreaInsets.top ?? 44
+                let safeBottom = window?.safeAreaInsets.bottom ?? 34
+                // Middle zone: pass through touches
+                if point.y >= safeTop + 72 && point.y <= bounds.height - safeBottom - 52 {
+                    return nil
+                }
+            }
+            return hit
+        }
     }
 
     final class ReaderContainerViewController: UIViewController,
@@ -27,9 +43,9 @@ import SwiftUI
         UIPopoverPresentationControllerDelegate
     {
         var onExplain: ((String, String) -> Void)?
-        var onAddNote: ((String, String) -> Void)?
+        var onAddNote: ((String, String, UUID?) -> Void)?
         var onEditNote: ((UUID, String, String) -> Void)?
-        var onDefine: ((String, String, String?) -> Void)?
+        var onDefine: ((String, String, SentenceContext?) -> Void)?
         var onTranslate: ((String) -> Void)?
         var onSearchText: ((String) -> Void)?
         var bookID: UUID = UUID()
@@ -38,6 +54,136 @@ import SwiftUI
         private(set) var pendingHighlightID: UUID?
         private(set) var navigator: EPUBNavigatorViewController?
         private var editMenuInteraction: UIEditMenuInteraction?
+
+        private(set) var curlController: PageCurlController?
+        private var wantsCurl = false
+        private var curlThemeBackground: UIColor = .white
+        private var curlObserversInstalled = false
+
+        /// Wires the coordinator's location-event suppression into a freshly
+        /// created curl controller; set once from makeUIViewController.
+        var configureCurlSuppression: ((PageCurlController) -> Void)?
+        
+        /// Factory to create the SwiftUI overlay for a given locator.
+        var overlayForLocator: ((Locator?) -> AnyView)?
+
+        /// Hosting controller for the live SwiftUI overlay sitting above the navigator.
+        private var liveOverlayHostingController: UIHostingController<AnyView>?
+        private var overlayWrapperView: OverlayPassthroughView?
+        
+        var overlaySnapshotView: UIView? {
+            return overlayWrapperView?.snapshotView(afterScreenUpdates: false)
+        }
+        
+        var isOverlayInteractive: Bool = false {
+            didSet {
+                overlayWrapperView?.isOverlayInteractive = isOverlayInteractive
+            }
+        }
+
+        func updateLiveOverlay(locator: Locator?) {
+            guard let factory = overlayForLocator else { return }
+            let overlayView = factory(locator)
+            if let hosting = liveOverlayHostingController {
+                hosting.rootView = overlayView
+            } else {
+                let hosting = UIHostingController(rootView: overlayView)
+                hosting.view.backgroundColor = .clear
+                
+                let wrapper = OverlayPassthroughView(frame: view.bounds)
+                wrapper.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                wrapper.backgroundColor = .clear
+                
+                addChild(hosting)
+                wrapper.addSubview(hosting.view)
+                hosting.view.frame = wrapper.bounds
+                hosting.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                hosting.didMove(toParent: self)
+                
+                view.addSubview(wrapper)
+                liveOverlayHostingController = hosting
+                overlayWrapperView = wrapper
+            }
+            // Ensure live overlay stays above the navigator, but below the curl pageVC (which is brought to front manually).
+            if let navView = navigator?.view, let wrapper = overlayWrapperView {
+                view.insertSubview(wrapper, aboveSubview: navView)
+            }
+        }
+        
+        /// The curl is only effective when requested by settings AND motion is
+        /// not reduced; the Reduce Motion observer re-evaluates on the fly.
+        func setCurlMode(_ enabled: Bool, themeBackground: UIColor) {
+            wantsCurl = enabled
+            curlThemeBackground = themeBackground
+            // Propagate to an already-installed controller, which otherwise
+            // keeps the background it was constructed with. Guarded on a real
+            // change: the didSet drops cached snapshots, and this is called on
+            // every SwiftUI update (including every page turn).
+            if let curl = curlController, curl.themeBackground != themeBackground {
+                curl.themeBackground = themeBackground
+            }
+            reevaluateCurl()
+        }
+
+        private func reevaluateCurl() {
+            let motionReduced = UIAccessibility.isReduceMotionEnabled
+            let shouldBeCurling = wantsCurl && !motionReduced
+
+            if shouldBeCurling && curlController == nil {
+                installCurl()
+            } else if !shouldBeCurling && curlController != nil {
+                uninstallCurl()
+            }
+        }
+
+        private func installCurl() {
+            guard curlController == nil else { return }
+            let curl = PageCurlController(navigator: navigator!, host: self, themeBackground: curlThemeBackground)
+            configureCurlSuppression?(curl)
+            curl.install()
+            curlController = curl
+
+            if !curlObserversInstalled {
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(accessibilityStatusDidChange),
+                    name: UIAccessibility.reduceMotionStatusDidChangeNotification,
+                    object: nil
+                )
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(applicationDidEnterBackground),
+                    name: UIApplication.didEnterBackgroundNotification,
+                    object: nil
+                )
+                curlObserversInstalled = true
+            }
+        }
+
+        private func uninstallCurl() {
+            curlController?.uninstall()
+            curlController = nil
+        }
+
+        @objc private func accessibilityStatusDidChange() {
+            reevaluateCurl()
+        }
+
+        @objc private func applicationDidEnterBackground() {
+            // Snapshots and any half-committed pre-turn must not survive into
+            // the next foreground; drop them while we can still revert.
+            curlController?.abortForEnvironmentChange()
+        }
+
+        override func viewWillTransition(
+            to size: CGSize,
+            with coordinator: UIViewControllerTransitionCoordinator
+        ) {
+            super.viewWillTransition(to: size, with: coordinator)
+            // The snapshots are sized for the outgoing geometry, and rotation
+            // repaginates the chapter underneath them.
+            curlController?.abortForEnvironmentChange()
+        }
 
         func embed(_ nav: EPUBNavigatorViewController) {
             navigator = nav
@@ -53,7 +199,7 @@ import SwiftUI
         }
 
         // Called by Coordinator when text is selected
-        func showMenuForSelection(text: String, locatorJSON: String, contextSentence: String?, at frame: CGRect) {
+        func showMenuForSelection(text: String, locatorJSON: String, contextSentence: SentenceContext?, at frame: CGRect) {
             guard let navView = navigator?.view else { return }
 
             // Store BEFORE presenting — the delegate is called synchronously inside presentEditMenu
@@ -101,7 +247,7 @@ import SwiftUI
 
         private var pendingText: String = ""
         private var pendingLocatorJSON: String = ""
-        private var pendingContextSentence: String? = nil
+        private var pendingContextSentence: SentenceContext? = nil
         private var pendingIsSingleWord: Bool = false
         private var lastSelectionRect: CGRect = .zero
 
@@ -156,6 +302,7 @@ import SwiftUI
                     let locatorJSON = pendingLocatorJSON
                     // If adding a note on top of a standalone highlight, remove the
                     // highlight — the note decoration replaces it visually.
+                    let capturedHighlightID = pendingHighlightID
                     if let highlightID = pendingHighlightID {
                         HighlightStore.shared.delete(id: highlightID)
                         applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
@@ -163,7 +310,7 @@ import SwiftUI
                     } else {
                         navigator?.clearSelection()
                     }
-                    onAddNote?(text, locatorJSON)
+                    onAddNote?(text, locatorJSON, capturedHighlightID)
                 }
             }
 
@@ -528,6 +675,7 @@ import SwiftUI
     struct ReadiumNavigatorView: UIViewControllerRepresentable {
         let publication: Publication
         var initialLocation: Locator?
+        var isOverlayInteractive: Bool = false
         var onLocationChange: (Locator) -> Void = { _ in }
         var onPositionsLoaded: ([Locator]) -> Void = { _ in }
         var commands: NavigatorCommands? = nil
@@ -536,6 +684,7 @@ import SwiftUI
         var aiQueryLocatorJSON: String? = nil
         var aiEnabled: Bool = true
         var notesVersion: Int = 0
+        var overlayForLocator: (Locator?) -> AnyView
 
         class Coordinator: NSObject, EPUBNavigatorDelegate, UIGestureRecognizerDelegate {
             var onLocationChange: (Locator) -> Void
@@ -550,6 +699,22 @@ import SwiftUI
             var lastNotesVersion: Int?
             var lastAIQueryLocatorJSON: String?
             var hasAppliedAIQuery = false
+            
+            var suppressLocationEvents = false
+            var stashedLocator: Locator?
+
+            func endLocationSuppression(commit: Bool) {
+                suppressLocationEvents = false
+                if commit {
+                    // Fall back to the navigator's own location: if Readium
+                    // coalesced or deferred the event for this turn, nothing
+                    // was stashed and the position would never be saved.
+                    if let locator = stashedLocator ?? container?.navigator?.currentLocation {
+                        onLocationChange(locator)
+                    }
+                }
+                stashedLocator = nil
+            }
 
             init(onLocationChange: @escaping (Locator) -> Void, commands: NavigatorCommands?) {
                 self.onLocationChange = onLocationChange
@@ -557,6 +722,15 @@ import SwiftUI
             }
 
             func navigator(_ navigator: Navigator, locationDidChange locator: Locator) {
+                // The curl tracks the live navigator, so it must see every
+                // event — including suppressed ones — or its boundary checks
+                // drift from the page actually on screen.
+                container?.curlController?.noteLocation(locator)
+
+                guard !suppressLocationEvents else {
+                    stashedLocator = locator
+                    return
+                }
                 onLocationChange(locator)
             }
 
@@ -579,14 +753,16 @@ import SwiftUI
                     let frame = selection.frame
                 else { return false }
 
-                let before = selection.locator.text.before ?? ""
-                let after = selection.locator.text.after ?? ""
-                let contextSentence = (before + text + after).trimmingCharacters(in: .whitespacesAndNewlines)
+                let sentenceContext = SentenceContextExtractor.extract(
+                    before: selection.locator.text.before,
+                    selection: text,
+                    after: selection.locator.text.after
+                )
 
                 container?.showMenuForSelection(
                     text: text,
                     locatorJSON: locatorJSON,
-                    contextSentence: contextSentence.isEmpty ? nil : contextSentence,
+                    contextSentence: sentenceContext,
                     at: frame
                 )
 
@@ -692,11 +868,38 @@ import SwiftUI
             container.bookID = bookID
             container.aiEnabled = aiEnabled
 
+            commands?.goLeft = { @MainActor [weak navigator, weak container] in
+                if let curl = container?.curlController, curl.isInstalled {
+                    curl.requestTurn(.left)
+                    return
+                }
+                guard let navigator = navigator else { return }
+                await navigator.goLeft(options: NavigatorGoOptions.animated)
+            }
+            commands?.goRight = { @MainActor [weak navigator, weak container] in
+                if let curl = container?.curlController, curl.isInstalled {
+                    curl.requestTurn(.right)
+                    return
+                }
+                guard let navigator = navigator else { return }
+                await navigator.goRight(options: NavigatorGoOptions.animated)
+            }
+
+            let coordinator = context.coordinator
+            container.configureCurlSuppression = { [weak coordinator] curl in
+                curl.beginSuppression = { [weak coordinator] in
+                    coordinator?.suppressLocationEvents = true
+                }
+                curl.endSuppression = { [weak coordinator] commit in
+                    coordinator?.endLocationSuppression(commit: commit)
+                }
+            }
+
             container.onExplain = { [commands] text, locatorJSON in
                 commands?.onExplain?(text, locatorJSON)
             }
-            container.onAddNote = { [commands] text, locatorJSON in
-                commands?.onAddNote?(text, locatorJSON)
+            container.onAddNote = { [commands] text, locatorJSON, highlightID in
+                commands?.onAddNote?(text, locatorJSON, highlightID)
             }
             container.onEditNote = { [commands] noteID, text, locatorJSON in
                 commands?.onEditNote?(noteID, text, locatorJSON)
@@ -740,8 +943,23 @@ import SwiftUI
 
             let coordinator = context.coordinator
 
+            container.overlayForLocator = overlayForLocator
+            container.isOverlayInteractive = isOverlayInteractive
+            // Deliberately not the stashed locator: it belongs to a pre-turn
+            // that may still be reverted, and the whole point of suppression is
+            // that an uncommitted turn never moves the page label. The curl's
+            // destination snapshot renders its own overlay for the new page.
+            container.updateLiveOverlay(locator: initialLocation)
+            let swiftUIColor = SwiftUI.Color(hex: settings.colorTheme.backgroundHex)
+            container.setCurlMode(settings.isCurlEnabled, themeBackground: UIColor(swiftUIColor))
+
             if coordinator.lastAppliedSettings != settings {
                 coordinator.lastAppliedSettings = settings
+
+                // Any settings change repaginates the chapter, so cached page
+                // snapshots no longer correspond to their positions and an
+                // in-flight curl is animating stale geometry.
+                container.curlController?.abortForEnvironmentChange()
 
                 let bg = ReadiumNavigator.Color(hex: settings.colorTheme.backgroundHex)
                 let fg = ReadiumNavigator.Color(hex: settings.colorTheme.foregroundHex)

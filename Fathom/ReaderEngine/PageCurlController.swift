@@ -167,6 +167,7 @@ import SwiftUI
             didSet {
                 pageCache.removeAll()
                 pageCacheKeys.removeAll()
+                pendingCachePage = nil
                 currentPageVC?.background = themeBackground
                 destinationPageVC?.background = themeBackground
                 backPageVC?.background = themeBackground
@@ -196,6 +197,24 @@ import SwiftUI
             let image: UIImage
             let frame: CGRect
         }
+
+        /// A captured destination bitmap waiting for a position to be filed
+        /// under. `navigator.currentLocation` is debounced (it only recomputes
+        /// once the navigator returns to idle, on a 0.1s poll), so at capture
+        /// time it still reports the page we turned *away* from — keying on it
+        /// files every image one position off. `noteLocation` commits this once
+        /// the real destination location settles.
+        private struct PendingCachePage {
+            let image: UIImage
+            let frame: CGRect
+            /// Guards the revert path: a cancelled pre-turn settles back on the
+            /// source, and this image is not that page.
+            let sourcePosition: Int?
+        }
+        private var pendingCachePage: PendingCachePage?
+        /// Position the in-flight pre-turn started from, sampled before the
+        /// navigator moves.
+        private var turnSourcePosition: Int?
         private var pageCache: [Int: CachedPage] = [:]
         private var pageCacheKeys: [Int] = []
         /// Lookups only ever ask for `currentPosition ± 1`, so a window this
@@ -298,6 +317,19 @@ import SwiftUI
         func noteLocation(_ locator: Locator) {
             currentPosition = locator.locations.position
             lastTotalProgression = locator.locations.totalProgression
+
+            // File any freshly captured bitmap under the position the navigator
+            // actually settled on. Skipped when we've landed back on the page
+            // the turn started from — that's a revert, and the pending image
+            // belongs to the destination we backed out of.
+            if let pending = pendingCachePage {
+                pendingCachePage = nil
+                if let position = locator.locations.position,
+                   position != pending.sourcePosition
+                {
+                    cachePage(image: pending.image, frame: pending.frame, for: position)
+                }
+            }
         }
 
         // MARK: - Programmatic turns (tap zones)
@@ -374,6 +406,7 @@ import SwiftUI
         func abortForEnvironmentChange() {
             pageCache.removeAll()
             pageCacheKeys.removeAll()
+            pendingCachePage = nil
             guard !state.isIdle else { return }
             pendingTurns.removeAll()
             cancelPanGesture()
@@ -444,6 +477,9 @@ import SwiftUI
             backPage: SnapshotPageViewController?
         ) -> Task<Bool, Never> {
             hiddenTurnDirection = direction
+            // Sampled before the navigator moves: once it does, this is the
+            // only record of where the turn came from.
+            turnSourcePosition = currentPosition
             beginSuppression()
             suppressionActive = true
             let task = Task { [weak self] in
@@ -563,10 +599,12 @@ import SwiftUI
                 destination.setImage(image, frame: frame)
                 backPage?.setFlippedImage(image, frame: frame, alpha: 0.15)
                 
-                if let newPos = navigator.currentLocation?.locations.position {
-                    cachePage(image: image, frame: frame, for: newPos)
-                }
-                
+                pendingCachePage = PendingCachePage(
+                    image: image,
+                    frame: frame,
+                    sourcePosition: turnSourcePosition
+                )
+
                 let container = hostViewController as? ReaderContainerViewController
             if let factory = container?.overlayForLocator {
                     let anyView = factory(navigator.currentLocation)

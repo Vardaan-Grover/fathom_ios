@@ -84,7 +84,18 @@ struct LibrarySearchResults: View {
 
 // MARK: - Tilted cover
 
-/// A cover that leans with the device, as though sitting under glass.
+/// A cover that reads as a separate layer floating above the page.
+///
+/// Deliberately does not rotate anything. `rotation3DEffect` is a flat affine
+/// approximation of perspective — SwiftUI has no real camera or lens — and at
+/// any angle large enough to actually notice, that approximation shows: the
+/// cover foreshortens unevenly and can pick up an in-plane twist from
+/// composing two rotations. Real depth cues in iOS (the Lock Screen
+/// wallpaper, Wallet passes) mostly avoid rotating geometry at all; they
+/// shift flat layers against each other. Copying that instead: the cover and
+/// its shadow are two independent layers that translate a few points apart,
+/// so the cover appears to hover over the page. Nothing ever changes shape,
+/// so there's no tilt at which this can look warped.
 private struct TiltedCover: View {
 
     let book: HomeBook
@@ -93,48 +104,56 @@ private struct TiltedCover: View {
 
     @Environment(\.appTheme) private var theme
 
-    /// How much of the device's tilt the cover takes on.
-    private let responsiveness: Double = 0.8
+    /// Points the cover itself drifts per degree of tilt. Kept small — this
+    /// only needs to read as a layer separate from the page, not as the cover
+    /// sliding around inside its grid cell.
+    private let coverTranslationPerDegree: CGFloat = 0.16
 
-    /// Hard ceiling on the *combined* tilt. The provider clamps roll and pitch
-    /// independently, but they compose — a diagonal lean reaches √(r² + p²),
-    /// which is why clamping only the inputs let the covers reach ~28° and
-    /// look like they were falling over.
-    private let maxTiltDegrees: Double = 12
+    /// Points the shadow drifts, in the *opposite* direction from the cover,
+    /// per degree of tilt. The shadow moving more than the cover — as though
+    /// cast by a fixed light source while the card above it tilts — is the
+    /// entire depth cue.
+    private let shadowTranslationPerDegree: CGFloat = 0.34
 
-    /// Strength of the foreshortening. Kept modest: past ~0.5 the near edge
-    /// balloons enough that the cover overruns its grid cell.
-    private let perspective: Double = 0.45
+    /// Where the shadow sits at rest (device flat), before any parallax offset.
+    private let restingShadowOffset = CGSize(width: 0, height: 7)
 
-    /// A single rotation about one axis, rather than chained Y-then-X ones.
-    /// Composing two rotations introduces a Z component, which reads as the
-    /// cover twisting in-plane — invisible at a few degrees, glaring past ten.
-    private var tiltAngle: Double {
-        min((roll * roll + pitch * pitch).squareRoot() * responsiveness, maxTiltDegrees)
+    private var coverOffset: CGSize {
+        CGSize(width: roll * coverTranslationPerDegree, height: -pitch * coverTranslationPerDegree)
+    }
+
+    private var shadowOffset: CGSize {
+        CGSize(
+            width: restingShadowOffset.width - roll * shadowTranslationPerDegree,
+            height: restingShadowOffset.height + pitch * shadowTranslationPerDegree
+        )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             GeometryReader { proxy in
                 let width = proxy.size.width
-                BookCoverView(book: book, width: width, height: width * 1.4)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .shadow(
-                        color: theme.colors.spineShadow.opacity(0.35),
-                        // The shadow slides opposite the tilt, so the covers
-                        // read as lifted off the page rather than painted on.
-                        radius: 10, x: -roll * 0.3, y: 7 + pitch * 0.2
-                    )
-                    // Axis leans in whichever direction the device does, and
-                    // z is always 0 — so the cover can never twist in-plane.
-                    .rotation3DEffect(
-                        .degrees(tiltAngle),
-                        axis: (x: -pitch, y: roll, z: 0),
-                        perspective: perspective
-                    )
+                let height = width * 1.4
+                let corner = RoundedRectangle(cornerRadius: 8, style: .continuous)
+
+                // Two independent layers, not one view with a .shadow() —
+                // .shadow() bakes the shadow into the same rendered output as
+                // its view, so a single .offset() would move both together
+                // and there would be no relative motion to read as depth.
+                ZStack {
+                    corner
+                        .fill(theme.colors.spineShadow.opacity(0.35))
+                        .frame(width: width, height: height)
+                        .blur(radius: 10)
+                        .offset(shadowOffset)
+
+                    BookCoverView(book: book, width: width, height: height)
+                        .clipShape(corner)
+                        .offset(coverOffset)
                     // No .animation here — the provider already low-passes the
                     // signal. Animating on top would add lag and make the
-                    // covers feel like they're chasing the phone.
+                    // cover feel like it's chasing the phone.
+                }
             }
             .aspectRatio(1 / 1.4, contentMode: .fit)
 

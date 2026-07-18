@@ -34,7 +34,7 @@ not gonna pretend this readme is just vibes, here's actually what's under the ho
 - **GRDB** (sqlite) for local storage: the device is the source of truth for your whole library
 - **Readium Swift Engine** for actually rendering epubs: pagination, themes, annotations, all that
 - **CloudKit** powers the iCloud sync — a proper sync engine that pushes/pulls your library, notes, and vocab across devices
-- **Apple's NLContextualEmbedding** (NaturalLanguage framework) is what runs the contextual word ranking on-device — no server involved for that one
+- a bundled **Core ML embedding model** (bge-small) is what runs the contextual word ranking on-device — no server involved for that one
 - a **ContextEngine** that only kicks in for AI-enabled books: handles the upload/ingestion/query flow to the backend so the AI companion can actually answer questions about your book (the code is there but i'm still a little iffy about whether to implement this in the app or not)
 - backend only exists to power the AI stuff (upload to storage, a processing pipeline, then you can query it). it's not involved in anything else, which was a deliberate call so the core reading experience never depends on internet or a server being up (since the ai features are not an active part of the UI right now, the backend is not being utilized yet)
 - codebase is split out roughly by layer: Data / Domain / Presentation / Services / UI

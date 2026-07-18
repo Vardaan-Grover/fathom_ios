@@ -55,6 +55,9 @@ final actor InMemoryCategoryRepository: CategoryRepository {
 
 protocol BookRepository {
     func listBooks() async -> [Book]
+    /// Books matching `query`, best match first. Empty/punctuation-only queries
+    /// return [] — callers show the full library rather than searching for it.
+    func searchBooks(query: String) async -> [Book]
     func addBook(_ book: Book) async
     func updateBook(_ book: Book) async
     func deleteBook(_ book: Book) async
@@ -72,6 +75,35 @@ final actor InMemoryBookRepository: BookRepository {
 
     func listBooks() async -> [Book] {
         books
+    }
+
+    /// Previews and tests only — a token-prefix scan standing in for FTS5.
+    /// Match semantics mirror `matchExpression`: every token must prefix-match
+    /// somewhere. Ranking is title-before-author-before-description rather than
+    /// bm25, which is close enough for a handful of fixture books.
+    func searchBooks(query: String) async -> [Book] {
+        let tokens = LibrarySearch.tokens(in: query).map { $0.lowercased() }
+        guard !tokens.isEmpty else { return [] }
+
+        func fold(_ s: String?) -> String {
+            (s ?? "").folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+        }
+        func rank(_ book: Book) -> Int? {
+            let fields = [fold(book.title), fold(book.author), fold(book.description)]
+            var best = Int.max
+            for token in tokens {
+                guard let hit = fields.firstIndex(where: { field in
+                    field.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                        .contains { $0.hasPrefix(token) }
+                }) else { return nil }  // every token must match somewhere
+                best = min(best, hit)
+            }
+            return best
+        }
+
+        return books.compactMap { book in rank(book).map { ($0, book) } }
+            .sorted { $0.0 < $1.0 }
+            .map(\.1)
     }
 
     func addBook(_ book: Book) async { books.append(book) }

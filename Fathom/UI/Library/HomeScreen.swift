@@ -32,17 +32,51 @@ struct HomeScreen: View {
     @State private var showMemoryGarden = false
     @State private var observatoryRefresh = 0
 
+    @ObservedObject var search: LibrarySearchViewModel
+
     var body: some View {
+        VStack(spacing: 0) {
+            pageHeader
+                .padding(.horizontal, theme.layout.horizontalPadding)
+                .padding(.top, 12)
+                .padding(.bottom, theme.layout.sectionSpacing)
+
+            Divider()
+                .padding(.horizontal, 20)
+
+            ZStack {
+                shelvesScroll
+                    // Same focus idiom as the vocabulary overlay in RootView —
+                    // the whole surface defocuses as one composite image.
+                    .blur(radius: search.isActive ? 3 : 0)
+                    .opacity(search.isActive ? 0 : 1)
+                    .allowsHitTesting(!search.isActive)
+
+                if search.isActive {
+                    LibrarySearchResults(
+                        books: search.results,
+                        isEmptyResult: search.isEmptyResult,
+                        query: search.query,
+                        onTap: { id in selectedBook = SelectedBook(id: id) }
+                    )
+                    .transition(.opacity)
+                }
+            }
+            .animation(.spring(duration: 0.42, bounce: 0.05), value: search.isActive)
+        }
+        .background(theme.colors.background)
+        .task(id: viewModel.allBooks.count) {
+            search.updateLibrary(viewModel.allBooks)
+        }
+    }
+
+    // The sheet/cover chain hangs off this subview rather than off `body`.
+    // Presentation is independent of rendering, so these still work while the
+    // shelves are faded out behind the search results — a book tapped in the
+    // results grid opens its details sheet exactly as one tapped on a shelf.
+    private var shelvesScroll: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: theme.layout.sectionSpacing) {
-
-                pageHeader
-                    .padding(.horizontal, theme.layout.horizontalPadding)
-                    .padding(.top, 12)
-
-                Divider()
-                    .padding(.horizontal, 20)
-
                 if viewModel.isLoading {
                     ProgressView()
                         .padding(.top, 60)
@@ -451,23 +485,27 @@ struct HomeScreen: View {
 
     // MARK: - Page Header
     private var pageHeader: some View {
-        HStack(alignment: .center) {
-            Text("Fathom")
-                .font(.system(size: 34, weight: .bold, design: .serif))
-            Spacer(minLength: 12)
-            ObservatoryView(bookRepository: bookRepository, refreshTrigger: observatoryRefresh) {
-                showMemoryGarden = true
-            }
-        }
+        LibraryHeader(
+            title: "Fathom",
+            search: search,
+            bookRepository: bookRepository,
+            observatoryRefresh: observatoryRefresh,
+            onOpenGarden: { showMemoryGarden = true }
+        )
     }
 }
 
 // MARK: - Preview
 #Preview {
+    let repo = InMemoryBookRepository()
     let vm = HomeViewModel(
-        bookRepository: InMemoryBookRepository(),
+        bookRepository: repo,
         categoryRepository: InMemoryCategoryRepository()
     )
-    return HomeScreen(viewModel: vm, bookRepository: InMemoryBookRepository())
-        .task { await vm.load() }
+    HomeScreen(
+        viewModel: vm,
+        bookRepository: repo,
+        search: LibrarySearchViewModel(bookRepository: repo)
+    )
+    .task { await vm.load() }
 }

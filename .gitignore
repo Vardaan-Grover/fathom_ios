@@ -13,3 +13,10 @@ DerivedData/
 
 # Tooling
 .claude
+graphify-out/
+
+# Screen recordings
+*.mov
+
+# Bundled ML model weights (distributed separately)
+Fathom/Resources/SenseEmbedding.mlpackage/

@@ -5,15 +5,18 @@ import SwiftUI
 /// Reader settings, presented as a compact sheet that adopts the currently
 /// selected book theme. It sits low enough that the page stays visible above
 /// it, so every change previews live on the real text.
+///
+/// Controls are the system's own (segmented `Picker`, `Toggle`, `Slider`), so
+/// they carry iOS 26's Liquid Glass treatment, tinted to the theme's ink.
 struct ReaderSettingsView: View {
     @Binding var settings: ReaderSettings
 
     @State private var tab: Tab = .theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Height of the resting detent. Every pane is sized to fit inside it, so
-    /// the sheet never scrolls at rest and never jumps when panes change.
-    private static let compactHeight: CGFloat = 392
+    /// Sized to the tallest pane (Text) plus chrome and the reset row, so no
+    /// pane scrolls at rest and the sheet never resizes between tabs.
+    private static let sheetHeight: CGFloat = 392
 
     enum Tab: Int, CaseIterable, Identifiable {
         case theme, text, layout
@@ -31,35 +34,62 @@ struct ReaderSettingsView: View {
         VStack(spacing: 0) {
             grabber
 
-            SegmentedTabs(selection: $tab, ink: ink)
-                .padding(.horizontal, 20)
-                .padding(.top, 4)
-                .padding(.bottom, 20)
+            Picker("View", selection: $tab) {
+                ForEach(Tab.allCases) { tab in
+                    Text(tab.title).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 20)
+            .padding(.bottom, 14)
 
-            panes
-
-            Spacer(minLength: 0)
+            // Everything fits at rest; the scroll only engages for large
+            // Dynamic Type.
+            ScrollView {
+                panes
+            }
+            .scrollBounceBehavior(.basedOnSize)
 
             resetButton
         }
         .frame(maxWidth: .infinity, alignment: .top)
-        .background(surface.ignoresSafeArea())
+        .background(sheetSurface.ignoresSafeArea())
         .tint(ink)
-        // Render system controls (sliders, toggles) for the theme surface they
-        // sit on, not for the app's own light/dark mode.
         .environment(\.colorScheme, settings.colorTheme.isDark ? .dark : .light)
-        .presentationDetents([.height(Self.compactHeight), .large])
+        // One detent: every pane already fits, so expanding only opened a void.
+        .presentationDetents([.height(Self.sheetHeight)])
         .presentationDragIndicator(.hidden)
-        .presentationBackground(surface)
-        .presentationCornerRadius(28)
-        // Keep the page behind tappable/scrollable at the resting detent.
-        .presentationBackgroundInteraction(.enabled(upThrough: .height(Self.compactHeight)))
+        .presentationBackground(sheetSurface)
+        // No presentationBackgroundInteraction: it makes the sheet non-modal,
+        // which iOS 26 renders as a floating glass panel that blooms under
+        // touch. The page only needs to be *visible* to preview live, not
+        // tappable.
     }
 
     // MARK: Theme-derived palette
 
     private var ink: Color { settings.colorTheme.foregroundColor }
     private var surface: Color { settings.colorTheme.backgroundColor }
+    private var fill: Color { ink.opacity(0.055) }
+    private var hairline: Color { ink.opacity(0.08) }
+
+    /// The theme's own paper, nudged 4% toward its ink. Without this the sheet
+    /// is the exact color of the page behind it and its edge vanishes. Mixed
+    /// into a single opaque Color rather than stacked as a translucent layer,
+    /// so nothing shows through it.
+    private var sheetSurface: Color {
+        var base = (r: CGFloat(0), g: CGFloat(0), b: CGFloat(0), a: CGFloat(0))
+        var over = (r: CGFloat(0), g: CGFloat(0), b: CGFloat(0), a: CGFloat(0))
+        UIColor(surface).getRed(&base.r, green: &base.g, blue: &base.b, alpha: &base.a)
+        UIColor(ink).getRed(&over.r, green: &over.g, blue: &over.b, alpha: &over.a)
+        let t: CGFloat = 0.04
+        return Color(
+            red: base.r + (over.r - base.r) * t,
+            green: base.g + (over.g - base.g) * t,
+            blue: base.b + (over.b - base.b) * t
+        )
+    }
 
     // MARK: Chrome
 
@@ -68,7 +98,7 @@ struct ReaderSettingsView: View {
             .fill(ink.opacity(0.22))
             .frame(width: 36, height: 5)
             .padding(.top, 8)
-            .padding(.bottom, 14)
+            .padding(.bottom, 10)
             .accessibilityHidden(true)
     }
 
@@ -86,9 +116,11 @@ struct ReaderSettingsView: View {
 
     // MARK: Theme pane
 
+    /// Two columns, three rows — fills the pane exactly, so the tab has no
+    /// dead space despite holding the least content.
     private var themePane: some View {
         LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3),
+            columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2),
             spacing: 12
         ) {
             ForEach(ReaderColorTheme.allCases, id: \.self) { theme in
@@ -109,7 +141,7 @@ struct ReaderSettingsView: View {
     // MARK: Text pane
 
     private var textPane: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 16) {
             fontSizeCard
 
             VStack(alignment: .leading, spacing: 10) {
@@ -122,22 +154,46 @@ struct ReaderSettingsView: View {
         .transition(paneTransition)
     }
 
+    /// Apple Books' two big targets, plus the numeric size between them.
     private var fontSizeCard: some View {
-        HStack(spacing: 14) {
-            Text("A")
-                .font(.system(size: 14))
-                .foregroundStyle(ink.opacity(0.6))
-            Slider(value: $settings.fontSize, in: 0.5...2.5, step: 0.1)
-                .accessibilityLabel("Font size")
-                .accessibilityValue("\(Int(settings.fontSize * 100)) percent")
-            Text("A")
-                .font(.system(size: 24))
-                .foregroundStyle(ink.opacity(0.6))
+        HStack(spacing: 0) {
+            sizeButton(glyph: 15, decrease: true)
+
+            verticalHairline
+
+            Text("\(Int((settings.fontSize * 100).rounded()))%")
+                .font(.system(size: 15, weight: .medium).monospacedDigit())
+                .foregroundStyle(ink.opacity(0.7))
+                .frame(width: 62)
+                .accessibilityHidden(true)
+
+            verticalHairline
+
+            sizeButton(glyph: 24, decrease: false)
         }
-        .padding(.horizontal, 18)
-        .frame(height: 56)
+        .frame(height: 48)
         .background(fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .padding(.horizontal, 20)
+    }
+
+    private func sizeButton(glyph: CGFloat, decrease: Bool) -> some View {
+        let enabled = decrease ? settings.fontSize > 0.5 : settings.fontSize < 2.5
+        return Button {
+            withAnimation(.easeOut(duration: 0.12)) {
+                let steps = round(settings.fontSize * 10) + (decrease ? -1 : 1)
+                settings.fontSize = min(2.5, max(0.5, steps / 10))
+            }
+        } label: {
+            Text("A")
+                .font(.system(size: glyph))
+                .foregroundStyle(ink.opacity(enabled ? 1 : 0.25))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(InkPress())
+        .disabled(!enabled)
+        .accessibilityLabel(decrease ? "Decrease font size" : "Increase font size")
+        .accessibilityValue("\(Int((settings.fontSize * 100).rounded())) percent")
     }
 
     private var fontScroll: some View {
@@ -150,9 +206,7 @@ struct ReaderSettingsView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 2)
         }
-        .scrollClipDisabled()
     }
 
     private var optionsCard: some View {
@@ -164,10 +218,26 @@ struct ReaderSettingsView: View {
         .background(fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    private func toggleRow(_ label: String, icon: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 14))
+                    .foregroundStyle(ink.opacity(0.55))
+                    .frame(width: 18)
+                Text(label)
+                    .font(.system(size: 16))
+                    .foregroundStyle(ink)
+            }
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 46)
+    }
+
     // MARK: Layout pane
 
     private var layoutPane: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 10) {
                 sectionHeader("Page Turn")
                 HStack(spacing: 12) {
@@ -234,39 +304,41 @@ struct ReaderSettingsView: View {
 
     // MARK: Reset
 
-    @ViewBuilder
+    private var isDefault: Bool { settings == ReaderSettings() }
+
+    /// Only offered once there's something to undo, but its space is always
+    /// reserved so appearing never shoves the panes around.
     private var resetButton: some View {
-        if settings != ReaderSettings() {
-            Button {
-                withAnimation(.snappy(duration: 0.3)) { settings = ReaderSettings() }
-            } label: {
-                Text("Reset to Defaults")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(ink.opacity(0.55))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 4)
-            .transition(.opacity)
+        Button {
+            withAnimation(.snappy(duration: 0.3)) { settings = ReaderSettings() }
+        } label: {
+            Text("Reset to Defaults")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(ink.opacity(0.55))
+                .frame(maxWidth: .infinity)
+                .frame(height: 34)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(InkPress())
+        .padding(.horizontal, 20)
+        .opacity(isDefault ? 0 : 1)
+        .disabled(isDefault)
+        .accessibilityHidden(isDefault)
+        .animation(.easeInOut(duration: 0.2), value: isDefault)
     }
 
     // MARK: Shared pieces
-
-    private var fill: Color { ink.opacity(0.055) }
 
     private var paneTransition: AnyTransition {
         reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8))
     }
 
     private var rowDivider: some View {
-        Rectangle()
-            .fill(ink.opacity(0.08))
-            .frame(height: 1)
-            .padding(.leading, 50)
+        Rectangle().fill(hairline).frame(height: 1).padding(.leading, 50)
+    }
+
+    private var verticalHairline: some View {
+        Rectangle().fill(hairline).frame(width: 1).padding(.vertical, 10)
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -275,58 +347,16 @@ struct ReaderSettingsView: View {
             .kerning(0.9)
             .foregroundStyle(ink.opacity(0.45))
     }
-
-    private func toggleRow(_ label: String, icon: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 14))
-                    .foregroundStyle(ink.opacity(0.55))
-                    .frame(width: 18)
-                Text(label)
-                    .font(.system(size: 16))
-                    .foregroundStyle(ink)
-            }
-        }
-        .padding(.horizontal, 18)
-        .frame(height: 52)
-    }
 }
 
-// MARK: - Segmented Tabs
+// MARK: - Press feedback
 
-private struct SegmentedTabs: View {
-    @Binding var selection: ReaderSettingsView.Tab
-    let ink: Color
-    @Namespace private var ns
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(ReaderSettingsView.Tab.allCases) { tab in
-                Button {
-                    selection = tab
-                } label: {
-                    Text(tab.title)
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .foregroundStyle(selection == tab ? ink : ink.opacity(0.45))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 34)
-                        .background {
-                            if selection == tab {
-                                Capsule()
-                                    .fill(ink.opacity(0.11))
-                                    .matchedGeometryEffect(id: "segment", in: ns)
-                            }
-                        }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(selection == tab ? [.isSelected, .isButton] : .isButton)
-            }
-        }
-        .padding(3)
-        .background(Capsule().fill(ink.opacity(0.05)))
-        .animation(.snappy(duration: 0.3), value: selection)
+/// Flat press feedback — the ink fades, nothing shines.
+private struct InkPress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.55 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -341,30 +371,29 @@ private struct ThemeCard: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 Text("Aa")
-                    .font(font.swiftUIFont(size: 27))
+                    .font(font.swiftUIFont(size: 28))
                     .foregroundStyle(theme.foregroundColor)
                 Text(theme.displayName)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(theme.foregroundColor.opacity(0.55))
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 88)
+            .frame(height: 78)
             .background(theme.backgroundColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            // Keeps near-white themes from dissolving into a near-white sheet.
+            // Drawn inside the bounds: an outset ring gets clipped by the
+            // enclosing ScrollView on the top row.
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(theme.foregroundColor.opacity(0.10), lineWidth: 1)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(ink, lineWidth: isSelected ? 2 : 0)
-                    .padding(-3)
+                    .strokeBorder(
+                        isSelected ? ink : theme.foregroundColor.opacity(0.12),
+                        lineWidth: isSelected ? 2.5 : 1
+                    )
             )
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(InkPress())
         .accessibilityLabel(theme.displayName)
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
@@ -382,13 +411,13 @@ private struct FontCard: View {
         Button(action: action) {
             VStack(spacing: 5) {
                 Text("Aa")
-                    .font(font.swiftUIFont(size: 23))
+                    .font(font.swiftUIFont(size: 22))
                     .foregroundStyle(ink)
                 Text(font.cardLabel)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(ink.opacity(0.5))
             }
-            .frame(width: 76, height: 72)
+            .frame(width: 74, height: 64)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(ink.opacity(isSelected ? 0.10 : 0.055))
@@ -398,7 +427,7 @@ private struct FontCard: View {
                     .strokeBorder(ink.opacity(isSelected ? 0.85 : 0), lineWidth: 1.5)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(InkPress())
         .accessibilityLabel(font.displayName)
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
@@ -426,15 +455,15 @@ private struct PageModeCard: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 9) {
+            VStack(spacing: 8) {
                 PageModeThumbnail(mode: mode, ink: ink)
-                    .frame(width: 42, height: 52)
+                    .frame(width: 40, height: 50)
                 Text(mode.title)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(ink.opacity(isSelected ? 0.9 : 0.5))
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            .padding(.vertical, 11)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(ink.opacity(isSelected ? 0.10 : 0.055))
@@ -445,7 +474,7 @@ private struct PageModeCard: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(InkPress())
         .accessibilityLabel(mode.title)
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
@@ -461,27 +490,21 @@ private struct PageModeThumbnail: View {
         switch mode {
         case .slide:
             ZStack {
-                page(lines: 5)
-                    .offset(x: 5)
-                    .opacity(0.35)
-                page(lines: 5)
-                    .offset(x: -3)
+                page(lines: 5).offset(x: 5).opacity(0.35)
+                page(lines: 5).offset(x: -3)
             }
         case .curl:
             page(lines: 5)
                 .overlay(alignment: .bottomTrailing) {
                     // The lifted corner.
                     Path { path in
-                        path.move(to: CGPoint(x: 15, y: 15))
-                        path.addLine(to: CGPoint(x: 15, y: 0))
-                        path.addQuadCurve(
-                            to: CGPoint(x: 0, y: 15),
-                            control: CGPoint(x: 9, y: 9)
-                        )
+                        path.move(to: CGPoint(x: 14, y: 14))
+                        path.addLine(to: CGPoint(x: 14, y: 0))
+                        path.addQuadCurve(to: CGPoint(x: 0, y: 14), control: CGPoint(x: 8, y: 8))
                         path.closeSubpath()
                     }
                     .fill(ink.opacity(0.32))
-                    .frame(width: 15, height: 15)
+                    .frame(width: 14, height: 14)
                 }
         case .scroll:
             page(lines: 8)
@@ -502,15 +525,12 @@ private struct PageModeThumbnail: View {
                     .fill(ink.opacity(0.4))
                     .frame(height: 2.5)
                     // Ragged last line, so it reads as prose.
-                    .frame(maxWidth: index == lines - 1 ? 22 : .infinity, alignment: .leading)
+                    .frame(maxWidth: index == lines - 1 ? 20 : .infinity, alignment: .leading)
             }
         }
         .padding(6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(ink.opacity(0.07))
-        )
+        .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(ink.opacity(0.07)))
         .overlay(
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .strokeBorder(ink.opacity(0.18), lineWidth: 1)
@@ -540,14 +560,23 @@ private struct SliderRow: View {
                 .foregroundStyle(ink)
                 .frame(width: 84, alignment: .leading)
             Slider(value: $value, in: range, step: step)
-                .accessibilityLabel(label)
             Text(format(value))
                 .font(.system(size: 13).monospacedDigit())
                 .foregroundStyle(ink.opacity(0.5))
                 .frame(minWidth: 34, alignment: .trailing)
         }
         .padding(.horizontal, 18)
-        .frame(height: 54)
+        .frame(height: 46)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(format(value))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: value = min(range.upperBound, value + step)
+            case .decrement: value = max(range.lowerBound, value - step)
+            default: break
+            }
+        }
     }
 }
 

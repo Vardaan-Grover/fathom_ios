@@ -10,6 +10,10 @@ struct HomeBook: Identifiable {
     var categoryIDs: Set<UUID> = []
 }
 
+extension HomeBook: Equatable {
+    static func == (lhs: HomeBook, rhs: HomeBook) -> Bool { lhs.id == rhs.id }
+}
+
 struct HomeCategory: Identifiable {
     let id: UUID
     let name: String

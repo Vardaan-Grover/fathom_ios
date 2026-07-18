@@ -36,7 +36,7 @@ func bookmarkOnCurrentPage(
     parsedLocators: [ParsedBookmarkLocator],
     currentLocator: Locator?,
     currentProgression: Double,
-    positions: [Locator],
+    positionIndex: BookPositionIndex,
     isScrolling: Bool
 ) -> Bool {
     guard !parsedLocators.isEmpty else { return false }
@@ -57,7 +57,7 @@ func bookmarkOnCurrentPage(
     }
 
     // Paginated mode: range check using current positions list
-    let resourcePositions = positions.filter { "\($0.href)" == currentHref }
+    let resourcePositions = positionIndex.positions(forHref: currentHref)
     guard !resourcePositions.isEmpty,
           let idx = resourcePositions.firstIndex(where: {
               $0.locations.position == current.locations.position
@@ -83,7 +83,7 @@ func bookmarkOnCurrentPage(
 struct BookmarkVisualOverlay: View {
     let bookmarks: [Bookmark]
     let parsedLocators: [ParsedBookmarkLocator]
-    let positions: [Locator]
+    let positionIndex: BookPositionIndex
     let currentLocator: Locator?
     let currentProgression: Double
     let isScrolling: Bool
@@ -96,7 +96,7 @@ struct BookmarkVisualOverlay: View {
             parsedLocators: parsedLocators,
             currentLocator: currentLocator,
             currentProgression: currentProgression,
-            positions: positions,
+            positionIndex: positionIndex,
             isScrolling: isScrolling
         )
     }

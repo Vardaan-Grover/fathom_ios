@@ -607,6 +607,7 @@ extension Notification.Name {
 #if DEBUG
 private final actor PreviewBookRepo: BookRepository {
     func listBooks() async -> [Book] { [] }
+    func searchBooks(query: String) async -> [Book] { [] }
     func addBook(_ book: Book) async {}
     func updateBook(_ book: Book) async {}
     func deleteBook(_ book: Book) async {}

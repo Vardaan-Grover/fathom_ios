@@ -28,17 +28,53 @@ struct ClassicLibraryView: View {
   @ObservedObject private var downloadMonitor = ICloudDownloadMonitor.shared
   @AppStorage("fathom.home.showRecentlyRead") private var showRecentlyRead = true
 
+  @State private var showMemoryGarden = false
+  @State private var observatoryRefresh = 0
+  @ObservedObject var search: LibrarySearchViewModel
+
   var body: some View {
     NavigationStack {
       ZStack {
         mainContent
+          // Matches the focus treatment on HomeScreen and the vocab overlay.
+          .blur(radius: search.isActive ? 3 : 0)
+          .opacity(search.isActive ? 0 : 1)
+          .allowsHitTesting(!search.isActive)
+
+        if search.isActive {
+          VStack(spacing: 0) {
+            // Clears the pinned top bar, which floats above this content.
+            Color.clear.frame(height: 74)
+            LibrarySearchResults(
+              books: search.results,
+              isEmptyResult: search.isEmptyResult,
+              query: search.query,
+              onTap: { id in selectedBook = SelectedBook(id: id) }
+            )
+          }
+          .transition(.opacity)
+        }
+
         TopBarOverlay(
           scrollState: topBarScrollState,
           viewModel: viewModel,
+          bookRepository: bookRepository,
+          search: search,
+          observatoryRefresh: observatoryRefresh,
+          onOpenGarden: { showMemoryGarden = true },
           reorderingBooksCategory: $reorderingBooksCategory
         )
       }
-      
+      .animation(.spring(duration: 0.42, bounce: 0.05), value: search.isActive)
+      .task(id: viewModel.allBooks.count) {
+        search.updateLibrary(viewModel.allBooks)
+      }
+      .fullScreenCover(isPresented: $showMemoryGarden) {
+        MemoryGardenView(bookRepository: bookRepository)
+      }
+      .onChange(of: showMemoryGarden) { _, isOpen in
+        if !isOpen { observatoryRefresh &+= 1 }
+      }
     }
   }
   
@@ -347,10 +383,17 @@ struct ClassicLibraryView: View {
 private struct TopBarOverlay: View {
   let scrollState: TopBarScrollState
   let viewModel: HomeViewModel
+  let bookRepository: BookRepository
+  @ObservedObject var search: LibrarySearchViewModel
+  let observatoryRefresh: Int
+  let onOpenGarden: () -> Void
   @Binding var reorderingBooksCategory: HomeCategory?
   @Environment(\.appTheme) var theme
 
   private var opacity: Double {
+    // The bar fades as you scroll into the grid — but never while searching,
+    // or the field would dim out from under the keyboard.
+    if search.isActive { return 1 }
     let fadeStart: CGFloat = 16
     let fadeEnd: CGFloat = 64
     return Double(max(0, min(1, 1 - (scrollState.offset - fadeStart) / (fadeEnd - fadeStart))))
@@ -358,25 +401,17 @@ private struct TopBarOverlay: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack {
-        Text("Library")
-          .font(.system(size: 34, weight: .bold, design: .serif))
-          .foregroundColor(theme.colors.primary)
-        Spacer()
-        Button {
-          UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-          if let cat = viewModel.categories.first(where: { $0.id == HomeViewModel.myLibraryID }) {
-            reorderingBooksCategory = cat
-          }
-        } label: {
-          Image(systemName: "arrow.up.arrow.down")
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(theme.colors.primary.opacity(0.8))
-            .frame(width: 32, height: 32)
-        }
-      }
+      LibraryHeader(
+        title: "Library",
+        search: search,
+        bookRepository: bookRepository,
+        observatoryRefresh: observatoryRefresh,
+        onOpenGarden: onOpenGarden,
+        menu: { sortMenu }
+      )
       .padding(.horizontal, theme.layout.horizontalPadding)
       .padding(.top, 16)
+      .padding(.bottom, 8)
       .background {
         theme.colors.background
           .opacity(0.9)
@@ -387,5 +422,28 @@ private struct TopBarOverlay: View {
       .opacity(opacity)
       Spacer()
     }
+  }
+
+  // Sort is a rare action, so it lives in a menu rather than holding a
+  // permanent slot beside the observatory and search capsules.
+  private var sortMenu: some View {
+    Menu {
+      Button {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if let cat = viewModel.categories.first(where: { $0.id == HomeViewModel.myLibraryID }) {
+          reorderingBooksCategory = cat
+        }
+      } label: {
+        Label("Reorder Books", systemImage: "arrow.up.arrow.down")
+      }
+    } label: {
+      Image(systemName: "ellipsis")
+        .font(.system(size: 18, weight: .semibold))
+        .foregroundStyle(theme.colors.primary)
+        .frame(width: 46, height: 46)
+        .contentShape(.circle)
+        .glassCapsule(interactive: true)
+    }
+    .accessibilityLabel("Library options")
   }
 }

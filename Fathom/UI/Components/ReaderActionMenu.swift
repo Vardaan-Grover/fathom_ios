@@ -7,8 +7,7 @@ struct ReaderActionMenu: View {
     @Binding var isScrubbing: Bool
     @Binding var scrubTargetProgression: Double
     var currentProgression: Double
-    var positions: [Locator] = []
-    var tableOfContents: [ReadiumShared.Link] = []
+    var positionIndex: BookPositionIndex = .empty
     var aiEnabled: Bool = true
     var ingestionReady: Bool = true
     var hasBackendBookID: Bool = true
@@ -64,8 +63,7 @@ struct ReaderActionMenu: View {
                 if isScrubbing {
                     ScrubPreviewPopover(
                         progression: scrubTargetProgression,
-                        positions: positions,
-                        tableOfContents: tableOfContents,
+                        positionIndex: positionIndex,
                         foregroundColor: fg,
                         backgroundColor: bg
                     )

@@ -672,6 +672,67 @@ final class DatabaseManager {
                 """)
         }
 
+        // v28 — full-text index over the library, backing the search field on
+        // the home and classic screens.
+        //
+        // `content='books'` makes this an external-content index: FTS5 stores
+        // only the inverted index and reads column values back from `books`,
+        // so the text is not duplicated on disk.
+        //
+        // `prefix='2 3'` pre-builds 2- and 3-character prefix indexes. Search
+        // runs on every keystroke, and the first few keystrokes are both the
+        // least selective and the most expensive; without these, a query like
+        // "at*" degrades into a full index scan.
+        //
+        // `remove_diacritics 2` folds accents at tokenize time, so "Bronte"
+        // finds "Brontë" without the query layer folding anything itself.
+        migrator.registerMigration("v28_books_fts") { db in
+            try db.execute(sql: """
+                CREATE VIRTUAL TABLE books_fts USING fts5(
+                    title,
+                    author,
+                    description,
+                    content='books',
+                    content_rowid='rowid',
+                    prefix='2 3',
+                    tokenize='unicode61 remove_diacritics 2'
+                )
+                """)
+
+            // Backfill existing libraries. 'rebuild' reads straight from the
+            // content table — ~600ms for 50k books, single-digit ms for a
+            // realistic library.
+            try db.execute(sql: "INSERT INTO books_fts(books_fts) VALUES('rebuild')")
+
+            // Keep the index in sync. `books` is hard-deleted (unlike
+            // highlights/notes/bookmarks, which carry deletedAt), so a plain
+            // AFTER DELETE trigger is sufficient — there is no soft-delete
+            // state that would need filtering at query time.
+            try db.execute(sql: """
+                CREATE TRIGGER books_fts_ai AFTER INSERT ON books BEGIN
+                    INSERT INTO books_fts(rowid, title, author, description)
+                    VALUES (new.rowid, new.title, new.author, new.description);
+                END
+                """)
+            // External-content indexes can't look up old values themselves —
+            // the 'delete' command must be handed the previous column values
+            // verbatim, or the index silently corrupts.
+            try db.execute(sql: """
+                CREATE TRIGGER books_fts_ad AFTER DELETE ON books BEGIN
+                    INSERT INTO books_fts(books_fts, rowid, title, author, description)
+                    VALUES ('delete', old.rowid, old.title, old.author, old.description);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER books_fts_au AFTER UPDATE ON books BEGIN
+                    INSERT INTO books_fts(books_fts, rowid, title, author, description)
+                    VALUES ('delete', old.rowid, old.title, old.author, old.description);
+                    INSERT INTO books_fts(rowid, title, author, description)
+                    VALUES (new.rowid, new.title, new.author, new.description);
+                END
+                """)
+        }
+
         return migrator
     }
 

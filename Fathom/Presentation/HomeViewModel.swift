@@ -5,6 +5,13 @@ import SwiftUI
 @MainActor
 class HomeViewModel: ObservableObject {
     @Published var categories: [HomeCategory] = []
+
+    /// Every book exactly once, in My Library order — the source for search.
+    ///
+    /// `categories` deliberately repeats a book across every shelf it sits on,
+    /// so `categories.flatMap(\.books)` yields duplicates and can't be used here.
+    @Published private(set) var allBooks: [HomeBook] = []
+
     @Published var isLoading = true
     @Published var recentBook: HomeBook? = nil
     @Published var recentBookProgress: Double = 0
@@ -48,6 +55,9 @@ class HomeViewModel: ObservableObject {
         let (fetchedBooks, fetchedCats, fetchedMemberships) = await (books, userCats, memberships)
         categories = Self.mapToCategories(
             fetchedBooks, userCategories: fetchedCats, memberships: fetchedMemberships)
+        // My Library holds every book exactly once, already in the user's
+        // persisted order — reuse it rather than re-deriving the ordering.
+        allBooks = categories.first(where: { $0.id == Self.myLibraryID })?.books ?? []
 
         if let mostRecent = fetchedBooks.filter({ $0.lastReadAt != nil }).max(by: {
             $0.lastReadAt! < $1.lastReadAt!
@@ -115,6 +125,7 @@ class HomeViewModel: ObservableObject {
         for i in categories.indices {
             categories[i].books.removeAll { $0.id == id }
         }
+        allBooks.removeAll { $0.id == id }
         if recentBook?.id == id {
             recentBook = nil
             recentFullBook = nil

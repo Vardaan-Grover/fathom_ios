@@ -26,6 +26,11 @@ struct RootView: View {
 
     @StateObject private var vocabularyTabViewModel: VocabularyTabViewModel
 
+    // Owned here rather than inside the library screens: only one of the two
+    // is ever mounted, and the tab bar (which has to hide while searching)
+    // lives at this level.
+    @StateObject private var librarySearch: LibrarySearchViewModel
+
     @State private var activeTab: CustomTab = .library
     @State private var showImporter = false
     @State private var showShelfSheet = false
@@ -48,6 +53,15 @@ struct RootView: View {
         _vocabularyTabViewModel = StateObject(
             wrappedValue: VocabularyTabViewModel(vocabularyRepo: vocabularyRepo)
         )
+        _librarySearch = StateObject(
+            wrappedValue: LibrarySearchViewModel(bookRepository: bookRepository)
+        )
+    }
+
+    /// The tab bar yields to either search surface — it would otherwise sit on
+    /// top of the results and fight the keyboard for the same space.
+    private var isSearching: Bool {
+        vocabularyTabViewModel.isSearchFocused || librarySearch.isActive
     }
 
     var body: some View {
@@ -105,12 +119,11 @@ struct RootView: View {
                     .allowsHitTesting(
                         !vocabularyTabViewModel.isCardExpanded
                             && !vocabularyTabViewModel.isSearchFocused
+                            && !librarySearch.isActive
                     )
-                    .opacity(vocabularyTabViewModel.isSearchFocused ? 0 : 1)
-                    .frame(height: vocabularyTabViewModel.isSearchFocused ? 0 : nil)
-                    .animation(
-                        .spring(duration: 0.3, bounce: 0.05),
-                        value: vocabularyTabViewModel.isSearchFocused)
+                    .opacity(isSearching ? 0 : 1)
+                    .frame(height: isSearching ? 0 : nil)
+                    .animation(.spring(duration: 0.3, bounce: 0.05), value: isSearching)
             }
         }
         .sheet(isPresented: $vocabularyTabViewModel.isShowingShareSheet) {
@@ -195,9 +208,17 @@ struct RootView: View {
         ZStack {
             Group {
                 if viewStyle == .classicGrid {
-                    ClassicLibraryView(viewModel: homeViewModel, bookRepository: bookRepository)
+                    ClassicLibraryView(
+                        viewModel: homeViewModel,
+                        bookRepository: bookRepository,
+                        search: librarySearch
+                    )
                 } else {
-                    HomeScreen(viewModel: homeViewModel, bookRepository: bookRepository)
+                    HomeScreen(
+                        viewModel: homeViewModel,
+                        bookRepository: bookRepository,
+                        search: librarySearch
+                    )
                 }
             }
             .opacity(activeTab == .library ? 1 : 0)

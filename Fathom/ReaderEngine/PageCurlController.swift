@@ -465,6 +465,20 @@ import SwiftUI
             return true
         }
 
+        /// Disarms the curl pan while the SwiftUI overlay owns the screen.
+        ///
+        /// The pan lives on the host view, so it also sees touches that land in
+        /// the overlay above it. The exclusion zones in `prepareGestureIfPossible`
+        /// only bail out once the pan has already recognized — by which point
+        /// UIKit has cancelled those touches in the hosting view. That is fatal
+        /// for a drag: the expanded action menu's progress scrubber sits in the
+        /// middle zone the curl claims, so its `DragGesture` was cancelled before
+        /// it could ever end. Nothing behind the dim is turnable anyway.
+        func setPanEnabled(_ enabled: Bool) {
+            guard let pan = panGesture, pan.isEnabled != enabled else { return }
+            pan.isEnabled = enabled
+        }
+
         private func cancelPanGesture() {
             // Toggling isEnabled force-cancels an in-flight recognizer without
             // touching UIPVC's private gesture delegate.

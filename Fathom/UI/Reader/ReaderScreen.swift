@@ -52,6 +52,7 @@ struct ReaderScreen: View {
     @State private var currentPage: Int = 0
     @State private var totalPages: Int = 0
     @State private var positions: [Locator] = []
+    @State private var positionIndex: BookPositionIndex = .empty
     @State private var currentProgression: Double = 0.0
     @State private var currentLocator: Locator?
     @StateObject private var navigationHistory = ReaderNavigationHistory()
@@ -90,18 +91,20 @@ struct ReaderScreen: View {
             parsedLocators: parsedBookmarkLocators,
             currentLocator: currentLocator,
             currentProgression: currentProgression,
-            positions: positions,
+            positionIndex: positionIndex,
             isScrolling: settings.layout == .scrolling
         )
     }
 
     private var chapterTitle: String? {
         let prog = currentLocator?.locations.totalProgression ?? currentProgression
-        return tocChapterTitle(
-            atTotalProgression: prog,
-            positions: positions,
-            tableOfContents: tableOfContents
-        ) ?? currentLocator?.title
+        return positionIndex.chapterTitle(atTotalProgression: prog) ?? currentLocator?.title
+    }
+
+    /// Positions and the TOC load independently, so this runs after whichever
+    /// arrives second (and harmlessly after the first).
+    private func rebuildPositionIndex() {
+        positionIndex = BookPositionIndex(positions: positions, tableOfContents: tableOfContents)
     }
 
     var body: some View {
@@ -365,7 +368,7 @@ extension ReaderScreen {
             initialLocation: ReadingStateStore.shared.loadLocator(forBookID: bookID),
             isOverlayInteractive: isActionButtonPresented || pendingNoteText != nil,
             onLocationChange: onLocationChange,
-            onPositionsLoaded: { positions = $0; totalPages = $0.count },
+            onPositionsLoaded: { positions = $0; totalPages = $0.count; rebuildPositionIndex() },
             commands: commands,
             settings: settings,
             bookID: bookID,
@@ -381,6 +384,7 @@ extension ReaderScreen {
             if let links = try? await publication.tableOfContents().get() {
                 self.tableOfContents = links
                 self.searchState.tableOfContents = links
+                rebuildPositionIndex()
             }
             self.searchState.publication = publication
         }
@@ -488,7 +492,7 @@ extension ReaderScreen {
             parsedLocators: parsedBookmarkLocators,
             currentLocator: locator ?? currentLocator,
             currentProgression: overlayProgression,
-            positions: positions,
+            positionIndex: positionIndex,
             isScrolling: settings.layout == .scrolling
         )
 
@@ -520,8 +524,7 @@ extension ReaderScreen {
                     isScrubbing: $isScrubbing,
                     scrubTargetProgression: $scrubTargetProgression,
                     currentProgression: overlayProgression,
-                    positions: positions,
-                    tableOfContents: tableOfContents,
+                    positionIndex: positionIndex,
                     aiEnabled: aiEnabled,
                     ingestionReady: aiReady,
                     hasBackendBookID: backendBookID != nil,
@@ -552,7 +555,7 @@ extension ReaderScreen {
             BookmarkVisualOverlay(
                 bookmarks: bookmarks,
                 parsedLocators: parsedBookmarkLocators,
-                positions: positions,
+                positionIndex: positionIndex,
                 currentLocator: locator ?? currentLocator,
                 currentProgression: overlayProgression,
                 isScrolling: settings.layout == .scrolling,

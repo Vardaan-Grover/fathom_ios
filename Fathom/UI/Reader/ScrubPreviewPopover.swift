@@ -4,28 +4,15 @@ import SwiftUI
 /// Chapter + page readout shown above the progress scrubber while dragging.
 struct ScrubPreviewPopover: View {
     let progression: Double
-    let positions: [Locator]
-    let tableOfContents: [ReadiumShared.Link]
+    let positionIndex: BookPositionIndex
     let foregroundColor: SwiftUI.Color
     let backgroundColor: SwiftUI.Color
 
-    private var projectedLocator: Locator? {
-        guard !positions.isEmpty else { return nil }
-        let index = max(0, min(Int(progression * Double(positions.count - 1)), positions.count - 1))
-        return positions[index]
-    }
-
-    private var chapterTitle: String? {
-        guard !positions.isEmpty else { return nil }
-        return tocChapterTitle(
-            atTotalProgression: progression,
-            positions: positions,
-            tableOfContents: tableOfContents
-        ) ?? projectedLocator?.title
-    }
-
     var body: some View {
-        if let locator = projectedLocator {
+        if let locator = positionIndex.locator(atTotalProgression: progression) {
+            let chapterTitle = positionIndex.chapterTitle(atTotalProgression: progression)
+                ?? locator.title
+
             VStack(spacing: 6) {
                 if let title = chapterTitle, !title.isEmpty {
                     Text(title.uppercased())
@@ -36,7 +23,7 @@ struct ScrubPreviewPopover: View {
                         .multilineTextAlignment(.center)
                 }
 
-                if let position = locator.locations.position, positions.count > 0 {
+                if let position = locator.locations.position {
                     Text("Page \(position)")
                         .font(.body)
                         .foregroundStyle(foregroundColor.opacity(0.8))

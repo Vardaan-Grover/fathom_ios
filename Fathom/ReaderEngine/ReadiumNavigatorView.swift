@@ -78,6 +78,7 @@ import SwiftUI
         var isOverlayInteractive: Bool = false {
             didSet {
                 overlayWrapperView?.isOverlayInteractive = isOverlayInteractive
+                curlController?.setPanEnabled(!isOverlayInteractive)
             }
         }
 
@@ -141,6 +142,8 @@ import SwiftUI
             let curl = PageCurlController(navigator: navigator!, host: self, themeBackground: curlThemeBackground)
             configureCurlSuppression?(curl)
             curl.install()
+            // install() arms the pan; the overlay may already own the screen.
+            curl.setPanEnabled(!isOverlayInteractive)
             curlController = curl
 
             if !curlObserversInstalled {

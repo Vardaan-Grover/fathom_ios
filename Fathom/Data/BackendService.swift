@@ -3,6 +3,9 @@ import Auth
 
 enum BackendError: Error {
     case invalidURL
+    /// No backend endpoint is configured. Expected whenever the AI companion
+    /// is enabled without `FathomBackendBaseURL` being set — see `AppConfig`.
+    case notConfigured
     case unauthenticated
     case networkError(Error)
     case badResponse(Int)
@@ -85,7 +88,7 @@ struct APIErrorResponse: Decodable, Sendable {
 actor BackendService {
     static let shared = BackendService()
 
-    private var baseURL: URL { AppConfig.backendBaseURL }
+    private var baseURL: URL? { AppConfig.backendBaseURL }
 
     // Fetches a fresh (auto-refreshed) JWT from the active Supabase session.
     // Throws BackendError.unauthenticated if no session exists.
@@ -98,6 +101,9 @@ actor BackendService {
     }
 
     private func makeRequest(path: String, method: String, body: Data? = nil) async throws -> URLRequest {
+        guard let baseURL else {
+            throw BackendError.notConfigured
+        }
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw BackendError.invalidURL
         }

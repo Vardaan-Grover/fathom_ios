@@ -7,9 +7,13 @@
 	<string>Save your reading share cards to your photo library.</string>
 	<!-- Environment configuration — read via AppConfig. Point these at the
 	     right environment here (or override per-configuration with xcconfig
-	     variables) instead of editing Swift source. -->
-	<key>FathomBackendBaseURL</key>
-	<string>http://192.168.29.216:8080</string>
+	     variables) instead of editing Swift source.
+
+	     FathomBackendBaseURL is deliberately absent: no backend is deployed,
+	     and the AI companion that would call it is disabled. Pass
+	     -FathomBackendBaseURL <url> as a scheme launch argument to point a
+	     local build at one, and add the key back here once a real environment
+	     exists. -->
 	<key>FathomSupabaseAuthURL</key>
 	<string>https://igueynbdkxwrqpknvxfv.supabase.co/auth/v1</string>
 	<key>FathomSupabaseAnonKey</key>

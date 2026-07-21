@@ -3,6 +3,12 @@ import SwiftUI
 // MARK: - AboutScreen
 
 struct AboutScreen: View {
+    /// Taps on the Version row needed to reveal the diagnostics reader.
+    private static let tapsToRevealDiagnostics = 7
+
+    @State private var versionTapCount = 0
+    @State private var diagnosticsRevealed = false
+
     private var appVersion: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "—"
     }
@@ -32,20 +38,36 @@ struct AboutScreen: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
+                // Seven taps reveals the diagnostics reader. Kept out of sight
+                // rather than behind #if DEBUG: a TestFlight tester has to be
+                // able to reach it when asked, but a "Diagnostics" row would be
+                // noise for everyone else.
+                .contentShape(Rectangle())
+                .onTapGesture { registerVersionTap() }
+
+                if diagnosticsRevealed {
+                    NavigationLink {
+                        DiagnosticsScreen()
+                    } label: {
+                        ProfileRow(icon: "waveform.path.ecg",
+                                    iconColor: Color(.systemPurple),
+                                    title: "Diagnostics")
+                    }
+                }
             }
 
             Section {
-                Link(destination: URL(string: "https://fathom.read/privacy")!) {
+                Link(destination: URL(string: "https://fathom.ink/privacy")!) {
                     ProfileRow(icon: "hand.raised.fill",
                                 iconColor: Color(.systemBlue),
                                 title: "Privacy Policy")
                 }
-                Link(destination: URL(string: "https://fathom.read/terms")!) {
+                Link(destination: URL(string: "https://fathom.ink/terms")!) {
                     ProfileRow(icon: "doc.text.fill",
                                 iconColor: Color(.systemGray),
                                 title: "Terms of Service")
                 }
-                Link(destination: URL(string: "mailto:support@fathom.read")!) {
+                Link(destination: URL(string: "mailto:support@fathom.ink")!) {
                     ProfileRow(icon: "envelope.fill",
                                 iconColor: Color(.systemGreen),
                                 title: "Contact Support")
@@ -78,6 +100,17 @@ struct AboutScreen: View {
         .navigationTitle("About")
         .navigationBarTitleDisplayMode(.inline)
         .contentMargins(.bottom, 90, for: .scrollContent)
+    }
+
+    /// Counts taps on the Version row and reveals the diagnostics link once the
+    /// threshold is crossed. Stays revealed for the lifetime of the screen so a
+    /// tester doesn't have to repeat the gesture after coming back from it.
+    private func registerVersionTap() {
+        guard !diagnosticsRevealed else { return }
+        versionTapCount += 1
+        guard versionTapCount >= Self.tapsToRevealDiagnostics else { return }
+        withAnimation { diagnosticsRevealed = true }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
     private var heroRow: some View {

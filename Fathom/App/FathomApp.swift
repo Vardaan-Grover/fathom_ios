@@ -44,6 +44,9 @@ struct FathomApp: App {
                 // Storage + CloudKit come up independently of any Fathom
                 // account — both are scoped by Apple ID.
                 .task { await SyncBootstrap.start() }
+                // MetricKit delivers at most once a day; registering is the
+                // whole cost. Payloads stay on device — see DiskMetricsSink.
+                .task { DiagnosticsSubscriber.start() }
                 .task { await homeViewModel.load() }
                 .onOpenURL { url in
                     if url.isFileURL && url.pathExtension.lowercased() == "epub" {

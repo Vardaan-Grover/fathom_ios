@@ -3,7 +3,9 @@ import SwiftUI
 // MARK: - EmojiAvatarPickerSheet
 //
 // Sheet that lets the user pick an emoji and a background color for their
-// profile avatar. Uses the system emoji keyboard via EmojiTextField.
+// profile avatar. The emoji comes from `EmojiGridPicker` — a first-party grid
+// rather than the system emoji keyboard, which needed a Required Reason API
+// Fathom cannot justify (see EmojiGridPicker for the details).
 
 struct EmojiAvatarPickerSheet: View {
     let initialEmoji: String?
@@ -16,37 +18,30 @@ struct EmojiAvatarPickerSheet: View {
     @State private var workingEmoji: String = ""
     @State private var workingColorHex: String = ""
     @State private var hasAppeared = false
-    @State private var keyboardNudge: Int = 0
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 28) {
-                    avatarPreview
-                        .padding(.top, 12)
-                        .onTapGesture {
-                            keyboardNudge &+= 1
-                        }
+            // Deliberately a VStack, not a ScrollView: the emoji grid scrolls
+            // internally, and nesting two vertical scrollers makes the gesture
+            // ambiguous. Header and footer stay put; only the grid moves.
+            VStack(spacing: 16) {
+                avatarPreview
+                    .padding(.top, 12)
 
-                    Text(workingEmoji.isEmpty
-                         ? "Tap the avatar to open the emoji keyboard."
-                         : "Pick a background color below.")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
+                Text(workingEmoji.isEmpty
+                     ? "Pick an emoji, or just choose a color."
+                     : "Tap another emoji to change it.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
 
-                    // Invisible emoji field — re-focused via `keyboardNudge`.
-                    EmojiTextField(
-                        text: $workingEmoji,
-                        focusTrigger: keyboardNudge
-                    )
-                    .frame(width: 1, height: 1)
-                    .opacity(0.001)
-                    .allowsHitTesting(false)
+                EmojiGridPicker(selection: $workingEmoji)
+                    .padding(.horizontal, 16)
+                    .frame(maxHeight: .infinity)
 
+                VStack(spacing: 12) {
                     colorGrid
-                        .padding(.horizontal, 20)
 
                     if !workingEmoji.isEmpty {
                         Button {
@@ -63,11 +58,11 @@ struct EmojiAvatarPickerSheet: View {
                                         .fill(Color(.secondarySystemGroupedBackground))
                                 )
                         }
-                        .padding(.horizontal, 20)
                         .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     }
                 }
-                .padding(.bottom, 32)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("Edit Avatar")
@@ -88,7 +83,8 @@ struct EmojiAvatarPickerSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        // Large only — the grid needs the height, and .medium left it a sliver.
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .onAppear {
             guard !hasAppeared else { return }
@@ -107,7 +103,7 @@ struct EmojiAvatarPickerSheet: View {
             emoji: workingEmoji.isEmpty ? nil : workingEmoji,
             initials: initials,
             colorHex: workingColorHex,
-            diameter: 140
+            diameter: 108
         )
     }
 

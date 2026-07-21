@@ -8,8 +8,7 @@ struct FolderStickerEditSheet: View {
     @State private var s1: String
     @State private var s2: String
     @State private var activeSticker: Int = 1
-    @State private var keyboardNudge: Int = 0
-    
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appTheme) var theme
     
@@ -23,7 +22,7 @@ struct FolderStickerEditSheet: View {
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 32) {
+            VStack(spacing: 18) {
                 // Large Preview
                 ZStack {
                     RoundedRectangle(cornerRadius: 24)
@@ -32,21 +31,23 @@ struct FolderStickerEditSheet: View {
                     folderPreview
                         .frame(width: 200)
                 }
-                .frame(height: 280)
-                .padding(.top, 24)
+                .frame(height: 200)
+                .padding(.top, 16)
                 .padding(.horizontal, 24)
-                
+
                 // Instructions
                 VStack(spacing: 8) {
-                    Text("Tap a sticker on the folder to edit it.")
+                    Text("Tap a sticker on the folder, then pick an emoji.")
                         .font(theme.typography.headline)
                         .foregroundColor(theme.colors.primary)
-                    
+
                     Text("Or randomize them if you're feeling lucky.")
                         .font(theme.typography.subheadline)
                         .foregroundColor(theme.colors.secondary)
                 }
-                
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+
                 // Randomize Button
                 Button {
                     let pairs = StickerStore.allPairs
@@ -60,22 +61,17 @@ struct FolderStickerEditSheet: View {
                     Label("Randomize", systemImage: "sparkles")
                         .font(.system(size: 16, weight: .semibold))
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
+                        .padding(.vertical, 14)
                         .background(Color(.secondarySystemFill), in: RoundedRectangle(cornerRadius: 14))
                         .foregroundColor(.primary)
                 }
                 .padding(.horizontal, 24)
-                
-                Spacer()
-                
-                // Hidden Emoji TextField to capture emoji input
-                EmojiTextField(
-                    text: activeSticker == 1 ? $s1 : $s2,
-                    focusTrigger: keyboardNudge
-                )
-                .id(activeSticker)
-                .frame(width: 0, height: 0)
-                .opacity(0)
+
+                // Feeds whichever sticker slot is currently selected.
+                EmojiGridPicker(selection: activeSticker == 1 ? $s1 : $s2)
+                    .padding(.horizontal, 20)
+                    .frame(maxHeight: .infinity)
+                    .padding(.bottom, 12)
             }
             .navigationTitle("Edit Stickers")
             .navigationBarTitleDisplayMode(.inline)
@@ -182,7 +178,6 @@ struct FolderStickerEditSheet: View {
                     withAnimation(.spring(response: 0.3)) {
                         activeSticker = 1
                     }
-                    keyboardNudge += 1
                 }
                 
                 // S2
@@ -206,7 +201,6 @@ struct FolderStickerEditSheet: View {
                     withAnimation(.spring(response: 0.3)) {
                         activeSticker = 2
                     }
-                    keyboardNudge += 1
                 }
             }
         }

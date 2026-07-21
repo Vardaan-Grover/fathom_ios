@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Fathom does not track users across apps or websites owned by other
+	     companies, and contains no advertising or attribution SDKs. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<!-- No data is collected. The library, reading positions, notes,
+	     vocabulary, and the sky are stored on device (SQLite + JSON stores)
+	     and, when available, in the user's own private iCloud container —
+	     which is the user's storage, not the developer's, and so is not
+	     "collected" under Apple's definition.
+
+	     Two network paths exist in the codebase but are not active in this
+	     build:
+	       - Supabase accounts (FeatureFlags.accountsEnabled = false)
+	       - The AI companion backend (FeatureFlags.aiCompanionEnabled = false)
+	     If either flag is flipped on, revisit this array before shipping —
+	     accounts would add Contact Info (email address), and the AI companion
+	     would add User Content (book text and questions). -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!-- UserDefaults is used only for this app's own state: theme
+			     selection, reader/vocabulary preferences, notification
+			     settings, CloudKit change tokens, and migration flags. No
+			     app-group or cross-app access. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

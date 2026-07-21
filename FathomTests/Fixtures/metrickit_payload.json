@@ -1,0 +1,41 @@
+{
+  "appVersion": "1.0",
+  "timeStampBegin": "2026-07-19 00:00:00 +0000",
+  "timeStampEnd": "2026-07-20 00:00:00 +0000",
+  "metaData": {
+    "appBuildVersion": "1",
+    "deviceType": "iPhone17,1",
+    "osVersion": "iPhone OS 26.3.1 (23D8133)",
+    "regionFormat": "US",
+    "platformArchitecture": "arm64e"
+  },
+  "memoryMetrics": {
+    "peakMemoryUsage": "412,336 kB",
+    "averageSuspendedMemory": {
+      "averageValue": "20,754 kB",
+      "standardDeviation": 0,
+      "sampleCount": 1
+    }
+  },
+  "applicationExitMetrics": {
+    "foregroundExitData": {
+      "cumulativeNormalAppExitCount": 12,
+      "cumulativeMemoryResourceLimitExitCount": 3,
+      "cumulativeAppWatchdogExitCount": 1,
+      "cumulativeBadAccessExitCount": 0,
+      "cumulativeAbnormalExitCount": 0,
+      "cumulativeIllegalInstructionExitCount": 0
+    },
+    "backgroundExitData": {
+      "cumulativeNormalAppExitCount": 40,
+      "cumulativeMemoryResourceLimitExitCount": 2,
+      "cumulativeMemoryPressureExitCount": 5,
+      "cumulativeCPUResourceLimitExitCount": 0,
+      "cumulativeBadAccessExitCount": 0,
+      "cumulativeAbnormalExitCount": 0,
+      "cumulativeIllegalInstructionExitCount": 0,
+      "cumulativeSuspendedWithLockedFileExitCount": 0,
+      "cumulativeBackgroundTaskAssertionTimeoutExitCount": 0
+    }
+  }
+}

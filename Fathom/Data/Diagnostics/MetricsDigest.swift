@@ -71,8 +71,9 @@ private struct RawMetricPayload: Decodable {
     }
 
     struct MemoryMetrics: Decodable {
-        /// MetricKit serialises measurements as strings with a unit suffix
-        /// ("123456 kB"), not as numbers, so this cannot decode as `UInt64`.
+        /// MetricKit serialises measurements as strings with a unit suffix, and
+        /// formats the number for the current locale — "412,336 kB" on en_US —
+        /// so this cannot decode as `UInt64`.
         let peakMemoryUsage: String?
 
         var peakMemoryUsageBytes: UInt64 {
@@ -83,9 +84,19 @@ private struct RawMetricPayload: Decodable {
         /// unrecognised rather than guessing at a unit.
         static func bytes(from measurement: String?) -> UInt64 {
             guard let measurement else { return 0 }
-            let parts = measurement.split(separator: " ")
-            guard let value = Double(parts.first ?? "") else { return 0 }
-            let unit = parts.count > 1 ? parts[1].lowercased() : "bytes"
+            var parts = measurement.split(separator: " ")
+            guard !parts.isEmpty else { return 0 }
+
+            // A trailing alphabetic component is the unit; without one the
+            // value is already in bytes. Whatever remains is the number, which
+            // may itself be space-grouped depending on locale.
+            var unit = "bytes"
+            if let last = parts.last, last.contains(where: \.isLetter) {
+                unit = last.lowercased()
+                parts.removeLast()
+            }
+
+            guard let value = number(from: parts.joined()) else { return 0 }
             switch unit {
             case "bytes": return UInt64(value)
             case "kb": return UInt64(value * 1_000)
@@ -93,6 +104,21 @@ private struct RawMetricPayload: Decodable {
             case "gb": return UInt64(value * 1_000_000_000)
             default: return 0
             }
+        }
+
+        /// Grouping separators make `Double` return nil, so "412,336" — what a
+        /// real payload actually contains — used to zero out peak memory while
+        /// hand-written values like "412336" parsed fine. Falling back to the
+        /// digits alone loses nothing: these are whole byte counts.
+        ///
+        /// A locale that groups with "." ("412.336") remains ambiguous against
+        /// a genuine fraction and is read as the fraction — that ambiguity is
+        /// in the string itself, not something this can resolve.
+        private static func number(from raw: String) -> Double? {
+            if let direct = Double(raw) { return direct }
+            let digits = raw.filter(\.isNumber)
+            guard !digits.isEmpty else { return nil }
+            return Double(digits)
         }
     }
 }

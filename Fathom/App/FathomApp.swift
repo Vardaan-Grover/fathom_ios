@@ -36,7 +36,11 @@ struct FathomApp: App {
                 )
                 .environmentObject(authService)
                 .environmentObject(themeManager)
-                .task { await authService.startListening() }
+                .task {
+                    if FeatureFlags.accountsEnabled {
+                        await authService.startListening()
+                    }
+                }
                 // Storage + CloudKit come up independently of any Fathom
                 // account — both are scoped by Apple ID.
                 .task { await SyncBootstrap.start() }
@@ -44,7 +48,7 @@ struct FathomApp: App {
                 .onOpenURL { url in
                     if url.isFileURL && url.pathExtension.lowercased() == "epub" {
                         libraryViewModel.handleIncomingEPUB(url)
-                    } else {
+                    } else if FeatureFlags.accountsEnabled {
                         Task { try? await authService.handleDeepLink(url) }
                     }
                 }

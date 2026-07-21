@@ -13,7 +13,17 @@ struct AuthFlowView: View {
 
     var body: some View {
         Group {
-            if authService.isLoading {
+            // Accounts off (v1): straight into the app. This must precede the
+            // `isLoading` branch — `startListening` is what clears that flag,
+            // and it never runs while the flag is off.
+            if !FeatureFlags.accountsEnabled {
+                RootView(
+                    homeViewModel: homeViewModel,
+                    libraryViewModel: libraryViewModel,
+                    bookRepository: bookRepository,
+                    vocabularyRepo: vocabularyRepo
+                )
+            } else if authService.isLoading {
                 theme.colors.background
                     .ignoresSafeArea()
             } else if authService.session != nil {

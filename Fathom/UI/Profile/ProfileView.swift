@@ -292,20 +292,24 @@ struct ProfileView: View {
         .listRowBackground(theme.colors.surface)
     }
 
+    /// Empty while accounts are off — there is no session to sign out of.
+    @ViewBuilder
     private var signOutSection: some View {
-        Section {
-            Button(role: .destructive) {
-                showSignOutConfirm = true
-            } label: {
-                HStack {
-                    Spacer()
-                    Text("Sign Out")
-                        .fontWeight(.semibold)
-                    Spacer()
+        if FeatureFlags.accountsEnabled {
+            Section {
+                Button(role: .destructive) {
+                    showSignOutConfirm = true
+                } label: {
+                    HStack {
+                        Spacer()
+                        Text("Sign Out")
+                            .fontWeight(.semibold)
+                        Spacer()
+                    }
                 }
             }
+            .listRowBackground(theme.colors.surface)
         }
-        .listRowBackground(theme.colors.surface)
     }
 
     // MARK: - Bindings

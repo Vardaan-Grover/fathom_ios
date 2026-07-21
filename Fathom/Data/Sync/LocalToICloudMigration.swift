@@ -1,12 +1,14 @@
 import Foundation
 
 /// Moves existing EPUBs and cover images from the legacy local directories
-/// (ApplicationSupportDirectory/Books|Covers/) into the user-scoped iCloud
-/// container directories on first launch after sync is enabled.
+/// (ApplicationSupportDirectory/Books|Covers/) into the iCloud container
+/// directories on first launch after sync is enabled.
 ///
 /// - Migration is **idempotent**: files already at the destination are skipped.
-/// - Migration is **per-user**: the completion flag is keyed to the Supabase
-///   user ID so a different account on the same device migrates its own files.
+/// - Migration is **per-device**: the completion flag records that this
+///   device's local files have been lifted into the container. The container
+///   is already private to the Apple ID, so there is no second identity to key
+///   on (this flag used to be scoped by Supabase user ID).
 /// - If iCloud is unavailable the migration silently skips; it will be retried
 ///   on the next launch when iCloud becomes available.
 actor LocalToICloudMigration {
@@ -16,22 +18,19 @@ actor LocalToICloudMigration {
 
     // MARK: - Entry Point
 
-    /// Call after `ICloudFileStore.configure(userID:)` has returned.
+    /// Call after `ICloudFileStore.configure()` has returned.
     func migrateIfNeeded() async {
-        guard ICloudFileStore.shared.isAvailable,
-              let userID = ICloudFileStore.shared.userID
-        else {
+        guard ICloudFileStore.shared.isAvailable else {
             AppLogger.log(tag: "Migration", "Skipped — iCloud not available")
             return
         }
 
-        let key = migrationKey(for: userID)
-        guard !UserDefaults.standard.bool(forKey: key) else {
-            AppLogger.log(tag: "Migration", "Already migrated for user \(userID)")
+        guard !UserDefaults.standard.bool(forKey: Self.migrationKey) else {
+            AppLogger.log(tag: "Migration", "Already migrated")
             return
         }
 
-        AppLogger.log(tag: "Migration", "Starting file migration for user \(userID)")
+        AppLogger.log(tag: "Migration", "Starting file migration")
 
         let fm = FileManager.default
         guard
@@ -55,7 +54,7 @@ actor LocalToICloudMigration {
             migratedCovers = migrate(from: localCovers, to: targetDir, using: fm)
         }
 
-        UserDefaults.standard.set(true, forKey: key)
+        UserDefaults.standard.set(true, forKey: Self.migrationKey)
         AppLogger.log(
             tag: "Migration",
             "Complete — \(migratedBooks) books, \(migratedCovers) covers moved to iCloud"
@@ -64,9 +63,11 @@ actor LocalToICloudMigration {
 
     // MARK: - Private
 
-    private func migrationKey(for userID: UUID) -> String {
-        "fathom.icloud_file_migration_v1.\(userID.uuidString)"
-    }
+    /// v2: v1 keys were suffixed with the Supabase user ID. Bumping the version
+    /// means a device that migrated under v1 re-runs once against the
+    /// un-suffixed container paths — which is safe, since `migrate` skips files
+    /// that already exist at the destination.
+    private static let migrationKey = "fathom.icloud_file_migration_v2"
 
     /// Moves every file in `source` to `destination`, creating `destination` if
     /// needed.  Files that already exist at the destination are skipped.

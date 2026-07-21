@@ -20,8 +20,8 @@ private struct PendingChange: Decodable, FetchableRecord {
 /// the CloudKit private database in the user's zone.
 ///
 /// Lifecycle:
-///   `start(userID:)`  — call after Supabase sign-in + iCloud configured
-///   `stop()`          — call on sign-out
+///   `start()`  — call once at launch, after iCloud is configured
+///   `stop()`   — call when iCloud becomes unavailable
 ///
 /// The engine is resilient: if a push fails the rows stay in
 /// `cloudkit_pending_changes` and are retried on the next observation fire.
@@ -47,9 +47,18 @@ actor SyncEngine {
 
     // MARK: - Lifecycle
 
-    /// Call once after `ICloudFileStore.configure(userID:)` returns.
-    func start(userID: UUID) async {
-        let zoneName = userID.uuidString
+    /// Fixed custom zone inside the private database.
+    ///
+    /// The private database is already scoped to the signed-in Apple ID, so one
+    /// well-known zone name is all that is needed for every device of the same
+    /// user to converge. This used to be the Supabase user's UUID, which meant
+    /// signing in with a different email produced a different zone in the same
+    /// Apple ID database and nothing synced.
+    private static let zoneName = "FathomZone"
+
+    /// Call once after `ICloudFileStore.configure()` returns.
+    func start() async {
+        let zoneName = Self.zoneName
         zoneID = CKRecordZone.ID(zoneName: zoneName, ownerName: CKCurrentUserDefaultName)
 
         // 1. Ensure the zone exists before any reads or writes.

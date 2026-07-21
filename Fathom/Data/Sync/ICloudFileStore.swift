@@ -3,36 +3,40 @@ import Foundation
 /// Manages all file paths and write operations for books and covers.
 ///
 /// When iCloud is available (user signed into iCloud and entitlement present),
-/// files live inside the app's ubiquity container, scoped by Supabase user ID:
-///   <iCloudContainer>/Documents/Books/<userID>/<filename>
-///   <iCloudContainer>/Documents/Covers/<userID>/<filename>
+/// files live inside the app's ubiquity container:
+///   <iCloudContainer>/Documents/Books/<filename>
+///   <iCloudContainer>/Documents/Covers/<filename>
+///
+/// The ubiquity container is already private to the signed-in Apple ID, so
+/// these paths carry no further per-user segment. An earlier version scoped
+/// them by Supabase user ID, which meant signing in with a different email on
+/// a second device produced a different folder inside the *same* Apple ID
+/// container — the library silently would not sync. Apple ID is the only
+/// identity iCloud actually keys on, so it is the only one used here.
 ///
 /// When iCloud is unavailable the store falls back to ApplicationSupportDirectory,
 /// preserving the original layout so existing users lose nothing.
 ///
-/// Call `configure(userID:)` immediately after Supabase sign-in and
-/// `reset()` on sign-out.  All other call sites just use the shared instance.
+/// Call `configure()` once at launch (see `SyncBootstrap`). All other call
+/// sites just use the shared instance.
 final class ICloudFileStore {
 
     static let shared = ICloudFileStore()
 
     // MARK: - State (written only on the main queue via configure/reset)
 
-    private var _userID: UUID?
     private var _containerURL: URL?   // nil → iCloud unavailable
 
     private init() {}
 
     // MARK: - Lifecycle
 
-    /// Resolves the iCloud container and prepares user-scoped directories.
+    /// Resolves the iCloud container and prepares its directories.
     /// Must be called before any book is imported or opened.
-    func configure(userID: UUID) {
-        _userID = userID
-
+    func configure() {
         // url(forUbiquityContainerIdentifier:) can do I/O — call from a background thread.
-        // We do it here synchronously only because it is called from the auth listener
-        // (already off the main actor) and the result is tiny.
+        // We do it here synchronously only because it is called from the launch
+        // bootstrap (already off the main actor) and the result is tiny.
         _containerURL = FileManager.default.url(
             forUbiquityContainerIdentifier: "iCloud.com.Vardaan.Fathom"
         )
@@ -40,51 +44,37 @@ final class ICloudFileStore {
         if _containerURL == nil {
             AppLogger.log(tag: "ICloudFileStore", "iCloud unavailable — using local storage")
         } else {
-            AppLogger.log(tag: "ICloudFileStore", "iCloud container resolved for user \(userID)")
+            AppLogger.log(tag: "ICloudFileStore", "iCloud container resolved")
         }
 
-        // Eagerly create user directories so they are ready for the migrator.
+        // Eagerly create the directories so they are ready for the migrator.
         createDirectoriesIfNeeded()
     }
 
-    /// Tears down iCloud state on sign-out.
+    /// Tears down iCloud state.
     func reset() {
-        _userID = nil
         _containerURL = nil
     }
 
-    var isAvailable: Bool { _containerURL != nil && _userID != nil }
-    var userID: UUID? { _userID }
+    var isAvailable: Bool { _containerURL != nil }
     var containerURL: URL? { _containerURL }
 
     // MARK: - Directory URLs
 
-    /// iCloud path for EPUB files belonging to the current user.
-    /// `nil` when iCloud is unavailable.
-    var booksDirectory: URL? {
-        guard let container = _containerURL, let uid = _userID else { return nil }
-        return container
-            .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("Books", isDirectory: true)
-            .appendingPathComponent(uid.uuidString, isDirectory: true)
-    }
+    /// iCloud path for EPUB files. `nil` when iCloud is unavailable.
+    var booksDirectory: URL? { documentsSubdirectory("Books") }
 
-    /// iCloud path for cover images belonging to the current user.
-    var coversDirectory: URL? {
-        guard let container = _containerURL, let uid = _userID else { return nil }
-        return container
-            .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("Covers", isDirectory: true)
-            .appendingPathComponent(uid.uuidString, isDirectory: true)
-    }
+    /// iCloud path for cover images.
+    var coversDirectory: URL? { documentsSubdirectory("Covers") }
 
-    /// iCloud path for reflection images belonging to the current user.
-    var reflectionsDirectory: URL? {
-        guard let container = _containerURL, let uid = _userID else { return nil }
+    /// iCloud path for reflection images.
+    var reflectionsDirectory: URL? { documentsSubdirectory("Reflections") }
+
+    private func documentsSubdirectory(_ name: String) -> URL? {
+        guard let container = _containerURL else { return nil }
         return container
             .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("Reflections", isDirectory: true)
-            .appendingPathComponent(uid.uuidString, isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true)
     }
 
     // MARK: - URL Resolution

@@ -49,6 +49,7 @@ struct VocabularyTabView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(theme.colors.background)
+            .topScrollEdgeBlur()
             .toolbarVisibility(.hidden, for: .tabBar)
         }
         .simultaneousGesture(TapGesture().onEnded { isSearchFocused = false })

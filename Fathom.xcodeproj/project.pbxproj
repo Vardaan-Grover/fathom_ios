@@ -12,6 +12,7 @@
 		935ACF942F5A0A0D004C6F3F /* ReadiumStreamer in Frameworks */ = {isa = PBXBuildFile; productRef = 935ACF932F5A0A0D004C6F3F /* ReadiumStreamer */; };
 		935ACFCA2F5A1954004C6F3F /* ReadiumAdapterGCDWebServer in Frameworks */ = {isa = PBXBuildFile; productRef = 935ACFC92F5A1954004C6F3F /* ReadiumAdapterGCDWebServer */; };
 		938A27162F646CB4007716BC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 938A27152F646CB4007716BC /* GRDB */; };
+		93B10FA02FB0000000000003 /* BlurSwiftUI in Frameworks */ = {isa = PBXBuildFile; productRef = 93B10FA02FB0000000000002 /* BlurSwiftUI */; };
 		93CE40E22FA7590A00EAEFAB /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = 93CE40E12FA7590A00EAEFAB /* Auth */; };
 		FA7E570BAA000000000A000B /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = FA7E570AAA000000000A000A /* GRDB */; };
 /* End PBXBuildFile section */
@@ -68,6 +69,7 @@
 				935ACFCA2F5A1954004C6F3F /* ReadiumAdapterGCDWebServer in Frameworks */,
 				935ACF942F5A0A0D004C6F3F /* ReadiumStreamer in Frameworks */,
 				935ACF922F5A0A0D004C6F3F /* ReadiumShared in Frameworks */,
+				93B10FA02FB0000000000003 /* BlurSwiftUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -135,6 +137,7 @@
 				935ACFC92F5A1954004C6F3F /* ReadiumAdapterGCDWebServer */,
 				938A27152F646CB4007716BC /* GRDB */,
 				93CE40E12FA7590A00EAEFAB /* Auth */,
+				93B10FA02FB0000000000002 /* BlurSwiftUI */,
 			);
 			productName = Readora;
 			productReference = 935ACF4C2F597EE8004C6F3F /* Fathom.app */;
@@ -196,6 +199,7 @@
 				935ACF8E2F5A0A0D004C6F3F /* XCRemoteSwiftPackageReference "swift-toolkit" */,
 				938A27142F646CB4007716BC /* XCRemoteSwiftPackageReference "GRDB" */,
 				93CE40E02FA7590A00EAEFAB /* XCRemoteSwiftPackageReference "supabase-swift" */,
+				93B10FA02FB0000000000001 /* XCRemoteSwiftPackageReference "BlurUIKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 935ACF4D2F597EE8004C6F3F /* Products */;
@@ -397,7 +401,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = S4588JXL7U;
+				DEVELOPMENT_TEAM = D8B7HB9L2J;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -448,7 +452,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = S4588JXL7U;
+				DEVELOPMENT_TEAM = D8B7HB9L2J;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -587,6 +591,14 @@
 				minimumVersion = 7.0.0;
 			};
 		};
+		93B10FA02FB0000000000001 /* XCRemoteSwiftPackageReference "BlurUIKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/TimOliver/BlurUIKit.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.5.0;
+			};
+		};
 		93CE40E02FA7590A00EAEFAB /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/supabase/supabase-swift.git";
@@ -622,6 +634,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 938A27142F646CB4007716BC /* XCRemoteSwiftPackageReference "GRDB" */;
 			productName = GRDB;
+		};
+		93B10FA02FB0000000000002 /* BlurSwiftUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 93B10FA02FB0000000000001 /* XCRemoteSwiftPackageReference "BlurUIKit" */;
+			productName = BlurSwiftUI;
 		};
 		93CE40E12FA7590A00EAEFAB /* Auth */ = {
 			isa = XCSwiftPackageProductDependency;

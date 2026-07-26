@@ -10,6 +10,8 @@ struct HomeScreen: View {
     @ObservedObject var viewModel: HomeViewModel
     @ObservedObject private var downloadMonitor = ICloudDownloadMonitor.shared
     let bookRepository: BookRepository
+    /// Opens the file importer, which lives up in RootView alongside the tab bar.
+    let onAddBook: () -> Void
     @Environment(\.appTheme) var theme
 
     @State private var selectedBook: SelectedBook? = nil
@@ -34,50 +36,130 @@ struct HomeScreen: View {
 
     @ObservedObject var search: LibrarySearchViewModel
 
+    /// How far the pinned blur extends down from the top of the screen. Only
+    /// the blur is pinned now — the header itself rides the scroll content, so
+    /// this no longer has to match the header's height.
+    private var blurHeight: CGFloat { 12 + 46 }
+
     var body: some View {
-        VStack(spacing: 0) {
-            pageHeader
-                .padding(.horizontal, theme.layout.horizontalPadding)
-                .padding(.top, 12)
-                .padding(.bottom, theme.layout.sectionSpacing)
-
-            Divider()
-                .padding(.horizontal, 20)
-
-            ZStack {
-                shelvesScroll
-                    // Same focus idiom as the vocabulary overlay in RootView —
-                    // the whole surface defocuses as one composite image.
-                    .blur(radius: search.isActive ? 3 : 0)
-                    .opacity(search.isActive ? 0 : 1)
-                    .allowsHitTesting(!search.isActive)
-
-                if search.isActive {
-                    LibrarySearchResults(
-                        books: search.results,
-                        isEmptyResult: search.isEmptyResult,
-                        query: search.query,
-                        onTap: { id in selectedBook = SelectedBook(id: id) }
-                    )
-                    .transition(.opacity)
+        // Only the blur is pinned. The header scrolls away with the shelves as
+        // ordinary content, which is why there is no opacity ramp here: the bar
+        // genuinely leaves rather than dissolving in place.
+        Group {
+            if isLibraryEmpty {
+                // Nothing to scroll, so the header just sits at the top.
+                VStack(spacing: theme.layout.sectionSpacing) {
+                    headerBlock
+                    EmptyLibraryView(onAddBook: onAddBook)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.bottom, 72)
                 }
+            } else {
+                shelvesScroll
             }
-            .animation(.spring(duration: 0.42, bounce: 0.05), value: search.isActive)
         }
+        // Cross-fade the empty state out when the first book lands.
+        .animation(.easeInOut(duration: 0.4), value: isLibraryEmpty)
+        .topScrollEdgeBlur(height: blurHeight)
         .background(theme.colors.background)
         .task(id: viewModel.allBooks.count) {
             search.updateLibrary(viewModel.allBooks)
         }
     }
 
+    /// The header and its surrounding padding, as one unit. Lives inside the
+    /// scroll content so it scrolls with the shelves; the search field it
+    /// carries is why the results below have to share this same scroll view.
+    private var headerBlock: some View {
+        pageHeader
+            .padding(.horizontal, theme.layout.horizontalPadding)
+            .padding(.top, 12)
+        // No bottom padding — both call sites sit it in a VStack whose spacing
+        // supplies the gap below.
+    }
+
+    @ViewBuilder
+    private var searchResults: some View {
+        LibrarySearchResults(
+                        books: search.results,
+                        isEmptyResult: search.isEmptyResult,
+                        query: search.query,
+                        onTap: { id in selectedBook = SelectedBook(id: id) },
+                        userCategories: viewModel.categories.filter {
+                            !$0.shelfColorHex.isEmpty
+                        },
+                        onToggleCategory: { bookID, categoryID in
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                viewModel.toggleBookInCategory(
+                                    bookID: bookID, categoryID: categoryID)
+                            }
+                        },
+                        onCreateShelf: { name, colorHex in
+                            viewModel.createCategory(name: name, colorHex: colorHex)
+                        },
+                        onEditBook: { bookID in
+                            Task { @MainActor in
+                                let allBooks = await bookRepository.listBooks()
+                                guard let book = allBooks.first(where: { $0.id == bookID })
+                                else { return }
+                                try? await Task.sleep(nanoseconds: 500_000_000)
+                                editingBook = book
+                            }
+                        },
+                        onDeleteBook: { bookID in
+                            guard let hb = search.results.first(where: { $0.id == bookID })
+                            else { return }
+                            Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 500_000_000)
+                                bookToDelete = hb
+                            }
+                        },
+                        onMarkFinished: { bookID in
+                            Task {
+                                let books = await bookRepository.listBooks()
+                                guard let book = books.first(where: { $0.id == bookID })
+                                else { return }
+                                try? await Task.sleep(nanoseconds: 500_000_000)
+                                await MainActor.run { bookToMarkFinished = book }
+                            }
+                        },
+            // The caller owns the scroll view here, so the grid contributes its
+            // content directly rather than nesting a second one.
+            isScrollable: false
+        )
+    }
+
+    /// A first-run library: no books *and* no shelves the user made themselves.
+    /// Someone who created a shelf before importing anything has expressed an
+    /// intent the empty state would paper over, so they keep the shelf view.
+    private var isLibraryEmpty: Bool {
+        !viewModel.isLoading
+            && viewModel.allBooks.isEmpty
+            && !viewModel.categories.contains(where: { !$0.shelfColorHex.isEmpty })
+    }
+
     // The sheet/cover chain hangs off this subview rather than off `body`.
     // Presentation is independent of rendering, so these still work while the
-    // shelves are faded out behind the search results — a book tapped in the
+    // shelves are swapped out for the search results — a book tapped in the
     // results grid opens its details sheet exactly as one tapped on a shelf.
+    //
+    // The header, the shelves, and the search results all live in this one
+    // scroll view. That is what lets the header scroll away naturally, and it
+    // is also why the results are composed in rather than presented over the
+    // top: the header owns the search field, so a separate results scroll view
+    // would strand the field above content it no longer scrolls with. Keeping
+    // one LibraryHeader instance across both branches also preserves the
+    // capsule's expand animation, which depends on the view never being torn
+    // down (see the note in LibraryHeader).
     private var shelvesScroll: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: theme.layout.sectionSpacing) {
-                if viewModel.isLoading {
+                headerBlock
+
+                if search.isActive {
+                    searchResults
+                        .transition(.opacity)
+                } else if viewModel.isLoading {
                     ProgressView()
                         .padding(.top, 60)
                 } else {
@@ -227,6 +309,10 @@ struct HomeScreen: View {
             .padding(.bottom, 72)
         }
         .background(theme.colors.background)
+        .animation(.spring(duration: 0.42, bounce: 0.05), value: search.isActive)
+        // The keyboard follows the drag, but the search surface stays up —
+        // losing focus is not intent to close, only Cancel is.
+        .scrollDismissesKeyboard(.interactively)
         .sheet(item: $selectedBook) { selection in
             BookDetailsScreen(
                 bookID: selection.id,
@@ -505,6 +591,7 @@ struct HomeScreen: View {
     HomeScreen(
         viewModel: vm,
         bookRepository: repo,
+        onAddBook: {},
         search: LibrarySearchViewModel(bookRepository: repo)
     )
     .task { await vm.load() }

@@ -5,13 +5,11 @@ private struct SelectedBook: Identifiable {
   let id: UUID
 }
 
-@Observable private final class TopBarScrollState {
-  var offset: CGFloat = 0
-}
-
 struct ClassicLibraryView: View {
   @ObservedObject var viewModel: HomeViewModel
   let bookRepository: BookRepository
+  /// Opens the file importer, which lives up in RootView alongside the tab bar.
+  let onAddBook: () -> Void
   @Environment(\.appTheme) var theme
 
   @AppStorage("fathom.home.classic.showMetadata") private var showGridMetadata = false
@@ -23,7 +21,6 @@ struct ClassicLibraryView: View {
   @State private var bookToMarkFinished: Book? = nil
   @State private var showReorderShelves = false
   @State private var reorderingBooksCategory: HomeCategory? = nil
-  @State private var topBarScrollState = TopBarScrollState()
 
   @ObservedObject private var downloadMonitor = ICloudDownloadMonitor.shared
   @AppStorage("fathom.home.showRecentlyRead") private var showRecentlyRead = true
@@ -34,38 +31,26 @@ struct ClassicLibraryView: View {
 
   var body: some View {
     NavigationStack {
-      ZStack {
-        mainContent
-          // Matches the focus treatment on HomeScreen and the vocab overlay.
-          .blur(radius: search.isActive ? 3 : 0)
-          .opacity(search.isActive ? 0 : 1)
-          .allowsHitTesting(!search.isActive)
-
-        if search.isActive {
+      Group {
+        if isLibraryEmpty {
+          // Nothing to scroll, so the header just sits at the top.
           VStack(spacing: 0) {
-            // Clears the pinned top bar, which floats above this content.
-            Color.clear.frame(height: 74)
-            LibrarySearchResults(
-              books: search.results,
-              isEmptyResult: search.isEmptyResult,
-              query: search.query,
-              onTap: { id in selectedBook = SelectedBook(id: id) }
-            )
+            headerBlock
+            EmptyLibraryView(onAddBook: onAddBook)
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+              // Clears the floating tab bar below.
+              .padding(.bottom, 90)
           }
-          .transition(.opacity)
+          .background(theme.colors.background.ignoresSafeArea())
+        } else {
+          mainContent
         }
-
-        TopBarOverlay(
-          scrollState: topBarScrollState,
-          viewModel: viewModel,
-          bookRepository: bookRepository,
-          search: search,
-          observatoryRefresh: observatoryRefresh,
-          onOpenGarden: { showMemoryGarden = true },
-          reorderingBooksCategory: $reorderingBooksCategory
-        )
       }
+      // Only the blur is pinned; the header rides the scroll content.
+      .topScrollEdgeBlur(height: 62)
       .animation(.spring(duration: 0.42, bounce: 0.05), value: search.isActive)
+      // Cross-fade the empty state out when the first book lands.
+      .animation(.easeInOut(duration: 0.4), value: isLibraryEmpty)
       .task(id: viewModel.allBooks.count) {
         search.updateLibrary(viewModel.allBooks)
       }
@@ -78,46 +63,67 @@ struct ClassicLibraryView: View {
     }
   }
   
+  /// See the matching property on HomeScreen — a first-run library is no books
+  /// and no shelves the user made themselves.
+  private var isLibraryEmpty: Bool {
+    !viewModel.isLoading
+      && viewModel.allBooks.isEmpty
+      && !viewModel.categories.contains(where: { !$0.shelfColorHex.isEmpty })
+  }
+
   // MARK: mainContent
+  //
+  // The header, the grid, and the search results share this one scroll view —
+  // see the matching note on HomeScreen.shelvesScroll for why the results are
+  // composed in rather than presented over the top.
   private var mainContent: some View {
     ScrollView(.vertical, showsIndicators: false) {
       VStack(spacing: 24) {
-        Color.clear.frame(height: 56)
-        collectionsRow
-        if showRecentlyRead, let recentBook = viewModel.recentBook {
-          RecentlyReadTile(
-            book: recentBook,
-            progress: viewModel.recentBookProgress,
-            onTap: {
-              guard let book = viewModel.recentFullBook,
-                downloadMonitor.isReadable(bookFilename: book.localFilename)
-              else { return }
-              UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
-              readerBook = book
-            }
-          )
-          .contextMenu {
-            Button(role: .destructive) {
-              withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                showRecentlyRead = false
+        headerBlock
+
+        if search.isActive {
+          searchResults
+            .transition(.opacity)
+        } else {
+          // Scoped rather than applied to the whole VStack: the header and the
+          // results grid each supply their own horizontal padding, so a blanket
+          // one here would double it on both.
+          VStack(spacing: 24) {
+            collectionsRow
+            if showRecentlyRead, let recentBook = viewModel.recentBook {
+              RecentlyReadTile(
+                book: recentBook,
+                progress: viewModel.recentBookProgress,
+                onTap: {
+                  guard let book = viewModel.recentFullBook,
+                    downloadMonitor.isReadable(bookFilename: book.localFilename)
+                  else { return }
+                  UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                  readerBook = book
+                }
+              )
+              .contextMenu {
+                Button(role: .destructive) {
+                  withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                    showRecentlyRead = false
+                  }
+                } label: {
+                  Label("Hide Recently Read", systemImage: "eye.slash")
+                }
               }
-            } label: {
-              Label("Hide Recently Read", systemImage: "eye.slash")
             }
+            libraryGrid
           }
+          .padding(.horizontal, theme.layout.horizontalPadding)
         }
-        libraryGrid
       }
-      .padding(.horizontal, theme.layout.horizontalPadding)
       .padding(.top, 16)
       .padding(.bottom, 90)  // Room for tab bar
     }
     .background(theme.colors.background.ignoresSafeArea())
-    .onScrollGeometryChange(for: CGFloat.self) { geo in
-      geo.contentOffset.y
-    } action: { _, newValue in
-      topBarScrollState.offset = max(0, newValue)
-    }
+    // The keyboard follows the drag, but the search surface stays up —
+    // losing focus is not intent to close, only Cancel is.
+    .scrollDismissesKeyboard(.interactively)
     .sheet(item: $selectedBook) { selection in
       BookDetailsScreen(
         bookID: selection.id,
@@ -376,52 +382,21 @@ struct ClassicLibraryView: View {
     .presentationDetents([.height(236)])
     .presentationDragIndicator(.visible)
   }
-}
 
-// MARK: - TopBarOverlay
+  // MARK: - Header
 
-private struct TopBarOverlay: View {
-  let scrollState: TopBarScrollState
-  let viewModel: HomeViewModel
-  let bookRepository: BookRepository
-  @ObservedObject var search: LibrarySearchViewModel
-  let observatoryRefresh: Int
-  let onOpenGarden: () -> Void
-  @Binding var reorderingBooksCategory: HomeCategory?
-  @Environment(\.appTheme) var theme
-
-  private var opacity: Double {
-    // The bar fades as you scroll into the grid — but never while searching,
-    // or the field would dim out from under the keyboard.
-    if search.isActive { return 1 }
-    let fadeStart: CGFloat = 16
-    let fadeEnd: CGFloat = 64
-    return Double(max(0, min(1, 1 - (scrollState.offset - fadeStart) / (fadeEnd - fadeStart))))
-  }
-
-  var body: some View {
-    VStack(spacing: 0) {
-      LibraryHeader(
-        title: "Library",
-        search: search,
-        bookRepository: bookRepository,
-        observatoryRefresh: observatoryRefresh,
-        onOpenGarden: onOpenGarden,
-        menu: { sortMenu }
-      )
-      .padding(.horizontal, theme.layout.horizontalPadding)
-      .padding(.top, 16)
-      .padding(.bottom, 8)
-      .background {
-        theme.colors.background
-          .opacity(0.9)
-          .padding(.top, -28)
-          .blur(radius: 12, opaque: false)
-          .ignoresSafeArea(edges: .top)
-      }
-      .opacity(opacity)
-      Spacer()
-    }
+  /// The header and its padding, as one unit. Lives inside the scroll content
+  /// so it scrolls away with the grid — there is no fade, it simply leaves.
+  private var headerBlock: some View {
+    LibraryHeader(
+      title: "Library",
+      search: search,
+      bookRepository: bookRepository,
+      observatoryRefresh: observatoryRefresh,
+      onOpenGarden: { showMemoryGarden = true },
+      menu: { sortMenu }
+    )
+    .padding(.horizontal, theme.layout.horizontalPadding)
   }
 
   // Sort is a rare action, so it lives in a menu rather than holding a
@@ -445,5 +420,51 @@ private struct TopBarOverlay: View {
         .glassCapsule(interactive: true)
     }
     .accessibilityLabel("Library options")
+  }
+
+  // MARK: - Search results
+
+  private var searchResults: some View {
+    LibrarySearchResults(
+      books: search.results,
+      isEmptyResult: search.isEmptyResult,
+      query: search.query,
+      onTap: { id in selectedBook = SelectedBook(id: id) },
+      userCategories: viewModel.categories.filter { !$0.shelfColorHex.isEmpty },
+      onToggleCategory: { bookID, categoryID in
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+          viewModel.toggleBookInCategory(bookID: bookID, categoryID: categoryID)
+        }
+      },
+      onCreateShelf: { name, colorHex in
+        viewModel.createCategory(name: name, colorHex: colorHex)
+      },
+      onEditBook: { bookID in
+        Task { @MainActor in
+          let allBooks = await bookRepository.listBooks()
+          guard let fullBook = allBooks.first(where: { $0.id == bookID }) else { return }
+          try? await Task.sleep(nanoseconds: 500_000_000)
+          editingBook = fullBook
+        }
+      },
+      onDeleteBook: { bookID in
+        guard let hb = search.results.first(where: { $0.id == bookID }) else { return }
+        Task { @MainActor in
+          try? await Task.sleep(nanoseconds: 500_000_000)
+          bookToDelete = hb
+        }
+      },
+      onMarkFinished: { bookID in
+        Task {
+          let books = await bookRepository.listBooks()
+          guard let fullBook = books.first(where: { $0.id == bookID }) else { return }
+          try? await Task.sleep(nanoseconds: 500_000_000)
+          await MainActor.run { bookToMarkFinished = fullBook }
+        }
+      },
+      // The caller owns the scroll view here, so the grid contributes its
+      // content directly rather than nesting a second one.
+      isScrollable: false
+    )
   }
 }

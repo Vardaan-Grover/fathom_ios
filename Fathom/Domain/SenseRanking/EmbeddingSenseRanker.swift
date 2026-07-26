@@ -45,6 +45,7 @@ actor EmbeddingSenseRanker: SenseRanker {
     private var tokenizer: WordPieceTokenizer?
     private var didFailToLoad = false
     private var unloadTask: Task<Void, Never>?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
 
     /// Per-headword cache of sense-document + anchor embeddings (LRU by insertion).
     private struct WordVectors {
@@ -149,9 +150,29 @@ actor EmbeddingSenseRanker: SenseRanker {
 
     func unload() {
         guard model != nil || tokenizer != nil else { return }
-        logger.info("Unloading sense-embedding model due to inactivity")
+        logger.info("Unloading sense-embedding model")
         model = nil
         tokenizer = nil
+        // The per-word embedding cache (up to 40 words × N senses × 768
+        // floats) is only worth keeping while the model is resident;
+        // re-embedding after a reload is cheap next to the reload itself.
+        senseCache.removeAll()
+        senseCacheOrder.removeAll()
+    }
+
+    /// The model plus its embeddings are the app's single largest optional
+    /// allocation; under system memory pressure it is the first thing to give
+    /// back. It reloads transparently on the next lookup.
+    private func installMemoryPressureHandlerIfNeeded() {
+        guard memoryPressureSource == nil else { return }
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical], queue: .global(qos: .utility))
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            Task { await self.unload() }
+        }
+        source.activate()
+        memoryPressureSource = source
     }
 
     // MARK: - Sense candidates
@@ -232,6 +253,7 @@ actor EmbeddingSenseRanker: SenseRanker {
     private func loadIfNeeded() -> Bool {
         if model != nil, tokenizer != nil { return true }
         if didFailToLoad { return false }
+        installMemoryPressureHandlerIfNeeded()
 
         guard
             let modelURL = Bundle.main.url(forResource: "SenseEmbedding", withExtension: "mlmodelc"),

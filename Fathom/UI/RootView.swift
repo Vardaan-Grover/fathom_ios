@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 enum CustomTab: String, CaseIterable {
@@ -64,6 +65,20 @@ struct RootView: View {
         vocabularyTabViewModel.isSearchFocused || librarySearch.isActive
     }
 
+    /// Height of the bottom scroll-edge blur, measured up from the physical
+    /// bottom edge (the blur's container ignores the bottom safe area, so it is
+    /// anchored to the screen edge and reaches up this far). Kept short so the
+    /// already-faint blur is a subtle wash over the home indicator that fades out
+    /// low behind the tab bar rather than climbing the screen.
+    ///
+    /// Deliberately a constant, not the live safe-area inset: reading
+    /// `UIApplication`'s inset imperatively inside `body` (rather than via a
+    /// tracked GeometryReader/environment value) returns a value that shifts as
+    /// layout settles under `ignoresSafeArea`, which re-invalidates `body` on
+    /// every pass and cancels the tab bar's in-flight taps. ~48pt clears the
+    /// 34pt home indicator on every current iPhone with a little headroom.
+    private let bottomBlurHeight: CGFloat = 48
+
     var body: some View {
         ZStack {
             theme.colors.background.ignoresSafeArea()
@@ -112,6 +127,27 @@ struct RootView: View {
                 .transition(.opacity.animation(.easeOut(duration: 0.18)))
         }
             
+            // Mirrors the header treatment at the other end: content fades out
+            // under the floating tab bar instead of sliding behind it in full
+            // focus. The blur is only `bottomBlurHeight` tall; the Spacer pins it
+            // to the bottom and `.ignoresSafeArea` on the *VStack* lets it reach
+            // through the home indicator to the physical edge. Sits below the tab
+            // bar in the ZStack so the glass capsules stay crisp on top.
+            //
+            // Do NOT reach the edge by stretching the blur itself with
+            // `.frame(maxHeight: .infinity)`, and do NOT size it from a
+            // `UIApplication` safe-area read inside `body`: either one makes an
+            // `ignoresSafeArea` layout pass churn and silently swallows the tab
+            // bar's taps. Keep the height a constant. (See `bottomBlurHeight`.)
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                ScrollEdgeBlur(edge: .bottom, maximumBlurRadius: 1.5)
+                    .frame(height: bottomBlurHeight)
+            }
+            .ignoresSafeArea(edges: .bottom)
+            .opacity(isSearching ? 0 : 1)
+            .animation(.spring(duration: 0.3, bounce: 0.05), value: isSearching)
+
             VStack {
                 Spacer()
                 customTabBar
@@ -211,12 +247,14 @@ struct RootView: View {
                     ClassicLibraryView(
                         viewModel: homeViewModel,
                         bookRepository: bookRepository,
+                        onAddBook: { showImporter = true },
                         search: librarySearch
                     )
                 } else {
                     HomeScreen(
                         viewModel: homeViewModel,
                         bookRepository: bookRepository,
+                        onAddBook: { showImporter = true },
                         search: librarySearch
                     )
                 }
@@ -309,7 +347,11 @@ struct RootView: View {
     private var tabBarItems: some View {
         HStack(spacing: 10) {
             GeometryReader { proxy in
-                CustomTabBar(size: proxy.size, activeTab: $activeTab) { tab in
+                let inset: CGFloat = 4
+                CustomTabBar(
+                    size: CGSize(width: proxy.size.width - inset * 2, height: proxy.size.height - inset * 2),
+                    activeTab: $activeTab
+                ) { tab in
                     VStack(spacing: 3) {
                         Image(systemName: tab.symbol)
                             .font(.system(size: 24, weight: .bold))
@@ -319,8 +361,9 @@ struct RootView: View {
                     .symbolVariant(.fill)
                     .frame(maxWidth: .infinity)
                 }
-                .glassCapsule(interactive: true)
+                .frame(width: proxy.size.width, height: proxy.size.height)
             }
+            .glassCapsule(interactive: true)
 
             ZStack {
                 if activeTab == .vocabulary {

@@ -24,7 +24,7 @@ struct LibraryHeader<Menu: View>: View {
     private var expandAnimation: Animation {
         reduceMotion
             ? .easeInOut(duration: 0.2)
-            : .spring(response: 0.42, dampingFraction: 0.86)
+            : .spring(response: 0.3, dampingFraction: 0.86)
     }
 
     var body: some View {
@@ -54,13 +54,6 @@ struct LibraryHeader<Menu: View>: View {
     private var headerContent: some View {
         HStack(spacing: 12) {
             if !search.isActive {
-                ObservatoryView(bookRepository: bookRepository, refreshTrigger: observatoryRefresh) {
-                    onOpenGarden()
-                }
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
-
-                Spacer(minLength: 4)
-
                 Text(title)
                     .font(.system(size: 34, weight: .bold, design: .serif))
                     .foregroundStyle(theme.colors.primary)
@@ -78,6 +71,11 @@ struct LibraryHeader<Menu: View>: View {
 
                 menu
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
+
+                ObservatoryView(bookRepository: bookRepository, refreshTrigger: observatoryRefresh) {
+                    onOpenGarden()
+                }
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
 
             searchCapsule

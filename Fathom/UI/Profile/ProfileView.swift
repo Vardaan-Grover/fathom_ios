@@ -46,6 +46,7 @@ struct ProfileView: View {
             .contentMargins(.bottom, 90, for: .scrollContent)
             .scrollContentBackground(.hidden)
             .background(theme.colors.background.ignoresSafeArea())
+            .topScrollEdgeBlur()
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.inline)
         }

@@ -111,6 +111,33 @@ import SwiftUI
             overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             view.addSubview(overlay)
         }
+
+        /// Installs a hosting controller as the overlay, tearing down any
+        /// previous one first — a reused page must never accumulate child
+        /// view controllers across turns.
+        func setOverlayHosting(_ hosting: UIViewController, flipped: Bool = false, alpha: CGFloat = 0.15) {
+            loadViewIfNeeded()
+            if let previous = overlayHostingController {
+                previous.willMove(toParent: nil)
+                previous.view.removeFromSuperview()
+                previous.removeFromParent()
+            }
+            overlayHostingController = hosting
+            addChild(hosting)
+            if flipped {
+                setFlippedOverlay(hosting.view, alpha: alpha)
+            } else {
+                setOverlay(hosting.view)
+            }
+            hosting.didMove(toParent: self)
+        }
+
+        private var overlayHostingController: UIViewController?
+
+        func clearSnapshotView() {
+            snapshotView?.removeFromSuperview()
+            snapshotView = nil
+        }
     }
 
     /// Drives an Apple Books-style interactive page curl on top of a Readium
@@ -455,9 +482,7 @@ import SwiftUI
                 let anyView = factory(navigator.currentLocation)
                 let hosting = UIHostingController(rootView: anyView)
                 hosting.view.backgroundColor = UIColor.clear
-                current.addChild(hosting)
-                current.setOverlay(hosting.view)
-                hosting.didMove(toParent: current)
+                current.setOverlayHosting(hosting)
             }
             currentPageVC = current
             hostViewController?.view.bringSubviewToFront(pageVC.view)
@@ -498,6 +523,22 @@ import SwiftUI
             backPage: SnapshotPageViewController?
         ) async -> Bool {
             guard let navigator = navigator else { return false }
+
+            // Freeze the current page before turning the live navigator.
+            // snapshotView is a live CAPortalLayer, so without this freeze, 
+            // the user sees the page underneath flash blank as WKWebView unloads tiles.
+            if let webView = navigator.visibleWebViewForSnapshot {
+                if let image = try? await webView.takeSnapshot(configuration: nil), !isSuspiciouslyBlank(image) {
+                    let frame = webView.convert(webView.bounds, to: navigator.view)
+                    currentPageVC?.setImage(image, frame: frame)
+                    currentPageVC?.clearSnapshotView()
+                    
+                    if direction == .right {
+                        backPage?.setFlippedImage(image, frame: frame, alpha: 0.15)
+                        backPage?.clearSnapshotView()
+                    }
+                }
+            }
 
             let moved: Bool
             if direction == .right {
@@ -556,9 +597,7 @@ import SwiftUI
                     // The destination page MUST render the UI for the new state.
                     let hosting = UIHostingController(rootView: anyView)
                     hosting.view.backgroundColor = UIColor.clear
-                    destination.addChild(hosting)
-                    destination.setOverlay(hosting.view)
-                    hosting.didMove(toParent: destination)
+                    destination.setOverlayHosting(hosting)
                 }
             } else if retriesLeft > 0 {
                 // WebContent hadn't painted yet — wait out another paint cycle.
@@ -647,6 +686,9 @@ import SwiftUI
                     } else {
                         _ = await navigator.goRight(options: NavigatorGoOptions())
                     }
+                    if let webView = navigator.visibleWebViewForSnapshot {
+                        await self.waitForWebKitPaint(webView)
+                    }
                 }
                 self.endSuppressionIfActive(commit: false)
                 self.hideOverlayAndReset()
@@ -663,6 +705,15 @@ import SwiftUI
 
         private func hideOverlayAndReset() {
             pageVC.view.isHidden = true
+            // UIPageViewController retains whatever was last set, so without
+            // this reset the final destination page — and its full-screen
+            // bitmap (~12 MB at 3x) — would stay resident until the next turn.
+            // Park it on an empty placeholder instead.
+            pageVC.setViewControllers(
+                [SnapshotPageViewController(background: themeBackground)],
+                direction: .forward,
+                animated: false
+            )
             releaseSnapshots()
             hiddenTurnDirection = nil
             hiddenTurnTask = nil
@@ -739,9 +790,7 @@ import SwiftUI
                 let anyView = factory(navigator?.currentLocation)
                 let hosting = UIHostingController(rootView: anyView)
                 hosting.view.backgroundColor = UIColor.clear
-                back.addChild(hosting)
-                back.setFlippedOverlay(hosting.view)
-                hosting.didMove(toParent: back)
+                back.setOverlayHosting(hosting, flipped: true)
             }
             let turnTask = startHiddenTurn(direction, into: destination, backPage: direction == .left ? back : nil)
 

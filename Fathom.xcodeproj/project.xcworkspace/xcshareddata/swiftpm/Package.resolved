@@ -1,6 +1,15 @@
 {
-  "originHash" : "4ff0721f9cf3957101856dcc5c9f97dc4de8f61567b8eb37958cf0acde6f8af8",
+  "originHash" : "6fb485c31e073c9560b37755bb7ecf4f46f8e57e44e779050d3dde661bd29025",
   "pins" : [
+    {
+      "identity" : "bluruikit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/TimOliver/BlurUIKit.git",
+      "state" : {
+        "revision" : "235de46a35bae4f5f7bf905831969277b4e7d2aa",
+        "version" : "1.5.0"
+      }
+    },
     {
       "identity" : "cryptoswift",
       "kind" : "remoteSourceControl",

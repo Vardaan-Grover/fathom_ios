@@ -39,6 +39,10 @@ struct CustomTabBar<TabItemView: View>: UIViewRepresentable {
             .foregroundColor: UIColor(activeTint)
         ], for: .selected)
 
+        /// Matches the selected-segment highlight's rounding to the fully capsule-shaped tab bar.
+        control.layer.cornerRadius = size.height / 2
+        control.clipsToBounds = true
+
         control.addTarget(context.coordinator, action: #selector(Coordinator.tabSelected(_:)), for: .valueChanged)
         return control
     }

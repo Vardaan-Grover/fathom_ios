@@ -9,6 +9,22 @@ struct LibrarySearchResults: View {
     let query: String
     let onTap: (UUID) -> Void
 
+    // The cover's context menu is the same one the shelves show, so it needs
+    // the same handlers. Without them every item is a no-op button.
+    var userCategories: [HomeCategory] = []
+    var onToggleCategory: ((UUID, UUID) -> Void)? = nil
+    var onCreateShelf: ((String, String) -> HomeCategory?)? = nil
+    var onEditBook: ((UUID) -> Void)? = nil
+    var onDeleteBook: ((UUID) -> Void)? = nil
+    var onMarkFinished: ((UUID) -> Void)? = nil
+
+    /// When false the grid is emitted without a ScrollView of its own, so a
+    /// caller can compose it into their scroll content underneath the library
+    /// header. The header carries the search field, so it and the results have
+    /// to share one scroll view for the field to scroll with its results
+    /// instead of floating above them.
+    var isScrollable: Bool = true
+
     @Environment(\.appTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -38,31 +54,58 @@ struct LibrarySearchResults: View {
         }
     }
 
+    @ViewBuilder
     private var grid: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVGrid(columns: columns, spacing: 26) {
+        if isScrollable {
+            ScrollView(.vertical, showsIndicators: false) {
+                gridContent
+            }
+            // The keyboard follows the drag, but the search surface stays up —
+            // losing focus is not intent to close, only Cancel is.
+            .scrollDismissesKeyboard(.interactively)
+        } else {
+            // The caller owns the scroll view, and with it the keyboard
+            // dismissal behaviour above.
+            gridContent
+        }
+    }
+
+    private var gridContent: some View {
+        LazyVGrid(columns: columns, spacing: 26) {
                 ForEach(books) { book in
-                    Button {
+                    // Deliberately a tap gesture rather than a Button. The
+                    // cover carries its own .contextMenu, and a context menu
+                    // nested inside a button label fights the button for the
+                    // long press — the menu opens but its selections land on a
+                    // view the button is already tearing down.
+                    TiltedCover(
+                        book: book,
+                        roll: tilt.roll,
+                        pitch: tilt.pitch,
+                        userCategories: userCategories,
+                        onToggleCategory: onToggleCategory.map { handler in
+                            { categoryID in handler(book.id, categoryID) }
+                        },
+                        onCreateShelf: onCreateShelf,
+                        onEdit: onEditBook.map { handler in { handler(book.id) } },
+                        onDelete: onDeleteBook.map { handler in { handler(book.id) } },
+                        onMarkFinished: onMarkFinished.map { handler in { handler(book.id) } }
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         onTap(book.id)
-                    } label: {
-                        TiltedCover(book: book, roll: tilt.roll, pitch: tilt.pitch)
                     }
-                    .buttonStyle(.plain)
                     // Keyed by id so filtering reflows existing tiles rather
                     // than tearing them down and rebuilding.
                     .id(book.id)
                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
                 }
             }
-            .padding(.horizontal, theme.layout.horizontalPadding)
-            .padding(.top, 8)
-            .padding(.bottom, 96)
-            .animation(.spring(response: 0.38, dampingFraction: 0.86), value: books)
-        }
-        // The keyboard follows the drag, but the search surface stays up —
-        // losing focus is not intent to close, only Cancel is.
-        .scrollDismissesKeyboard(.interactively)
+        .padding(.horizontal, theme.layout.horizontalPadding)
+        .padding(.top, 8)
+        .padding(.bottom, isScrollable ? 96 : 0)
+        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: books)
     }
 
     private var emptyState: some View {
@@ -101,6 +144,13 @@ private struct TiltedCover: View {
     let book: HomeBook
     let roll: Double
     let pitch: Double
+
+    var userCategories: [HomeCategory] = []
+    var onToggleCategory: ((UUID) -> Void)? = nil
+    var onCreateShelf: ((String, String) -> HomeCategory?)? = nil
+    var onEdit: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
+    var onMarkFinished: (() -> Void)? = nil
 
     @Environment(\.appTheme) private var theme
 
@@ -147,9 +197,19 @@ private struct TiltedCover: View {
                         .blur(radius: 10)
                         .offset(shadowOffset)
 
-                    BookCoverView(book: book, width: width, height: height)
-                        .clipShape(corner)
-                        .offset(coverOffset)
+                    BookCoverView(
+                        book: book,
+                        width: width,
+                        height: height,
+                        userCategories: userCategories,
+                        onToggleCategory: onToggleCategory,
+                        onCreateShelf: onCreateShelf,
+                        onEdit: onEdit,
+                        onDelete: onDelete,
+                        onMarkFinished: onMarkFinished
+                    )
+                    .clipShape(corner)
+                    .offset(coverOffset)
                     // No .animation here — the provider already low-passes the
                     // signal. Animating on top would add lag and make the
                     // cover feel like it's chasing the phone.

@@ -433,11 +433,10 @@ extension ReaderScreen {
             definedWord = text
             definedSentenceContext = sentenceContext
         }
-        // Load the sense-embedding model while the user reads, so the first
-        // definition lookup doesn't pay the cold-start cost.
-        Task.detached(priority: .utility) {
-            await EmbeddingSenseRanker.shared.prewarm()
-        }
+        // The sense-embedding model (~100 MB resident) is deliberately NOT
+        // prewarmed here: holding it alongside the reader's WebKit processes
+        // is what pushes the app toward jetsam. VocabularySheetViewModel warms
+        // it when a definition sheet opens, overlapping the dictionary fetch.
         commands.onTranslate = { text in
             translateText = text
             isShowingTranslation = true

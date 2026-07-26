@@ -75,6 +75,9 @@ final class VocabularySheetViewModel: ObservableObject {
         self.repository = repository
         self.ranker = ranker
 
+        // Warm the sense-embedding model while the definition fetch is on the
+        // network, so ranking can start as soon as the entry arrives.
+        Task { await ranker.prewarm() }
         Task {
             await checkSavedStatus()
             await fetchDefinition()

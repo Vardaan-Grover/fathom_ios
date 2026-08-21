@@ -759,6 +759,37 @@ final class DatabaseManager {
             }
         }
 
+        // v30 — partition reading activity by device.
+        //
+        // v24 made (bookID, date) unique, so a day could hold exactly one row
+        // per book and two devices had to reconcile into it. The sync path
+        // reconciled with max(duration): read 20 minutes on an iPhone and 15
+        // on an iPad and the day recorded 20, not 35. Every multi-device day
+        // under-reported, silently, and the Memory Garden's doodle tiers are
+        // driven by that number.
+        //
+        // Adding the device to the key removes the reconciliation instead of
+        // trying to get it right: each installation owns its own row, no row
+        // ever has two writers, and a day's total is the sum across rows. That
+        // is idempotent (re-pulling a row overwrites it with itself) and
+        // commutative, which max was too but at the cost of being wrong.
+        //
+        // Existing rows are attributed to this device — the only device that
+        // could have written them. See §3.4 of docs/sync-conflict-policy.md.
+        migrator.registerMigration("v30_reading_activity_per_device") { db in
+            try db.alter(table: "readingActivity") { t in
+                t.add(column: "deviceID", .text).notNull().defaults(to: "")
+            }
+            try db.execute(sql: "UPDATE readingActivity SET deviceID = ? WHERE deviceID = ''",
+                           arguments: [DeviceIdentity.current])
+
+            try db.execute(sql: "DROP INDEX IF EXISTS idx_readingActivity_book_date")
+            try db.create(index: "idx_readingActivity_book_date_device",
+                          on: "readingActivity",
+                          columns: ["bookID", "date", "deviceID"],
+                          unique: true)
+        }
+
         return migrator
     }
 

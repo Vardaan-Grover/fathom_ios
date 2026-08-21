@@ -486,6 +486,7 @@ extension ReadingActivity: CloudKitSyncable {
         r["duration"] = duration
         r["createdAt"] = createdAt
         r["modifiedAt"] = modifiedAt
+        r["deviceID"] = deviceID
     }
 
     nonisolated static func from(ckRecord r: CKRecord) -> ReadingActivity? {
@@ -505,7 +506,11 @@ extension ReadingActivity: CloudKitSyncable {
             date: date,
             duration: duration,
             createdAt: createdAt,
-            modifiedAt: r["modifiedAt"] as? Date ?? createdAt
+            modifiedAt: r["modifiedAt"] as? Date ?? createdAt,
+            // Rows predating the per-device key are attributed to whichever
+            // device wrote them; an absent value means the record was written
+            // before v30 and belongs to no device this build can identify.
+            deviceID: r["deviceID"] as? String ?? ""
         )
     }
 }

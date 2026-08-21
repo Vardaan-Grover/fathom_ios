@@ -1,6 +1,6 @@
 # Sync Conflict Policy
 
-Status: **proposed — review before implementation**
+Status: **partly implemented** — §0.1, §0.2, §3.2, §3.4 and §3.8 have landed; §3.1, §3.3 and §3.6 are still outstanding and are one-way doors
 Scope: the CloudKit private-database sync in `Fathom/Data/Sync/`, as part of the
 migration from the hand-rolled `SyncEngine` to `CKSyncEngine`.
 
@@ -97,7 +97,7 @@ by construction. It is the right shape for anything that accumulates.
 | `Note` | Yes | Soft | **Tombstone-wins** | `noteContent` is LWW-Field among the live fields; delete still wins over an edit. |
 | `Bookmark` | Yes | Soft | **Tombstone-wins** | Effectively immutable except for `deletedAt` — a bookmark is created or removed, never edited. |
 | `SavedWord` | Yes | Soft | **Tombstone-wins** | `pinnedAt` is LWW-Field. `fullDictionaryJSON` is immutable (deterministic lookup result). |
-| `ReadingActivity` | No | None | **Per-device counter** | **Currently `max(duration)`, which is wrong.** See §3.4. |
+| `ReadingActivity` | No | None | **Per-device counter** | Keyed on `(bookID, date, deviceID)` as of migration v30; totals are `SUM` across devices. See §3.4. |
 | `ReadingPosition` | No | None | **LWW-Field + furthest** | See §3.6. |
 | `ReaderSettings` | Yes | None | **LWW-Blob** | Accepted tradeoff — see §3.7. |
 | `UserProfile` | Yes | None | **LWW-Field** | Three fields (`displayName`, `avatarEmoji`, `avatarColorHex`). Per-field is free here; do it rather than blob. |
@@ -148,7 +148,12 @@ correct and should stay — it is what makes the set idempotent.
 
 ### 3.4 `ReadingActivity` must be per-device, and `max` is a data-loss bug
 
-Current merge, at `SyncEngine+Pull.swift:253`:
+**Implemented (migration v30).** The record is keyed on
+`(bookID, date, deviceID)`, `DeviceIdentity` supplies the partition, and both
+`MemoryGardenViewModel` and `ObservatoryViewModel` already summed by date so
+they read correctly unchanged. The original reasoning follows.
+
+The merge this replaced:
 
 ```swift
 if incoming.duration > existing.duration {
@@ -180,6 +185,23 @@ rows are still summed.
 Requires a local schema migration to widen the uniqueness constraint from
 `(bookID, date)` to `(bookID, date, deviceID)`. Existing rows adopt the current
 device's ID.
+
+**Two things surfaced while implementing this**, both pre-existing:
+
+- `logReadingSession` looked its row up with `WHERE bookID = ?` bound to
+  `bookID.uuidString`, but GRDB stores `UUID` as a 16-byte blob, so the lookup
+  never matched. Every reading session after the first each day tried to
+  insert, hit the unique index, threw, and was swallowed by the repository's
+  `catch`. **Only the first session per book per day was ever recorded.** The
+  same pattern appears in `VocabularyRepositorySQLite.removeSavedWord` and
+  `setPinnedAt` — tracked separately.
+- **The CDC triggers are incompatible with `UPSERT` on synced tables.** A
+  statement carrying its own `ON CONFLICT` clause overrides the conflict
+  resolution inside any trigger it fires, downgrading the trigger's
+  `INSERT OR REPLACE INTO cloudkit_pending_changes` to a plain `INSERT`, which
+  then fails against that table's primary key. Anything writing to a synced
+  table must use fetch-then-write, not upsert. `dbQueue.write` serialises
+  writers, so that is atomic regardless.
 
 ### 3.5 `sortOrder` — accept the flaw for v1, knowingly
 
@@ -295,13 +317,13 @@ own document rather than a row in this table.
 | 1 | Order merges by `CKRecord.modificationDate`, not client `modifiedAt` | Client clocks are not trustworthy (§0.1) |
 | 2 | Three-way merge against the ancestor record | Makes field clears representable; removes the nil-coalesce hack (§0.2) |
 | 3 | Add `deletedAt` to `BookCategoryMembership` | Shelf removals currently race (§3.3) |
-| 4 | Re-key `ReadingActivity` on `(bookID, date, deviceID)`, sum at read | `max` under-reports every multi-device day (§3.4) |
+| 4 | ~~Re-key `ReadingActivity` on `(bookID, date, deviceID)`, sum at read~~ **done, v30** | `max` under-reports every multi-device day (§3.4) |
 | 5 | Add `furthestProgression` to `ReadingPosition` | Cannot be backfilled later (§3.6) |
 | 6 | Stop syncing `preprocessingStatus`, `aiEnabled`, `backendBookID` | Describes local state; syncing it is actively wrong (§3.2) |
 | 7 | Split `BookCompletion` out of `Book` | Makes the immutable/mutable split structural (§3.1) |
 | 8 | Exclude `AIConversation` from the production schema | Additive-only schema; do not lock in a known-broken type (§3.8) |
 | 9 | Tombstone purge policy | Unbounded growth (§4) |
 
-Items 3, 4, and 5 change the record schema and must be settled **before** the
-first production schema deployment. Items 1, 2, and 6 are merge-logic changes
-that can land with the `CKSyncEngine` migration itself.
+Items 1, 2, 4 and 6 have landed. Items 3, 5, 7 and 8 change the record schema
+and must still be settled **before** the first production schema deployment —
+CloudKit's production schema is additive-only, so they are one-way doors.

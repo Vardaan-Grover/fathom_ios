@@ -159,12 +159,13 @@ nonisolated enum SyncMergePolicy {
             return [
                 "bookID": .immutable,
                 "date": .immutable,
+                "deviceID": .immutable,
                 "createdAt": .immutable,
                 "modifiedAt": .maxWins,
-                // Interim behaviour, and known to under-report: until the
-                // record is re-keyed on (bookID, date, deviceID) two devices
-                // reading the same day cannot both be represented. `maxWins`
-                // at least never loses the larger session. See §3.4.
+                // Now keyed on (bookID, date, deviceID), so exactly one device
+                // ever writes this row and a conflict should not arise. If one
+                // somehow does, duration only ever grows within a day, which
+                // makes the larger value the later one. See §3.4.
                 "duration": .maxWins
             ]
 

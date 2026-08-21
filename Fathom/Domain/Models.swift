@@ -360,6 +360,18 @@ struct AIThread: Identifiable, Codable {
     var messages: [AIMessage]
 }
 
+/// One book's reading time, for one day, **on one device**.
+///
+/// The device is part of the key. Reading time accumulates, and a row shared
+/// between devices forces a merge that has to choose between double-counting
+/// and dropping a session — the previous `max(duration)` merge chose the
+/// latter, so every multi-device day under-reported silently. Partitioning by
+/// device means no row ever has two writers, and a day's total is simply the
+/// sum across its rows. See §3.4 of docs/sync-conflict-policy.md.
+///
+/// Consumers must therefore aggregate by date rather than expecting one row
+/// per (book, day). `MemoryGardenViewModel` and `ObservatoryViewModel` already
+/// sum, so they read correctly without change.
 struct ReadingActivity: Identifiable, Codable, FetchableRecord, PersistableRecord, Equatable {
     static let databaseTableName = "readingActivity"
 
@@ -369,4 +381,6 @@ struct ReadingActivity: Identifiable, Codable, FetchableRecord, PersistableRecor
     var duration: TimeInterval // in seconds
     let createdAt: Date
     var modifiedAt: Date = Date()
+    /// Which installation logged this time. Never written by another device.
+    var deviceID: String = DeviceIdentity.current
 }

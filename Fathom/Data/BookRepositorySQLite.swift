@@ -110,20 +110,47 @@ final actor BookRepositorySQLite: BookRepository {
         formatter.timeZone = TimeZone.current
         let todayStr = formatter.string(from: Date())
 
+        let deviceID = DeviceIdentity.current
+        let now = Date()
+
         do {
             try await dbQueue.write { db in
+                // Scoped to this device: rows belonging to other devices are
+                // theirs to write, and adding to one here would double-count
+                // time they already reported. See §3.4 of
+                // docs/sync-conflict-policy.md.
+                //
+                // bookID is bound as a UUID, not `bookID.uuidString`. GRDB
+                // stores UUID as a 16-byte blob, so comparing the column
+                // against a string matches nothing — the previous version of
+                // this lookup always missed, so every session after the first
+                // each day tried to insert, hit the unique index, threw, and
+                // was swallowed by the catch below. The time was lost.
+                //
+                // Deliberately fetch-then-write rather than an UPSERT: a
+                // statement carrying its own ON CONFLICT clause overrides the
+                // conflict resolution inside any trigger it fires, which
+                // downgrades the CDC trigger's `INSERT OR REPLACE` into a
+                // plain INSERT and makes it fail against
+                // cloudkit_pending_changes' primary key. `dbQueue.write`
+                // serialises writers, so read-then-write is atomic here
+                // regardless.
                 if var existing = try ReadingActivity.fetchOne(
                     db,
-                    sql: "SELECT * FROM readingActivity WHERE bookID = ? AND date = ?",
-                    arguments: [bookID.uuidString, todayStr]
+                    sql: """
+                        SELECT * FROM readingActivity
+                        WHERE bookID = ? AND date = ? AND deviceID = ?
+                        """,
+                    arguments: [bookID, todayStr, deviceID]
                 ) {
                     existing.duration += duration
+                    existing.modifiedAt = now
                     try existing.update(db)
                 } else {
-                    let newActivity = ReadingActivity(
+                    try ReadingActivity(
                         id: UUID(), bookID: bookID, date: todayStr,
-                        duration: duration, createdAt: Date())
-                    try newActivity.insert(db)
+                        duration: duration, createdAt: now,
+                        deviceID: deviceID).insert(db)
                 }
             }
         } catch {
@@ -148,12 +175,18 @@ final actor BookRepositorySQLite: BookRepository {
     func insertMockReadingActivity(_ activity: ReadingActivity) async {
         do {
             try await dbQueue.write { db in
+                // Mirrors logReadingSession — see the notes there on binding
+                // bookID as a UUID and on avoiding UPSERT.
                 if var existing = try ReadingActivity.fetchOne(
                     db,
-                    sql: "SELECT * FROM readingActivity WHERE bookID = ? AND date = ?",
-                    arguments: [activity.bookID.uuidString, activity.date]
+                    sql: """
+                        SELECT * FROM readingActivity
+                        WHERE bookID = ? AND date = ? AND deviceID = ?
+                        """,
+                    arguments: [activity.bookID, activity.date, activity.deviceID]
                 ) {
                     existing.duration += activity.duration
+                    existing.modifiedAt = Date()
                     try existing.update(db)
                 } else {
                     try activity.insert(db)

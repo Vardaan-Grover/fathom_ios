@@ -790,7 +790,158 @@ final class DatabaseManager {
                           unique: true)
         }
 
+        // v31 — make the CDC queue's recordID a usable CloudKit record name.
+        //
+        // The v21/v27 triggers wrote `NEW.id` straight into
+        // cloudkit_pending_changes.recordID. GRDB encodes `UUID` as a 16-byte
+        // blob, and SQLite's TEXT affinity does not convert a blob, so the
+        // column held raw bytes. Reading it back into a Swift `String` either
+        // produced mojibake (when the bytes happened to be valid UTF-8) or
+        // threw, which poisoned the whole queue read.
+        //
+        // Either way the push path was dead: an unparseable local id fails
+        // `UUID(uuidString:)`, `recordToSave` returns nil, and CKSyncEngine
+        // drops the change. Nothing locally-originated could ever upload. It
+        // failed closed, so no junk reached CloudKit — but nothing else did
+        // either. Unnoticed because sync has never run.
+        //
+        // The triggers now format the blob as canonical uppercase UUID text,
+        // matching Swift's `uuidString`. `hex()` already returns uppercase.
+        // The typeof() guard covers ids that are already text: BookRepository's
+        // touchLastReadAt carries a both-encodings fallback, so such rows may
+        // exist.
+        //
+        // Composite membership keys also switch from "|" to "_". CloudKit
+        // record names admit only ASCII letters, digits, "-", "_" and "." —
+        // "|" was never legal, and CKRecordName expects "_".
+        migrator.registerMigration("v31_cdc_record_ids_as_uuid_text") { db in
+            let stamp = "strftime('%Y-%m-%dT%H:%M:%f', 'now')"
+
+            // Upsert-only tables (soft-deletes, never hard-deleted).
+            for table in ["highlights", "notes", "bookmarks", "saved_words", "readingActivity"] {
+                let type = Self.cloudKitType(for: table)
+                for (suffix, event, alias) in [("_ck_insert", "INSERT", "NEW"),
+                                               ("_ck_update", "UPDATE", "NEW")] {
+                    try db.execute(sql: "DROP TRIGGER IF EXISTS \(table)\(suffix)")
+                    try db.execute(sql: """
+                        CREATE TRIGGER \(table)\(suffix)
+                        AFTER \(event) ON \(table)
+                        BEGIN
+                            INSERT OR REPLACE INTO cloudkit_pending_changes
+                                (recordType, recordID, operation, queuedAt)
+                            VALUES ('\(type)', \(Self.uuidTextSQL("\(alias).id")),
+                                    'upsert', \(stamp));
+                        END
+                        """)
+                }
+            }
+
+            // Hard-delete tables.
+            for table in ["books", "bookCategories"] {
+                let type = Self.cloudKitType(for: table)
+                for (suffix, event) in [("_ck_insert", "INSERT"), ("_ck_update", "UPDATE")] {
+                    try db.execute(sql: "DROP TRIGGER IF EXISTS \(table)\(suffix)")
+                    try db.execute(sql: """
+                        CREATE TRIGGER \(table)\(suffix)
+                        AFTER \(event) ON \(table)
+                        BEGIN
+                            INSERT OR REPLACE INTO cloudkit_pending_changes
+                                (recordType, recordID, operation, queuedAt)
+                            VALUES ('\(type)', \(Self.uuidTextSQL("NEW.id")),
+                                    'upsert', \(stamp));
+                        END
+                        """)
+                }
+                try db.execute(sql: "DROP TRIGGER IF EXISTS \(table)_ck_delete")
+                try db.execute(sql: """
+                    CREATE TRIGGER \(table)_ck_delete
+                    AFTER DELETE ON \(table)
+                    BEGIN
+                        INSERT OR REPLACE INTO cloudkit_pending_changes
+                            (recordType, recordID, operation, queuedAt)
+                        VALUES ('\(type)', \(Self.uuidTextSQL("OLD.id")),
+                                'delete', \(stamp));
+                    END
+                    """)
+            }
+
+            // bookCategoryMemberships — composite key "bookID_categoryID".
+            let newComposite = "\(Self.uuidTextSQL("NEW.bookID")) || '_' || "
+                + Self.uuidTextSQL("NEW.categoryID")
+            let oldComposite = "\(Self.uuidTextSQL("OLD.bookID")) || '_' || "
+                + Self.uuidTextSQL("OLD.categoryID")
+
+            try db.execute(sql: "DROP TRIGGER IF EXISTS bookCategoryMemberships_ck_insert")
+            try db.execute(sql: """
+                CREATE TRIGGER bookCategoryMemberships_ck_insert
+                AFTER INSERT ON bookCategoryMemberships
+                BEGIN
+                    INSERT OR REPLACE INTO cloudkit_pending_changes
+                        (recordType, recordID, operation, queuedAt)
+                    VALUES ('BookCategoryMembership', \(newComposite), 'upsert', \(stamp));
+                END
+                """)
+            try db.execute(sql: "DROP TRIGGER IF EXISTS bookCategoryMemberships_ck_delete")
+            try db.execute(sql: """
+                CREATE TRIGGER bookCategoryMemberships_ck_delete
+                AFTER DELETE ON bookCategoryMemberships
+                BEGIN
+                    INSERT OR REPLACE INTO cloudkit_pending_changes
+                        (recordType, recordID, operation, queuedAt)
+                    VALUES ('BookCategoryMembership', \(oldComposite), 'delete', \(stamp));
+                END
+                """)
+
+            // Every queued row was written by the old triggers, so every one
+            // carries an unusable recordID. Repairing them is not worth it:
+            // rebuild the queue from what actually exists. Nothing is lost —
+            // sync has never run, so all of it still needs pushing. Queued
+            // deletes are dropped, which is correct for the same reason: the
+            // server has no record to delete.
+            try db.execute(sql: "DELETE FROM cloudkit_pending_changes")
+
+            for (type, table) in [("Book", "books"),
+                                  ("BookCategory", "bookCategories"),
+                                  ("Highlight", "highlights"),
+                                  ("Note", "notes"),
+                                  ("Bookmark", "bookmarks"),
+                                  ("SavedWord", "saved_words"),
+                                  ("ReadingActivity", "readingActivity")] {
+                try db.execute(sql: """
+                    INSERT OR IGNORE INTO cloudkit_pending_changes
+                        (recordType, recordID, operation)
+                    SELECT '\(type)', \(Self.uuidTextSQL("id")), 'upsert' FROM \(table)
+                    """)
+            }
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO cloudkit_pending_changes
+                    (recordType, recordID, operation)
+                SELECT 'BookCategoryMembership',
+                       \(Self.uuidTextSQL("bookID")) || '_' || \(Self.uuidTextSQL("categoryID")),
+                       'upsert'
+                FROM bookCategoryMemberships
+                """)
+        }
+
         return migrator
+    }
+
+    /// SQL producing canonical uppercase UUID text from a column that may hold
+    /// either a 16-byte blob (how GRDB encodes `UUID`) or already-canonical
+    /// text.
+    ///
+    /// SQLite's TEXT affinity does not convert a blob, so a UUID written by
+    /// GRDB stays raw bytes in a `.text` column and reads back as mojibake.
+    /// `hex()` returns uppercase, which is what `UUID.uuidString` produces, so
+    /// no case folding is needed.
+    nonisolated static func uuidTextSQL(_ column: String) -> String {
+        """
+        CASE WHEN typeof(\(column)) = 'blob' THEN
+            substr(hex(\(column)), 1, 8) || '-' || substr(hex(\(column)), 9, 4) || '-' || \
+        substr(hex(\(column)), 13, 4) || '-' || substr(hex(\(column)), 17, 4) || '-' || \
+        substr(hex(\(column)), 21, 12)
+        ELSE \(column) END
+        """
     }
 
     // Maps a SQLite table name to its CloudKit record type string.

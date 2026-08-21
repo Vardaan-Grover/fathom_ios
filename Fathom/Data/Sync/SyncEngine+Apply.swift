@@ -386,17 +386,24 @@ extension SyncEngine {
                     ("saved_words", CKRecordType.savedWord),
                     ("readingActivity", CKRecordType.readingActivity)
                 ]
+                // Ids are read through uuidTextSQL rather than selected raw:
+                // GRDB stores UUID as a blob, and decoding that into a Swift
+                // String yields mojibake or throws. Same reason the CDC
+                // triggers format their recordID (migration v31).
                 for (table, type) in simple {
-                    let ids = try String.fetchAll(db, sql: "SELECT id FROM \(table)")
+                    let ids = try String.fetchAll(
+                        db,
+                        sql: "SELECT \(DatabaseManager.uuidTextSQL("id")) FROM \(table)")
                     out.append(contentsOf: ids.map { (type, $0) })
                 }
-                let memberships = try Row.fetchAll(
-                    db, sql: "SELECT bookID, categoryID FROM bookCategoryMemberships")
-                for row in memberships {
-                    guard let b = row["bookID"] as? String,
-                          let c = row["categoryID"] as? String else { continue }
-                    out.append((CKRecordType.bookCategoryMembership, "\(b)_\(c)"))
-                }
+                let memberships = try String.fetchAll(db, sql: """
+                    SELECT \(DatabaseManager.uuidTextSQL("bookID")) || '_' ||
+                           \(DatabaseManager.uuidTextSQL("categoryID"))
+                    FROM bookCategoryMemberships
+                    """)
+                out.append(contentsOf: memberships.map {
+                    (CKRecordType.bookCategoryMembership, $0)
+                })
                 return out
             }
 

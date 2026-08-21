@@ -195,6 +195,16 @@ device's ID.
   `catch`. **Only the first session per book per day was ever recorded.** The
   same pattern appears in `VocabularyRepositorySQLite.removeSavedWord` and
   `setPinnedAt` — tracked separately.
+- **The CDC queue's `recordID` held a raw blob, so nothing could ever upload.**
+  The triggers wrote `NEW.id` directly, GRDB encodes `UUID` as 16 bytes, and
+  SQLite's TEXT affinity does not convert a blob — so the column read back as
+  mojibake or threw. An unparseable local id fails `UUID(uuidString:)`,
+  `recordToSave` returns nil, and CKSyncEngine drops the change. It failed
+  closed, so no junk reached CloudKit, but no local change reached it either.
+  Migration v31 formats the id as canonical UUID text in the trigger (with a
+  `typeof()` guard for ids already stored as text) and rebuilds the queue.
+  The composite membership key also moved from `|` to `_` there; the triggers
+  had kept emitting `|` after `CKRecordName` switched.
 - **The CDC triggers are incompatible with `UPSERT` on synced tables.** A
   statement carrying its own `ON CONFLICT` clause overrides the conflict
   resolution inside any trigger it fires, downgrading the trigger's

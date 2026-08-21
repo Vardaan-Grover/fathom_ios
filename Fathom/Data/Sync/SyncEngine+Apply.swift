@@ -99,7 +99,7 @@ extension SyncEngine {
 
     private func positionRecord(_ recordID: CKRecord.ID, localID: String) async -> CKRecord? {
         guard let bookID = UUID(uuidString: localID),
-              let locatorJSON = ReadingStateStore.shared.locatorJSON(forBookID: bookID)
+              let state = ReadingStateStore.shared.state(forBookID: bookID)
         else { return nil }
 
         let record = (try? await DatabaseManager.shared.dbQueue.read { db in
@@ -107,8 +107,9 @@ extension SyncEngine {
         }) ?? CKRecord(recordType: CKRecordType.readingPosition, recordID: recordID)
 
         record["bookID"] = bookID.uuidString
-        record["locatorJSON"] = locatorJSON
-        record["savedAt"] = ReadingStateStore.shared.savedAt(forBookID: bookID) ?? Date()
+        record["locatorJSON"] = state.locatorJSON
+        record["savedAt"] = state.savedAt
+        record["furthestProgression"] = state.furthestProgression
         return record
     }
 
@@ -290,18 +291,18 @@ extension SyncEngine {
             let bookIDStr = record["bookID"] as? String,
             let bookID = UUID(uuidString: bookIDStr),
             let locatorJSON = record["locatorJSON"] as? String,
-            let savedAt = record["savedAt"] as? Date,
-            let locator = try? Locator(jsonString: locatorJSON)
+            let savedAt = record["savedAt"] as? Date
         else { return }
 
-        // The one place a client timestamp is still consulted. It is the
-        // server's copy of what the writing device claimed, and position is
-        // the field where being wrong costs a reader their place rather than
-        // data. §3.6 replaces this with a furthestProgression high-water mark.
-        let local = ReadingStateStore.shared.savedAt(forBookID: bookID)
-        guard local == nil || savedAt > local! else { return }
-
-        ReadingStateStore.shared.saveLocator(locator, forBookID: bookID, suppressSync: true)
+        // Position and furthest progress resolve independently — the store
+        // owns that decision so it happens atomically with the write. An older
+        // remote position loses, but the progress it carries can still raise
+        // the high-water mark. See §3.6.
+        ReadingStateStore.shared.applyRemoteState(
+            locatorJSON: locatorJSON,
+            savedAt: savedAt,
+            furthestProgression: record["furthestProgression"] as? Double ?? 0,
+            forBookID: bookID)
     }
 
     private func applyReaderSettings(_ record: CKRecord) {

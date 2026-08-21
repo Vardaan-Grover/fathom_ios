@@ -1,6 +1,6 @@
 # Sync Conflict Policy
 
-Status: **partly implemented** — §0.1, §0.2, §3.2, §3.4 and §3.8 have landed; §3.1, §3.3 and §3.6 are still outstanding and are one-way doors
+Status: **partly implemented** — §0.1, §0.2, §3.2, §3.4, §3.6 and §3.8 have landed; §3.1 and §3.3 are still outstanding and are one-way doors
 Scope: the CloudKit private-database sync in `Fathom/Data/Sync/`, as part of the
 migration from the hand-rolled `SyncEngine` to `CKSyncEngine`.
 
@@ -98,7 +98,7 @@ by construction. It is the right shape for anything that accumulates.
 | `Bookmark` | Yes | Soft | **Tombstone-wins** | Effectively immutable except for `deletedAt` — a bookmark is created or removed, never edited. |
 | `SavedWord` | Yes | Soft | **Tombstone-wins** | `pinnedAt` is LWW-Field. `fullDictionaryJSON` is immutable (deterministic lookup result). |
 | `ReadingActivity` | No | None | **Per-device counter** | Keyed on `(bookID, date, deviceID)` as of migration v30; totals are `SUM` across devices. See §3.4. |
-| `ReadingPosition` | No | None | **LWW-Field + furthest** | See §3.6. |
+| `ReadingPosition` | No | None | **LWW-Field + furthest** | `furthestProgression` added; position and progress resolve independently. The backwards-jump prompt is still deferred. See §3.6. |
 | `ReaderSettings` | Yes | None | **LWW-Blob** | Accepted tradeoff — see §3.7. |
 | `UserProfile` | Yes | None | **LWW-Field** | Three fields (`displayName`, `avatarEmoji`, `avatarColorHex`). Per-field is free here; do it rather than blob. |
 | `AIConversation` | n/a | None | **Do not deploy** | See §3.8. |
@@ -223,7 +223,19 @@ and it is deliberate rather than accidental.
 
 ### 3.6 `ReadingPosition` — separate "where I am" from "how far I got"
 
-Position is currently LWW on a client-written `savedAt`. Two problems.
+**Field implemented.** `ReadingState` now carries `locatorJSON`, `savedAt` and
+`furthestProgression` in one record, and `ReadingStateStore.applyRemoteState`
+resolves the two halves independently: the position is last-write-wins, while
+the high-water mark is taken whenever it is larger — *including when the
+position it arrived with lost*. A device that read ahead and was then
+superseded still contributes the fact that the reader got that far.
+
+The **backwards-jump prompt remains deferred**, as this section always
+allowed — the data it needs is now being recorded, which was the part that
+could not be added later.
+
+The original argument follows. Position was LWW on a client-written `savedAt`.
+Two problems.
 
 First, per §0.1, the clock is untrustworthy. Use the server timestamp.
 
@@ -318,12 +330,19 @@ own document rather than a row in this table.
 | 2 | Three-way merge against the ancestor record | Makes field clears representable; removes the nil-coalesce hack (§0.2) |
 | 3 | Add `deletedAt` to `BookCategoryMembership` | Shelf removals currently race (§3.3) |
 | 4 | ~~Re-key `ReadingActivity` on `(bookID, date, deviceID)`, sum at read~~ **done, v30** | `max` under-reports every multi-device day (§3.4) |
-| 5 | Add `furthestProgression` to `ReadingPosition` | Cannot be backfilled later (§3.6) |
+| 5 | ~~Add `furthestProgression` to `ReadingPosition`~~ **done** | Cannot be backfilled later (§3.6) |
 | 6 | Stop syncing `preprocessingStatus`, `aiEnabled`, `backendBookID` | Describes local state; syncing it is actively wrong (§3.2) |
 | 7 | Split `BookCompletion` out of `Book` | Makes the immutable/mutable split structural (§3.1) |
 | 8 | Exclude `AIConversation` from the production schema | Additive-only schema; do not lock in a known-broken type (§3.8) |
 | 9 | Tombstone purge policy | Unbounded growth (§4) |
 
-Items 1, 2, 4 and 6 have landed. Items 3, 5, 7 and 8 change the record schema
-and must still be settled **before** the first production schema deployment —
-CloudKit's production schema is additive-only, so they are one-way doors.
+Items 1, 2, 4, 5, 6 and 9 have landed. Items 3, 7 and 8 change the record
+schema and must still be settled **before** the first production schema
+deployment — CloudKit's production schema is additive-only, so they are one-way
+doors.
+
+One further change landed with §3.6 that this table did not anticipate:
+`savedAt` used to live in `UserDefaults` while the locator lived in a JSON
+file, so a crash between the two writes left a position stamped with the wrong
+time — and that timestamp decided sync conflicts. All three fields now live in
+one atomically-replaced file, with the legacy shape upgraded on first read.

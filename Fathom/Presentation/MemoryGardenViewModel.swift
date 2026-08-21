@@ -16,6 +16,8 @@ final class MemoryGardenViewModel: ObservableObject {
     @Published var dailyActivities: [String: DailyActivity] = [:]
     @Published var isLoading = true
     @Published var loadedBooks: [UUID: Book] = [:]
+    /// Finish dates for the share card's "books finished" count.
+    @Published var loadedCompletions: [BookCompletion] = []
     
     private let bookRepository: BookRepository
     
@@ -70,7 +72,8 @@ final class MemoryGardenViewModel: ObservableObject {
             booksDict[book.id] = book
         }
         self.loadedBooks = booksDict
-        
+        self.loadedCompletions = await bookRepository.listCompletions()
+
         isLoading = false
     }
     

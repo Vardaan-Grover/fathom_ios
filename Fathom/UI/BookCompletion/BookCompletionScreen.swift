@@ -14,16 +14,23 @@ struct BookCompletionScreen: View {
     @Environment(\.appTheme) private var theme
     @Environment(\.colorScheme) private var colorScheme
 
-    @State private var rating: Int
-    @State private var reflection: String
+    @State private var rating: Int = 0
+    @State private var reflection: String = ""
     @State private var screenAlpha: Double = 0
     @State private var reflectionFocused: Bool = false
     @State private var showDiscardAlert: Bool = false
     @State private var showShare: Bool = false
 
-    private let originalRating: Int
-    private let originalReflection: String
-    private let hadOriginalImage: Bool
+    /// The reader's existing rating and reflection, if they have finished this
+    /// book before. Loaded on appear rather than passed in: completion lives on
+    /// its own record now, and every one of this screen's six call sites would
+    /// otherwise have to fetch it first. See §3.1 of
+    /// docs/sync-conflict-policy.md.
+    @State private var completion: BookCompletion?
+
+    @State private var originalRating: Int = 0
+    @State private var originalReflection: String = ""
+    @State private var hadOriginalImage: Bool = false
 
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var attachedImage: UIImage?
@@ -37,8 +44,8 @@ struct BookCompletionScreen: View {
     @State private var panOffset: CGSize = .zero
     @State private var steadyStatePanOffset: CGSize = .zero
 
-    private var isEditing: Bool { book.finishedAt != nil }
-    private var finishedDate: Date { book.finishedAt ?? Date() }
+    private var isEditing: Bool { completion != nil }
+    private var finishedDate: Date { completion?.finishedAt ?? Date() }
 
     // Enhanced vibrant rating colors
     private let ratingColors: [Color] = [
@@ -52,15 +59,21 @@ struct BookCompletionScreen: View {
     init(book: Book, bookRepository: BookRepository) {
         self.book = book
         self.bookRepository = bookRepository
-        _rating = State(initialValue: book.rating ?? 0)
-        _reflection = State(initialValue: book.reflection ?? "")
+    }
 
-        originalRating = book.rating ?? 0
-        originalReflection = book.reflection ?? ""
-        hadOriginalImage = book.reflectionImageURL != nil
-
-        if let url = book.reflectionImageURL, let image = UIImage(contentsOfFile: url.path) {
-            _attachedImage = State(initialValue: image)
+    /// Seeds the editable fields from the stored completion. A book being
+    /// finished for the first time has none, and the empty defaults are
+    /// already correct for that case.
+    private func loadCompletion() async {
+        guard let stored = await bookRepository.completion(forBookID: book.id) else { return }
+        completion = stored
+        rating = stored.rating ?? 0
+        reflection = stored.reflection ?? ""
+        originalRating = rating
+        originalReflection = reflection
+        hadOriginalImage = stored.reflectionImageURL != nil
+        if let url = stored.reflectionImageURL, let image = UIImage(contentsOfFile: url.path) {
+            attachedImage = image
         }
     }
 
@@ -156,6 +169,7 @@ struct BookCompletionScreen: View {
             }
         }
         .opacity(screenAlpha)
+        .task { await loadCompletion() }
         .onAppear {
             withAnimation(.easeIn(duration: 0.3)) {
                 screenAlpha = 1
@@ -554,10 +568,12 @@ struct BookCompletionScreen: View {
         let trimmedReflection = reflection.trimmingCharacters(in: .whitespacesAndNewlines)
 
         Task {
-            var updated = book
-            updated.rating = rating == 0 ? nil : rating
-            updated.reflection = trimmedReflection.isEmpty ? nil : trimmedReflection
-            updated.finishedAt = book.finishedAt ?? Date()
+            var updated = BookCompletion(
+                bookID: book.id,
+                rating: rating == 0 ? nil : rating,
+                reflection: trimmedReflection.isEmpty ? nil : trimmedReflection,
+                reflectionImageFilename: completion?.reflectionImageFilename,
+                finishedAt: completion?.finishedAt ?? Date())
 
             if let img = attachedImage {
                 if selectedPhotoItem != nil {
@@ -571,7 +587,7 @@ struct BookCompletionScreen: View {
                 updated.reflectionImageFilename = nil
             }
 
-            await bookRepository.updateBook(updated)
+            await bookRepository.saveCompletion(updated)
 
             await MainActor.run {
                 withAnimation(.easeOut(duration: 0.2)) {
@@ -616,6 +632,9 @@ private final actor PreviewBookRepo: BookRepository {
     func listReadingActivity(forYear year: Int) async -> [ReadingActivity] { [] }
     func insertMockReadingActivity(_ activity: ReadingActivity) async {}
     func deleteAllReadingActivity(forYear year: Int) async {}
+    func completion(forBookID bookID: UUID) async -> BookCompletion? { nil }
+    func listCompletions() async -> [BookCompletion] { [] }
+    func saveCompletion(_ completion: BookCompletion) async {}
 }
 
 #Preview {

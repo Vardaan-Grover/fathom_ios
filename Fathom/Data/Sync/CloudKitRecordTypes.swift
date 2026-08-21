@@ -5,6 +5,7 @@ import Foundation
 
 nonisolated enum CKRecordType {
     static let book                    = "Book"
+    static let bookCompletion          = "BookCompletion"
     static let bookCategory            = "BookCategory"
     static let bookCategoryMembership  = "BookCategoryMembership"
     static let highlight               = "Highlight"
@@ -23,7 +24,7 @@ nonisolated enum CKRecordType {
     /// CloudKit's production schema is additive-only — a record type deployed
     /// once can never be removed or retyped. See §3.8 of the conflict policy.
     static let all: [String] = [
-        book, bookCategory, bookCategoryMembership,
+        book, bookCompletion, bookCategory, bookCategoryMembership,
         highlight, note, bookmark, savedWord,
         readingActivity, readingPosition, readerSettings, userProfile
     ]
@@ -165,12 +166,13 @@ extension Book: CloudKitSyncable {
         r.set("estimatedPageCount", estimatedPageCount)
         r.set("estimatedReadingTimeMinutes", estimatedReadingTimeMinutes)
         r.set("lastReadAt", lastReadAt)
-        r.set("rating", rating)
-        r.set("reflection", reflection)
-        r.set("reflectionImageFilename", reflectionImageFilename)
-        r.set("finishedAt", finishedAt)
         r["modifiedAt"] = modifiedAt
 
+        // rating, reflection, reflectionImageFilename and finishedAt live on
+        // BookCompletion. Everything left here is extracted from the EPUB at
+        // import and is identical on every device, which is what lets Book be
+        // treated as immutable. See §3.1 of docs/sync-conflict-policy.md.
+        //
         // preprocessingStatus, aiAnalysisProgress, aiEnabled and backendBookID
         // are deliberately not synced. They describe work done to *this
         // device's* copy of the file; telling another device that its own copy
@@ -210,11 +212,40 @@ extension Book: CloudKitSyncable {
             estimatedPageCount: r["estimatedPageCount"] as? Int,
             estimatedReadingTimeMinutes: r["estimatedReadingTimeMinutes"] as? Int,
             lastReadAt: r["lastReadAt"] as? Date,
+            modifiedAt: r["modifiedAt"] as? Date ?? importDate
+        )
+    }
+}
+
+// MARK: - BookCompletion
+
+extension BookCompletion: CloudKitSyncable {
+    nonisolated static var ckRecordType: CKRecord.RecordType { CKRecordType.bookCompletion }
+    nonisolated var ckLocalID: String { bookID.uuidString }
+
+    nonisolated func apply(to r: CKRecord) {
+        r["bookID"] = bookID.uuidString
+        r.set("rating", rating)
+        r.set("reflection", reflection)
+        r.set("reflectionImageFilename", reflectionImageFilename)
+        r["finishedAt"] = finishedAt
+        r["modifiedAt"] = modifiedAt
+    }
+
+    nonisolated static func from(ckRecord r: CKRecord) -> BookCompletion? {
+        guard
+            let localID = CKRecordName.localID(of: r),
+            let bookID = UUID(uuidString: localID),
+            let finishedAt = r["finishedAt"] as? Date
+        else { return nil }
+
+        return BookCompletion(
+            bookID: bookID,
             rating: r["rating"] as? Int,
             reflection: r["reflection"] as? String,
             reflectionImageFilename: r["reflectionImageFilename"] as? String,
-            finishedAt: r["finishedAt"] as? Date,
-            modifiedAt: r["modifiedAt"] as? Date ?? importDate
+            finishedAt: finishedAt,
+            modifiedAt: r["modifiedAt"] as? Date ?? finishedAt
         )
     }
 }

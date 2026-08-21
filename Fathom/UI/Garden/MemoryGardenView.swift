@@ -282,7 +282,8 @@ struct MemoryGardenView: View {
                 ShareCardPreviewSheet(
                     year: year,
                     name: UserProfileStore.shared.load().displayName ?? "",
-                    stats: ShareStats.forYear(year, activities: viewModel.dailyActivities, books: viewModel.loadedBooks),
+                    stats: ShareStats.forYear(year, activities: viewModel.dailyActivities,
+                                              completions: viewModel.loadedCompletions),
                     durations: shareDurations,
                     columns: columnCount,
                     theme: shareTheme,

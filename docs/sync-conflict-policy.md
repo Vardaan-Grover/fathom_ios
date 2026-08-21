@@ -1,6 +1,6 @@
 # Sync Conflict Policy
 
-Status: **partly implemented** — §0.1, §0.2, §3.2, §3.3, §3.4, §3.6 and §3.8 have landed. §3.1 is the last outstanding one-way door; the tombstone purge policy in §4 is still unimplemented but is not a schema change
+Status: **implemented** — every one-way door is closed; the CloudKit schema can now be deployed. The tombstone purge policy in §4 is still outstanding, but is a maintenance concern rather than a schema change
 Scope: the CloudKit private-database sync in `Fathom/Data/Sync/`, as part of the
 migration from the hand-rolled `SyncEngine` to `CKSyncEngine`.
 
@@ -88,7 +88,7 @@ by construction. It is the right shape for anything that accumulates.
 | Record type | User-editable? | Deletes | Class | Notes |
 |---|---|---|---|---|
 | `Book` — import metadata (`title`, `author`, `format`, `localFilename`, `contentHash`, `importDate`, `language`, `publisher`, `estimated*`) | No | Hard | **Immutable** | Derived from the EPUB at import. Identical on every device by construction; a conflict here means a bug, and should be logged rather than merged. |
-| `Book` — user fields (`rating`, `reflection`, `reflectionImageFilename`, `finishedAt`) | Yes | Hard | **LWW-Field** | See §3.1 — recommend splitting into `BookCompletion`. |
+| `BookCompletion` (`rating`, `reflection`, `reflectionImageFilename`, `finishedAt`) | Yes | Hard (cascades with the book) | **LWW-Field** | Split out of `Book` in v33 — see §3.1. |
 | `Book` — `lastReadAt` | Indirectly | Hard | **Max wins** | A high-water mark, not a value. `max(local, remote)`. Never LWW. |
 | `Book` — `preprocessingStatus`, `aiEnabled`, `backendBookID` | No | Hard | **Local-only, do not sync** | See §3.2. |
 | `BookCategory` (shelves) | Yes | Hard | **LWW-Field** | `name` and `shelfColorHex` are genuine LWW. `sortOrder` is not — see §3.5. |
@@ -108,6 +108,13 @@ by construction. It is the right shape for anything that accumulates.
 ## 3. The rows that need argument
 
 ### 3.1 Split `BookCompletion` out of `Book`
+
+**Implemented (migration v33).** `bookCompletions` is its own table and its own
+record type; `rating`, `reflection`, `reflectionImageFilename` and `finishedAt`
+are gone from `books`. Existing reader data is carried across by the migration,
+including books that were rated but never marked finished. `Book`'s merge policy
+is now empty apart from timestamps — a `Book` conflict means a bug rather than a
+concurrent edit. The original argument follows.
 
 `Book` currently mixes two things with opposite semantics: immutable metadata
 extracted from the EPUB, and the user's own reflection on having finished it.
@@ -350,13 +357,13 @@ own document rather than a row in this table.
 | 4 | ~~Re-key `ReadingActivity` on `(bookID, date, deviceID)`, sum at read~~ **done, v30** | `max` under-reports every multi-device day (§3.4) |
 | 5 | ~~Add `furthestProgression` to `ReadingPosition`~~ **done** | Cannot be backfilled later (§3.6) |
 | 6 | Stop syncing `preprocessingStatus`, `aiEnabled`, `backendBookID` | Describes local state; syncing it is actively wrong (§3.2) |
-| 7 | Split `BookCompletion` out of `Book` | Makes the immutable/mutable split structural (§3.1) |
+| 7 | ~~Split `BookCompletion` out of `Book`~~ **done, v33** | Makes the immutable/mutable split structural (§3.1) |
 | 8 | Exclude `AIConversation` from the production schema | Additive-only schema; do not lock in a known-broken type (§3.8) |
 | 9 | Tombstone purge policy | Unbounded growth (§4) |
 
-Items 1–6 and 8 have landed. **Item 7 is the last remaining one-way door** and
-must be settled before the first production schema deployment — CloudKit's
-production schema is additive-only.
+Items 1–8 have landed. **Every one-way door is now closed**, so the CloudKit
+schema is ready to deploy: no record type carries a field that a later design
+would want removed.
 
 **Item 9 has not been implemented.** An earlier revision of this document said
 it had; that was wrong. Tombstones — on annotations since v19, and now on shelf

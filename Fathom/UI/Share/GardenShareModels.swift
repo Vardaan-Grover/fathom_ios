@@ -52,7 +52,7 @@ struct ShareStats {
     /// Compute from the loaded activity + books for a given year.
     static func forYear(_ year: Int,
                         activities: [String: DailyActivity],
-                        books: [UUID: Book]) -> ShareStats {
+                        completions: [BookCompletion]) -> ShareStats {
         let todayStart = Calendar.current.startOfDay(for: Date())
         var nights = 0
         var seconds: TimeInterval = 0
@@ -60,9 +60,11 @@ struct ShareStats {
             seconds += activity.duration
             if activity.date < todayStart { nights += 1 }   // settled nights only
         }
-        let finished = books.values.filter {
-            guard let d = $0.finishedAt else { return false }
-            return Calendar.current.component(.year, from: d) == year
+        // Finish dates live on BookCompletion now — a book carries only what
+        // was extracted from the EPUB. See §3.1 of
+        // docs/sync-conflict-policy.md.
+        let finished = completions.filter {
+            Calendar.current.component(.year, from: $0.finishedAt) == year
         }.count
         return ShareStats(nightsRead: nights, totalSeconds: seconds, booksFinished: finished)
     }

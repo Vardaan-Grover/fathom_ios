@@ -30,6 +30,11 @@ struct ReaderScreen: View {
     @State private var isShowingBookmarksList = false
     @State private var pendingBookmarksLocatorJSON: String? = nil
     @State private var bookmarks: [Bookmark] = []
+    /// Whether the reader has already finished this book. Drives the one-shot
+    /// completion prompt near the end; lives on its own record now, so it is
+    /// looked up rather than read off Book. See §3.1 of
+    /// docs/sync-conflict-policy.md.
+    @State private var hasFinishedBook = false
     @State private var parsedBookmarkLocators: [ParsedBookmarkLocator] = []
 
     // Vocabulary State
@@ -235,8 +240,8 @@ struct ReaderScreen: View {
             guard
                 !hasTriggeredCompletion,
                 newValue >= 0.98,
-                let b = book,
-                b.finishedAt == nil,
+                book != nil,
+                !hasFinishedBook,
                 bookRepository != nil
             else { return }
             hasTriggeredCompletion = true
@@ -387,6 +392,7 @@ extension ReaderScreen {
                 rebuildPositionIndex()
             }
             self.searchState.publication = publication
+            hasFinishedBook = await bookRepository?.completion(forBookID: bookID) != nil
         }
         .onReceive(
             NotificationCenter.default.publisher(for: BookmarkStore.didChangeNotification)

@@ -62,6 +62,44 @@ final actor BookRepositorySQLite: BookRepository {
         }
     }
 
+    // MARK: - Completion
+
+    func completion(forBookID bookID: UUID) async -> BookCompletion? {
+        do {
+            return try await dbQueue.read { db in
+                try BookCompletion.fetchOne(db, key: bookID)
+            }
+        } catch {
+            AppLogger.logError(tag: "BookRepository", error)
+            return nil
+        }
+    }
+
+    func listCompletions() async -> [BookCompletion] {
+        do {
+            return try await dbQueue.read { db in
+                try BookCompletion.order(Column("finishedAt").desc).fetchAll(db)
+            }
+        } catch {
+            AppLogger.logError(tag: "BookRepository", error)
+            return []
+        }
+    }
+
+    func saveCompletion(_ completion: BookCompletion) async {
+        do {
+            try await dbQueue.write { db in
+                // `save`, not `upsert`: an ON CONFLICT clause would override
+                // the conflict resolution inside the CDC trigger this fires.
+                var updated = completion
+                updated.modifiedAt = Date()
+                try updated.save(db)
+            }
+        } catch {
+            AppLogger.logError(tag: "BookRepository", error)
+        }
+    }
+
     func updateBook(_ book: Book) async {
         do {
             try await dbQueue.write { db in

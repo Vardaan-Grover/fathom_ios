@@ -26,11 +26,6 @@ struct CKRecordRoundTripTests {
         book.estimatedPageCount = 400
         book.estimatedReadingTimeMinutes = 600
         book.lastReadAt = Date(timeIntervalSince1970: 1_750_000_000)
-        // Completion fields — regression guard for the pull-wipes-completion bug.
-        book.rating = 5
-        book.reflection = "Changed how I read."
-        book.reflectionImageFilename = "reflection.png"
-        book.finishedAt = Date(timeIntervalSince1970: 1_760_000_000)
 
         let decoded = try #require(Book.from(ckRecord: book.toCKRecord(zoneID: zoneID)))
 
@@ -58,10 +53,6 @@ struct CKRecordRoundTripTests {
         #expect(decoded.estimatedPageCount == book.estimatedPageCount)
         #expect(decoded.estimatedReadingTimeMinutes == book.estimatedReadingTimeMinutes)
         #expect(decoded.lastReadAt == book.lastReadAt)
-        #expect(decoded.rating == book.rating)
-        #expect(decoded.reflection == book.reflection)
-        #expect(decoded.reflectionImageFilename == book.reflectionImageFilename)
-        #expect(decoded.finishedAt == book.finishedAt)
     }
 
     @Test func highlightRoundTrip() throws {
@@ -148,5 +139,55 @@ struct CKRecordRoundTripTests {
                 == "\(membership.bookID.uuidString)_\(membership.categoryID.uuidString)")
         #expect(CKRecordName.parseMembership(localID: membership.ckLocalID)?.bookID
                 == membership.bookID)
+    }
+}
+
+/// The reader's completion data rides its own record — see §3.1 of
+/// docs/sync-conflict-policy.md.
+struct BookCompletionRecordTests {
+
+    private let zoneID = CKRecordZone.ID(zoneName: "TestZone", ownerName: CKCurrentUserDefaultName)
+
+    @Test func completionRoundTripsEveryField() throws {
+        let completion = BookCompletion(
+            bookID: UUID(),
+            rating: 5,
+            reflection: "Changed how I read.",
+            reflectionImageFilename: "reflection.png",
+            finishedAt: Date(timeIntervalSince1970: 1_760_000_000),
+            modifiedAt: Date(timeIntervalSince1970: 1_770_000_000))
+
+        let decoded = try #require(
+            BookCompletion.from(ckRecord: completion.toCKRecord(zoneID: zoneID)))
+
+        #expect(decoded.bookID == completion.bookID)
+        #expect(decoded.rating == 5)
+        #expect(decoded.reflection == completion.reflection)
+        #expect(decoded.reflectionImageFilename == completion.reflectionImageFilename)
+        #expect(decoded.finishedAt == completion.finishedAt)
+        #expect(decoded.modifiedAt == completion.modifiedAt)
+    }
+
+    @Test func aBookRecordNoLongerCarriesCompletionFields() throws {
+        // The point of the split: Book is now fixed at import, so its record
+        // has nothing a second device could contend with. CloudKit's
+        // production schema is additive-only, which is why this had to be
+        // settled before the first deploy.
+        let book = Book(id: UUID(), title: "Cosmos", author: "Sagan", format: .epub)
+        let record = book.toCKRecord(zoneID: zoneID)
+
+        for field in ["rating", "reflection", "reflectionImageFilename", "finishedAt"] {
+            #expect(record[field] == nil, "Book record still carries \(field)")
+        }
+    }
+
+    @Test func aBookAndItsCompletionDoNotShareARecordName() throws {
+        let bookID = UUID()
+        let book = Book(id: bookID, title: "Cosmos", author: "Sagan", format: .epub)
+        let completion = BookCompletion(bookID: bookID, finishedAt: Date())
+
+        // Record names are unique per zone across all types.
+        #expect(book.toCKRecord(zoneID: zoneID).recordID.recordName
+                != completion.toCKRecord(zoneID: zoneID).recordID.recordName)
     }
 }

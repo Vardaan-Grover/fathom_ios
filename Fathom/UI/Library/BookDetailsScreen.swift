@@ -326,7 +326,7 @@ struct BookDetailsScreen: View {
 
     private var ctaButton: some View {
         let hasProgress = (viewModel.totalProgression ?? 0) > 0.01
-        let isFinished = viewModel.book?.finishedAt != nil
+        let isFinished = viewModel.completion != nil
         let label = hasProgress ? "Continue Reading" : "Start Reading"
 
         return VStack(spacing: 10) {
@@ -398,8 +398,8 @@ struct BookDetailsScreen: View {
 
     private var overviewSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let book = viewModel.book, book.finishedAt != nil {
-                BookCompletionPreviewCard(book: book) {
+            if let completion = viewModel.completion {
+                BookCompletionPreviewCard(completion: completion) {
                     isShowingCompletion = true
                 }
                 .padding(.bottom, 24)
@@ -476,6 +476,9 @@ struct BookDetailsScreen: View {
         func listReadingActivity(forYear year: Int) async -> [ReadingActivity] { [] }
         func insertMockReadingActivity(_ activity: ReadingActivity) async {}
         func deleteAllReadingActivity(forYear year: Int) async {}
+        func completion(forBookID bookID: UUID) async -> BookCompletion? { nil }
+        func listCompletions() async -> [BookCompletion] { [] }
+        func saveCompletion(_ completion: BookCompletion) async {}
     }
 
     #Preview {

@@ -27,11 +27,6 @@ struct Book: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
     var estimatedReadingTimeMinutes: Int? = nil
     var lastReadAt: Date? = nil
 
-    var rating: Int? = nil
-    var reflection: String? = nil
-    var reflectionImageFilename: String? = nil
-    var finishedAt: Date? = nil
-
     /// Last time any field on this record was written — used for CloudKit
     /// last-write-wins conflict resolution on pull.
     var modifiedAt: Date = Date()
@@ -45,6 +40,31 @@ struct Book: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
         guard let filename = coverFilename else { return nil }
         return ICloudFileStore.shared.coverURL(for: filename)
     }
+
+}
+
+/// What the reader made of a book once they finished it.
+///
+/// Kept apart from `Book` on purpose. Everything on `Book` is extracted from
+/// the EPUB at import and is identical on every device by construction, so it
+/// never needs merging; everything here is written by the reader and genuinely
+/// can be edited on two devices at once. Mixing the two in one record is what
+/// forced the old sync path to guess, and a guess that cannot tell "cleared"
+/// from "never set" is why a deleted reflection could not propagate.
+/// See §3.1 of docs/sync-conflict-policy.md.
+struct BookCompletion: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "bookCompletions"
+
+    /// One completion per book; the book's id is the key.
+    let bookID: UUID
+    var id: UUID { bookID }
+
+    var rating: Int? = nil
+    var reflection: String? = nil
+    var reflectionImageFilename: String? = nil
+    /// A row exists only once the book has been finished.
+    var finishedAt: Date
+    var modifiedAt: Date = Date()
 
     var reflectionImageURL: URL? {
         guard let filename = reflectionImageFilename else { return nil }

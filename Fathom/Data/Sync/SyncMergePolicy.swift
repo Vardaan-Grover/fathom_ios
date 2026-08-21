@@ -67,9 +67,18 @@ nonisolated enum SyncMergePolicy {
                 "estimatedReadingTimeMinutes": .immutable,
                 // A high-water mark, not a value.
                 "lastReadAt": .maxWins,
+                "modifiedAt": .maxWins
+                // Nothing else: with completion data moved to BookCompletion,
+                // every remaining field is fixed at import. A Book conflict now
+                // means a bug, not a concurrent edit.
+            ]
+
+        case CKRecordType.bookCompletion:
+            return [
+                "bookID": .immutable,
                 "modifiedAt": .maxWins,
-                // User-authored completion data. These are the only genuinely
-                // contended fields on a Book.
+                // Every field here is written by the reader, and honestly
+                // contended — this is the record the split exists to isolate.
                 "rating": .lastWriterWins,
                 "reflection": .lastWriterWins,
                 "reflectionImageFilename": .lastWriterWins,

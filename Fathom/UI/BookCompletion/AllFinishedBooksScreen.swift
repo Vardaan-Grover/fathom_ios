@@ -11,7 +11,15 @@ struct AllFinishedBooksScreen: View {
 
     @Environment(\.appTheme) private var theme
 
-    @State private var books: [Book] = []
+    /// A finished book is a book paired with its completion — the two live in
+    /// separate records now. See §3.1 of docs/sync-conflict-policy.md.
+    private struct FinishedBook: Identifiable {
+        let book: Book
+        let completion: BookCompletion
+        var id: UUID { book.id }
+    }
+
+    @State private var finished: [FinishedBook] = []
     @State private var selectedBook: Book? = nil
 
     private var accent: Color { theme.colors.shelfAccent }
@@ -20,7 +28,7 @@ struct AllFinishedBooksScreen: View {
         ZStack {
             Color(.systemGroupedBackground).ignoresSafeArea()
 
-            if books.isEmpty {
+            if finished.isEmpty {
                 emptyState
             } else {
                 bookList
@@ -41,12 +49,13 @@ struct AllFinishedBooksScreen: View {
 
     private var bookList: some View {
         List {
-            ForEach(books) { book in
-                BookFinishedRow(book: book, accent: accent, theme: theme)
+            ForEach(finished) { item in
+                BookFinishedRow(book: item.book, completion: item.completion,
+                                accent: accent, theme: theme)
                     .listRowBackground(theme.colors.surface)
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     .contentShape(Rectangle())
-                    .onTapGesture { selectedBook = book }
+                    .onTapGesture { selectedBook = item.book }
             }
         }
         .listStyle(.insetGrouped)
@@ -69,10 +78,19 @@ struct AllFinishedBooksScreen: View {
 
     @MainActor
     private func load() async {
-        let all = await bookRepository.listBooks()
-        books = all
-            .filter { $0.finishedAt != nil }
-            .sorted { ($0.finishedAt ?? .distantPast) > ($1.finishedAt ?? .distantPast) }
+        async let booksTask = bookRepository.listBooks()
+        async let completionsTask = bookRepository.listCompletions()
+        let (all, completions) = await (booksTask, completionsTask)
+
+        let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
+        finished = completions
+            // A completion whose book has been deleted has nothing to show.
+            .compactMap { completion in
+                byID[completion.bookID].map {
+                    FinishedBook(book: $0, completion: completion)
+                }
+            }
+            .sorted { $0.completion.finishedAt > $1.completion.finishedAt }
     }
 }
 
@@ -80,6 +98,7 @@ struct AllFinishedBooksScreen: View {
 
 private struct BookFinishedRow: View {
     let book: Book
+    let completion: BookCompletion
     let accent: Color
     let theme: AppTheme
 
@@ -102,7 +121,7 @@ private struct BookFinishedRow: View {
 
                 ratingDots
 
-                if let reflection = book.reflection, !reflection.isEmpty {
+                if let reflection = completion.reflection, !reflection.isEmpty {
                     Text(reflection)
                         .font(theme.typography.caption)
                         .foregroundColor(theme.colors.secondary)
@@ -122,7 +141,7 @@ private struct BookFinishedRow: View {
 
     @ViewBuilder
     private var ratingDots: some View {
-        if let rating = book.rating {
+        if let rating = completion.rating {
             HStack(spacing: 5) {
                 ForEach(1...5, id: \.self) { i in
                     Circle()

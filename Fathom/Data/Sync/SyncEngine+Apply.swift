@@ -60,6 +60,10 @@ extension SyncEngine {
             guard let uuid = UUID(uuidString: localID) else { return nil }
             return try Book.fetchOne(db, key: uuid)
 
+        case CKRecordType.bookCompletion:
+            guard let uuid = UUID(uuidString: localID) else { return nil }
+            return try BookCompletion.fetchOne(db, key: uuid)
+
         case CKRecordType.bookCategory:
             guard let uuid = UUID(uuidString: localID) else { return nil }
             return try BookCategory.fetchOne(db, key: uuid)
@@ -241,6 +245,19 @@ extension SyncEngine {
                 // plain INSERT and makes it fail whenever a change is already
                 // queued for that record. `save` is UPDATE-then-INSERT with no
                 // conflict clause.
+                case CKRecordType.bookCompletion:
+                    guard let incoming = BookCompletion.from(ckRecord: record) else { return }
+                    // The foreign key requires the book. A completion can
+                    // arrive before its book on a fresh device; dropping it is
+                    // safe because the record stays in the zone and is applied
+                    // on the next fetch, once the book is there.
+                    guard try Book.exists(db, key: incoming.bookID) else {
+                        AppLogger.log(tag: "SyncEngine",
+                                      "Completion for unknown book \(incoming.bookID) — deferring")
+                        return
+                    }
+                    try incoming.save(db)
+
                 case CKRecordType.bookCategory:
                     guard let incoming = BookCategory.from(ckRecord: record) else { return }
                     try incoming.save(db)
@@ -350,6 +367,10 @@ extension SyncEngine {
                     if let uuid = UUID(uuidString: localID) {
                         _ = try Book.deleteOne(db, key: uuid)
                     }
+                case CKRecordType.bookCompletion:
+                    if let uuid = UUID(uuidString: localID) {
+                        _ = try BookCompletion.deleteOne(db, key: uuid)
+                    }
                 case CKRecordType.bookCategory:
                     if let uuid = UUID(uuidString: localID) {
                         _ = try BookCategory.deleteOne(db, key: uuid)
@@ -385,23 +406,26 @@ extension SyncEngine {
         do {
             let rows = try await DatabaseManager.shared.dbQueue.read { db -> [(String, String)] in
                 var out: [(String, String)] = []
-                let simple: [(String, String)] = [
-                    ("books", CKRecordType.book),
-                    ("bookCategories", CKRecordType.bookCategory),
-                    ("highlights", CKRecordType.highlight),
-                    ("notes", CKRecordType.note),
-                    ("bookmarks", CKRecordType.bookmark),
-                    ("saved_words", CKRecordType.savedWord),
-                    ("readingActivity", CKRecordType.readingActivity)
+                // (table, key column, record type). bookCompletions is keyed
+                // on the book it belongs to, not on an id of its own.
+                let simple: [(String, String, String)] = [
+                    ("books", "id", CKRecordType.book),
+                    ("bookCompletions", "bookID", CKRecordType.bookCompletion),
+                    ("bookCategories", "id", CKRecordType.bookCategory),
+                    ("highlights", "id", CKRecordType.highlight),
+                    ("notes", "id", CKRecordType.note),
+                    ("bookmarks", "id", CKRecordType.bookmark),
+                    ("saved_words", "id", CKRecordType.savedWord),
+                    ("readingActivity", "id", CKRecordType.readingActivity)
                 ]
                 // Ids are read through uuidTextSQL rather than selected raw:
                 // GRDB stores UUID as a blob, and decoding that into a Swift
                 // String yields mojibake or throws. Same reason the CDC
                 // triggers format their recordID (migration v31).
-                for (table, type) in simple {
+                for (table, keyColumn, type) in simple {
                     let ids = try String.fetchAll(
                         db,
-                        sql: "SELECT \(DatabaseManager.uuidTextSQL("id")) FROM \(table)")
+                        sql: "SELECT \(DatabaseManager.uuidTextSQL(keyColumn)) FROM \(table)")
                     out.append(contentsOf: ids.map { (type, $0) })
                 }
                 let memberships = try String.fetchAll(db, sql: """

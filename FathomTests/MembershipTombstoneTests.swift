@@ -202,3 +202,168 @@ struct MembershipTombstoneTests {
         #expect(triggers.contains("bookCategoryMemberships_ck_delete"))
     }
 }
+
+/// The v33 split of completion data out of `books`. Migration v33 carries
+/// existing ratings and reflections across, so this covers the data move as
+/// well as the resulting shape. See §3.1 of docs/sync-conflict-policy.md.
+struct BookCompletionSplitTests {
+
+    nonisolated private func makeMigratedQueue() throws -> DatabaseQueue {
+        var config = Configuration()
+        config.foreignKeysEnabled = true
+        let dbQueue = try DatabaseQueue(configuration: config)
+        try DatabaseManager.makeMigrator().migrate(dbQueue)
+        return dbQueue
+    }
+
+    @Test("Existing ratings and reflections survive the split")
+    func migrationCarriesExistingCompletions() throws {
+        var config = Configuration()
+        config.foreignKeysEnabled = true
+        let dbQueue = try DatabaseQueue(configuration: config)
+
+        // Stop just before the split, so the old shape is what we write into.
+        try DatabaseManager.makeMigrator()
+            .migrate(dbQueue, upTo: "v32_membership_tombstones")
+
+        let finishedID = UUID()
+        let ratedOnlyID = UUID()
+        let untouchedID = UUID()
+        let finishedAt = Date(timeIntervalSince1970: 1_760_000_000)
+
+        try dbQueue.write { db in
+            for (id, rating, reflection, finished) in [
+                (finishedID, 5 as Int?, "Changed how I read." as String?, finishedAt as Date?),
+                (ratedOnlyID, 3, nil, nil),
+                (untouchedID, nil, nil, nil),
+            ] {
+                try db.execute(
+                    sql: """
+                        INSERT INTO books (id, title, format, importDate, preprocessingStatus,
+                                           aiAnalysisProgress, aiEnabled, modifiedAt,
+                                           rating, reflection, finishedAt)
+                        VALUES (?, 'Cosmos', 'epub', ?, 'pending', 0, 0, ?, ?, ?, ?)
+                        """,
+                    arguments: [id, Date(), Date(), rating, reflection, finished])
+            }
+        }
+
+        try DatabaseManager.makeMigrator().migrate(dbQueue)
+
+        let completions = try dbQueue.read { db in
+            try BookCompletion.fetchAll(db)
+        }
+        // The finished book and the rated-but-unfinished one both carry reader
+        // data and must survive; the untouched book has nothing to carry.
+        #expect(completions.count == 2)
+
+        let finishedRow = try #require(completions.first { $0.bookID == finishedID })
+        #expect(finishedRow.rating == 5)
+        #expect(finishedRow.reflection == "Changed how I read.")
+        #expect(finishedRow.finishedAt == finishedAt)
+
+        let ratedRow = try #require(completions.first { $0.bookID == ratedOnlyID })
+        #expect(ratedRow.rating == 3)
+        // No finish date was ever recorded, so it adopts the book's modifiedAt
+        // rather than inventing one.
+        #expect(ratedRow.reflection == nil)
+
+        #expect(!completions.contains { $0.bookID == untouchedID })
+    }
+
+    @Test("books no longer carries completion columns")
+    func booksHasNoCompletionColumns() throws {
+        let columns = try makeMigratedQueue().read { db in
+            try db.columns(in: "books").map(\.name)
+        }
+        for dropped in ["rating", "reflection", "reflectionImageFilename", "finishedAt"] {
+            #expect(!columns.contains(dropped), "books still has \(dropped)")
+        }
+    }
+
+    @Test("A completion is queued for sync under its own record type")
+    func completionQueuesItsOwnRecord() async throws {
+        let dbQueue = try makeMigratedQueue()
+        let book = Book(id: UUID(), title: "Cosmos", author: "Sagan", format: .epub)
+        try await dbQueue.write { db in try book.insert(db) }
+        let repo = BookRepositorySQLite(dbQueue: dbQueue)
+
+        await repo.saveCompletion(
+            BookCompletion(bookID: book.id, rating: 4, reflection: "Good.",
+                           finishedAt: Date()))
+
+        let queued = try await dbQueue.read { db in
+            try PendingChangeRow.fetchAll(db, sql: """
+                SELECT recordType, recordID, operation, queuedAt
+                FROM cloudkit_pending_changes WHERE recordType = 'BookCompletion'
+                """)
+        }
+        let row = try #require(queued.first)
+        #expect(UUID(uuidString: row.recordID) == book.id)
+        #expect(row.operation == "upsert")
+    }
+
+    @Test("Deleting a book takes its completion with it")
+    func completionCascades() async throws {
+        let dbQueue = try makeMigratedQueue()
+        let book = Book(id: UUID(), title: "Cosmos", author: "Sagan", format: .epub)
+        try await dbQueue.write { db in try book.insert(db) }
+        let repo = BookRepositorySQLite(dbQueue: dbQueue)
+
+        await repo.saveCompletion(BookCompletion(bookID: book.id, finishedAt: Date()))
+        #expect(await repo.completion(forBookID: book.id) != nil)
+
+        await repo.deleteBook(book)
+        #expect(await repo.completion(forBookID: book.id) == nil)
+
+        // The cascade must queue a CloudKit delete, or the record outlives the
+        // book on every other device.
+        let deletes = try await dbQueue.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT operation FROM cloudkit_pending_changes
+                WHERE recordType = 'BookCompletion'
+                """)
+        }
+        #expect(deletes.contains("delete"))
+    }
+
+    @Test("Saving a completion twice updates rather than duplicating")
+    func saveIsIdempotent() async throws {
+        let dbQueue = try makeMigratedQueue()
+        let book = Book(id: UUID(), title: "Cosmos", author: "Sagan", format: .epub)
+        try await dbQueue.write { db in try book.insert(db) }
+        let repo = BookRepositorySQLite(dbQueue: dbQueue)
+
+        let finishedAt = Date(timeIntervalSince1970: 1_760_000_000)
+        await repo.saveCompletion(
+            BookCompletion(bookID: book.id, rating: 3, finishedAt: finishedAt))
+        await repo.saveCompletion(
+            BookCompletion(bookID: book.id, rating: 5, finishedAt: finishedAt))
+
+        let rows = try await dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM bookCompletions") ?? 0
+        }
+        #expect(rows == 1)
+        #expect(await repo.completion(forBookID: book.id)?.rating == 5)
+    }
+
+    @Test("Clearing a rating is representable, not swallowed")
+    func ratingCanBeCleared() async throws {
+        let dbQueue = try makeMigratedQueue()
+        let book = Book(id: UUID(), title: "Cosmos", author: "Sagan", format: .epub)
+        try await dbQueue.write { db in try book.insert(db) }
+        let repo = BookRepositorySQLite(dbQueue: dbQueue)
+        let finishedAt = Date()
+
+        await repo.saveCompletion(
+            BookCompletion(bookID: book.id, rating: 5, reflection: "Good.",
+                           finishedAt: finishedAt))
+        await repo.saveCompletion(
+            BookCompletion(bookID: book.id, rating: nil, reflection: nil,
+                           finishedAt: finishedAt))
+
+        let stored = try #require(await repo.completion(forBookID: book.id))
+        #expect(stored.rating == nil)
+        #expect(stored.reflection == nil)
+    }
+}

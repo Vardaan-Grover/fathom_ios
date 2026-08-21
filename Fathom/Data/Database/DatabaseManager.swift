@@ -964,6 +964,82 @@ final class DatabaseManager {
                 """)
         }
 
+        // v33 — split the reader's completion data out of `books`.
+        //
+        // `books` mixed two things with opposite semantics: metadata extracted
+        // from the EPUB at import, which is identical on every device and never
+        // needs merging, and the reader's own rating and reflection, which are
+        // genuinely editable on two devices at once. One record for both is
+        // what forced the old sync path to guess — and a guess that cannot tell
+        // "cleared" from "never set" is why a deleted reflection could not
+        // propagate.
+        //
+        // Splitting makes the boundary structural instead of a convention:
+        // Book is now immutable by construction, and every field on
+        // BookCompletion is user-authored and honestly last-writer-wins.
+        //
+        // This is the last of the one-way doors. CloudKit's production schema
+        // is additive-only, so a `Book` deployed carrying `rating` keeps that
+        // field forever. See §3.1 of docs/sync-conflict-policy.md.
+        migrator.registerMigration("v33_split_book_completion") { db in
+            try db.create(table: "bookCompletions") { t in
+                t.column("bookID", .text).notNull().primaryKey()
+                    .references("books", onDelete: .cascade)
+                t.column("rating", .integer)
+                t.column("reflection", .text)
+                t.column("reflectionImageFilename", .text)
+                // A row exists only once the book has been finished.
+                t.column("finishedAt", .datetime).notNull()
+                t.column("modifiedAt", .datetime).notNull()
+            }
+
+            // Carry across whatever readers have already recorded. A book with
+            // a rating or reflection but no finish date has no completion in
+            // the new model, so it adopts its own modifiedAt as the date.
+            try db.execute(sql: """
+                INSERT INTO bookCompletions
+                    (bookID, rating, reflection, reflectionImageFilename, finishedAt, modifiedAt)
+                SELECT id, rating, reflection, reflectionImageFilename,
+                       COALESCE(finishedAt, modifiedAt), modifiedAt
+                FROM books
+                WHERE finishedAt IS NOT NULL
+                   OR rating IS NOT NULL
+                   OR reflection IS NOT NULL
+                   OR reflectionImageFilename IS NOT NULL
+                """)
+
+            for column in ["rating", "reflection", "reflectionImageFilename", "finishedAt"] {
+                try db.alter(table: "books") { t in t.drop(column: column) }
+            }
+
+            // CDC triggers. The delete trigger matters: the foreign key
+            // cascades when a book is deleted, and the CloudKit record has to
+            // go with it.
+            let stamp = "strftime('%Y-%m-%dT%H:%M:%f', 'now')"
+            for (suffix, event, alias, op) in [("_ck_insert", "INSERT", "NEW", "upsert"),
+                                               ("_ck_update", "UPDATE", "NEW", "upsert"),
+                                               ("_ck_delete", "DELETE", "OLD", "delete")] {
+                try db.execute(sql: "DROP TRIGGER IF EXISTS bookCompletions\(suffix)")
+                try db.execute(sql: """
+                    CREATE TRIGGER bookCompletions\(suffix)
+                    AFTER \(event) ON bookCompletions
+                    BEGIN
+                        INSERT OR REPLACE INTO cloudkit_pending_changes
+                            (recordType, recordID, operation, queuedAt)
+                        VALUES ('BookCompletion', \(Self.uuidTextSQL("\(alias).bookID")),
+                                '\(op)', \(stamp));
+                    END
+                    """)
+            }
+
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO cloudkit_pending_changes
+                    (recordType, recordID, operation)
+                SELECT 'BookCompletion', \(Self.uuidTextSQL("bookID")), 'upsert'
+                FROM bookCompletions
+                """)
+        }
+
         return migrator
     }
 
@@ -993,6 +1069,7 @@ final class DatabaseManager {
         case "books":                   return "Book"
         case "bookCategories":          return "BookCategory"
         case "bookCategoryMemberships": return "BookCategoryMembership"
+        case "bookCompletions":         return "BookCompletion"
         case "highlights":              return "Highlight"
         case "notes":                   return "Note"
         case "bookmarks":               return "Bookmark"

@@ -8,7 +8,7 @@ import SwiftUI
 
 struct BookCompletionPreviewCard: View {
 
-    let book: Book
+    let completion: BookCompletion
     let onTap: () -> Void
 
     @Environment(\.appTheme) private var theme
@@ -20,7 +20,7 @@ struct BookCompletionPreviewCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 headerRow
                 
-                if let url = book.reflectionImageURL, let img = UIImage(contentsOfFile: url.path) {
+                if let url = completion.reflectionImageURL, let img = UIImage(contentsOfFile: url.path) {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
@@ -30,7 +30,7 @@ struct BookCompletionPreviewCard: View {
                         .clipped()
                 }
                 
-                if let reflection = book.reflection, !reflection.isEmpty {
+                if let reflection = completion.reflection, !reflection.isEmpty {
                     reflectionPreview(reflection)
                 }
             }
@@ -55,11 +55,11 @@ struct BookCompletionPreviewCard: View {
                     .foregroundColor(accent)
                     .symbolRenderingMode(.hierarchical)
 
-                if let date = book.finishedAt {
-                    Text(date, format: .dateTime.month(.wide).day().year())
-                        .font(theme.typography.caption)
-                        .foregroundColor(theme.colors.secondary)
-                }
+                // A completion only exists once the book is finished, so the
+                // date is no longer optional.
+                Text(completion.finishedAt, format: .dateTime.month(.wide).day().year())
+                    .font(theme.typography.caption)
+                    .foregroundColor(theme.colors.secondary)
             }
 
             Spacer()
@@ -72,7 +72,7 @@ struct BookCompletionPreviewCard: View {
 
     @ViewBuilder
     private var ratingDots: some View {
-        if let rating = book.rating {
+        if let rating = completion.rating {
             let colors: [Color] = [
                 Color(hex: "F38BA8"), // Pink
                 Color(hex: "FAB387"), // Orange

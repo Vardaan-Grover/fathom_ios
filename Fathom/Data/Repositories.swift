@@ -66,9 +66,16 @@ protocol BookRepository {
     func listReadingActivity(forYear year: Int) async -> [ReadingActivity]
     func insertMockReadingActivity(_ activity: ReadingActivity) async
     func deleteAllReadingActivity(forYear year: Int) async
+
+    /// The reader's rating and reflection for a book, if they have finished it.
+    func completion(forBookID bookID: UUID) async -> BookCompletion?
+    /// Every completion, for screens that list finished books.
+    func listCompletions() async -> [BookCompletion]
+    func saveCompletion(_ completion: BookCompletion) async
 }
 
 final actor InMemoryBookRepository: BookRepository {
+    private var completions: [BookCompletion] = []
     private var books: [Book] = [
         Book(id: UUID(), title: "Demo Book", author: "Demo Author", format: .epub, localFilename: nil)
     ]
@@ -126,4 +133,13 @@ final actor InMemoryBookRepository: BookRepository {
     func listReadingActivity(forYear year: Int) async -> [ReadingActivity] { return [] }
     func insertMockReadingActivity(_ activity: ReadingActivity) async {}
     func deleteAllReadingActivity(forYear year: Int) async {}
+
+    func completion(forBookID bookID: UUID) async -> BookCompletion? {
+        completions.first { $0.bookID == bookID }
+    }
+    func listCompletions() async -> [BookCompletion] { completions }
+    func saveCompletion(_ completion: BookCompletion) async {
+        completions.removeAll { $0.bookID == completion.bookID }
+        completions.append(completion)
+    }
 }

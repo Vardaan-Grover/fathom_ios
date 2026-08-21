@@ -6,6 +6,9 @@ import SwiftUI
 final class BookDetailsViewModel: ObservableObject {
 
     @Published var book: Book? = nil
+    /// Nil until the reader finishes the book. Lives on its own record — see
+    /// §3.1 of docs/sync-conflict-policy.md.
+    @Published var completion: BookCompletion? = nil
     @Published var totalProgression: Double? = nil
     @Published var otherBooksByAuthor: [HomeBook] = []
     @Published var isLoading = true
@@ -26,6 +29,7 @@ final class BookDetailsViewModel: ObservableObject {
 
         let books = await bookRepository.listBooks()
         book = books.first { $0.id == bookID }
+        completion = await bookRepository.completion(forBookID: bookID)
 
         if let loc = ReadingStateStore.shared.loadLocator(forBookID: bookID) {
             totalProgression = loc.locations.totalProgression

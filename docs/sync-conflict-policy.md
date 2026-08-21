@@ -1,6 +1,6 @@
 # Sync Conflict Policy
 
-Status: **partly implemented** — §0.1, §0.2, §3.2, §3.4, §3.6 and §3.8 have landed; §3.1 and §3.3 are still outstanding and are one-way doors
+Status: **partly implemented** — §0.1, §0.2, §3.2, §3.3, §3.4, §3.6 and §3.8 have landed. §3.1 is the last outstanding one-way door; the tombstone purge policy in §4 is still unimplemented but is not a schema change
 Scope: the CloudKit private-database sync in `Fathom/Data/Sync/`, as part of the
 migration from the hand-rolled `SyncEngine` to `CKSyncEngine`.
 
@@ -92,7 +92,7 @@ by construction. It is the right shape for anything that accumulates.
 | `Book` — `lastReadAt` | Indirectly | Hard | **Max wins** | A high-water mark, not a value. `max(local, remote)`. Never LWW. |
 | `Book` — `preprocessingStatus`, `aiEnabled`, `backendBookID` | No | Hard | **Local-only, do not sync** | See §3.2. |
 | `BookCategory` (shelves) | Yes | Hard | **LWW-Field** | `name` and `shelfColorHex` are genuine LWW. `sortOrder` is not — see §3.5. |
-| `BookCategoryMembership` | Yes | **Hard — broken** | **2P-Set** | **Needs a new `deletedAt` field.** See §3.3. |
+| `BookCategoryMembership` | Yes | Soft | **2P-Set** | `deletedAt` added in v32; removal is a tombstone, re-adding clears it. See §3.3. |
 | `Highlight` | Yes | Soft | **Tombstone-wins** | Delete beats concurrent recolor. `locatorJSON` and `text` are immutable after creation; only `color` and `deletedAt` are mutable. |
 | `Note` | Yes | Soft | **Tombstone-wins** | `noteContent` is LWW-Field among the live fields; delete still wins over an edit. |
 | `Bookmark` | Yes | Soft | **Tombstone-wins** | Effectively immutable except for `deletedAt` — a bookmark is created or removed, never edited. |
@@ -134,6 +134,14 @@ a `CKRecord`. `aiAnalysisProgress` is already handled this way; extend the same
 treatment.
 
 ### 3.3 `BookCategoryMembership` needs a tombstone
+
+**Implemented (migration v32).** `deletedAt` added; removal tombstones instead
+of deleting, `listMemberships` filters tombstones, and re-adding clears one
+rather than being swallowed by the primary key. The table gained an update
+trigger — removal is an `UPDATE` now, and without one it would never be queued
+at all. The delete trigger stays for genuine hard deletes, since the foreign
+keys cascade when a book or shelf is deleted outright. The original argument
+follows.
 
 The record has `bookID`, `categoryID`, `addedAt`, `sortOrder`, `modifiedAt` —
 **no `deletedAt`** — so removing a book from a shelf relies on a hard CloudKit
@@ -338,7 +346,7 @@ own document rather than a row in this table.
 |---|---|---|
 | 1 | Order merges by `CKRecord.modificationDate`, not client `modifiedAt` | Client clocks are not trustworthy (§0.1) |
 | 2 | Three-way merge against the ancestor record | Makes field clears representable; removes the nil-coalesce hack (§0.2) |
-| 3 | Add `deletedAt` to `BookCategoryMembership` | Shelf removals currently race (§3.3) |
+| 3 | ~~Add `deletedAt` to `BookCategoryMembership`~~ **done, v32** | Shelf removals currently race (§3.3) |
 | 4 | ~~Re-key `ReadingActivity` on `(bookID, date, deviceID)`, sum at read~~ **done, v30** | `max` under-reports every multi-device day (§3.4) |
 | 5 | ~~Add `furthestProgression` to `ReadingPosition`~~ **done** | Cannot be backfilled later (§3.6) |
 | 6 | Stop syncing `preprocessingStatus`, `aiEnabled`, `backendBookID` | Describes local state; syncing it is actively wrong (§3.2) |
@@ -346,10 +354,14 @@ own document rather than a row in this table.
 | 8 | Exclude `AIConversation` from the production schema | Additive-only schema; do not lock in a known-broken type (§3.8) |
 | 9 | Tombstone purge policy | Unbounded growth (§4) |
 
-Items 1, 2, 4, 5, 6 and 9 have landed. Items 3, 7 and 8 change the record
-schema and must still be settled **before** the first production schema
-deployment — CloudKit's production schema is additive-only, so they are one-way
-doors.
+Items 1–6 and 8 have landed. **Item 7 is the last remaining one-way door** and
+must be settled before the first production schema deployment — CloudKit's
+production schema is additive-only.
+
+**Item 9 has not been implemented.** An earlier revision of this document said
+it had; that was wrong. Tombstones — on annotations since v19, and now on shelf
+memberships too — still accumulate without bound. It is not a schema change and
+so does not block deployment, but it does need doing.
 
 One further change landed with §3.6 that this table did not anticipate:
 `savedAt` used to live in `UserDefaults` while the locator lived in a JSON

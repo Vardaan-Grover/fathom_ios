@@ -94,7 +94,6 @@ nonisolated enum SyncMergePolicy {
                 "addedAt": .immutable,
                 "modifiedAt": .maxWins,
                 "sortOrder": .lastWriterWins,
-                // Pending the schema migration that adds it (§3.3).
                 "deletedAt": .tombstone
             ]
 

@@ -233,33 +233,41 @@ extension SyncEngine {
                         try incoming.insert(db, onConflict: .ignore)
                     }
 
+                // `save` rather than `upsert` throughout: GRDB's upsert emits
+                // ON CONFLICT DO UPDATE, and a statement carrying its own
+                // conflict clause overrides the conflict resolution inside any
+                // trigger it fires — which turns the CDC trigger's
+                // `INSERT OR REPLACE INTO cloudkit_pending_changes` into a
+                // plain INSERT and makes it fail whenever a change is already
+                // queued for that record. `save` is UPDATE-then-INSERT with no
+                // conflict clause.
                 case CKRecordType.bookCategory:
                     guard let incoming = BookCategory.from(ckRecord: record) else { return }
-                    try incoming.upsert(db)
+                    try incoming.save(db)
 
                 case CKRecordType.bookCategoryMembership:
                     guard let incoming = BookCategoryMembership.from(ckRecord: record) else { return }
-                    try incoming.upsert(db)
+                    try incoming.save(db)
 
                 case CKRecordType.highlight:
                     guard let incoming = Highlight.from(ckRecord: record) else { return }
-                    try incoming.upsert(db)
+                    try incoming.save(db)
 
                 case CKRecordType.note:
                     guard let incoming = Note.from(ckRecord: record) else { return }
-                    try incoming.upsert(db)
+                    try incoming.save(db)
 
                 case CKRecordType.bookmark:
                     guard let incoming = Bookmark.from(ckRecord: record) else { return }
-                    try incoming.upsert(db)
+                    try incoming.save(db)
 
                 case CKRecordType.savedWord:
                     guard let incoming = SavedWord.from(ckRecord: record) else { return }
-                    try incoming.upsert(db)
+                    try incoming.save(db)
 
                 case CKRecordType.readingActivity:
                     guard let incoming = ReadingActivity.from(ckRecord: record) else { return }
-                    try incoming.upsert(db)
+                    try incoming.save(db)
 
                 default:
                     return

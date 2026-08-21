@@ -267,6 +267,7 @@ extension BookCategoryMembership: CloudKitSyncable {
         r["addedAt"] = addedAt
         r["sortOrder"] = sortOrder
         r["modifiedAt"] = modifiedAt
+        r.set("deletedAt", deletedAt)
     }
 
     nonisolated static func from(ckRecord r: CKRecord) -> BookCategoryMembership? {
@@ -283,7 +284,8 @@ extension BookCategoryMembership: CloudKitSyncable {
             categoryID: categoryID,
             addedAt: addedAt,
             sortOrder: r["sortOrder"] as? Int ?? 0,
-            modifiedAt: r["modifiedAt"] as? Date ?? addedAt
+            modifiedAt: r["modifiedAt"] as? Date ?? addedAt,
+            deletedAt: r["deletedAt"] as? Date
         )
     }
 }

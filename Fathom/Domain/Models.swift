@@ -67,6 +67,13 @@ struct BookCategory: Identifiable, Equatable, Codable, FetchableRecord, Persista
     var modifiedAt: Date = Date()
 }
 
+/// A book's place on a shelf.
+///
+/// Removal is a tombstone (`deletedAt`), not a row deletion: a hard delete
+/// carries no evidence it happened, so a device offline during the removal
+/// cannot tell "removed remotely" from "not synced yet" and re-adds the book.
+/// Readers must filter on `deletedAt == nil`. See §3.3 of
+/// docs/sync-conflict-policy.md.
 struct BookCategoryMembership: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "bookCategoryMemberships"
     let bookID: UUID
@@ -74,6 +81,7 @@ struct BookCategoryMembership: Codable, FetchableRecord, PersistableRecord {
     let addedAt: Date
     var sortOrder: Int = 0
     var modifiedAt: Date = Date()
+    var deletedAt: Date? = nil
 }
 
 enum ReaderColorTheme: Int, Codable, CaseIterable {

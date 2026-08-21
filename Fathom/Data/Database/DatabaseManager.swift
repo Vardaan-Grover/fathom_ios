@@ -923,6 +923,47 @@ final class DatabaseManager {
                 """)
         }
 
+        // v32 — shelf membership becomes a two-phase set.
+        //
+        // Removing a book from a shelf used to DELETE the row and queue a
+        // CloudKit delete. A hard delete carries no timestamp, so a removal on
+        // one device racing any write on another resolved by arrival order
+        // rather than intent: the book reappeared on the shelf, or vanished
+        // from it, depending on network timing. A device that was offline
+        // during the removal cannot tell "removed remotely" from "not synced
+        // yet" and re-adds it.
+        //
+        // With a tombstone the removal is a write like any other, ordered
+        // against the rest, and final. Re-adding is an explicit clear of
+        // deletedAt rather than a resurrection by merge. Annotations already
+        // work this way. See §3.3 of docs/sync-conflict-policy.md.
+        //
+        // The membership table gains an update trigger for the first time:
+        // removal is now an UPDATE, and without one it would never be queued.
+        // The delete trigger stays for genuine hard deletes — the foreign keys
+        // cascade when a book or a shelf is deleted outright, and those really
+        // should remove the CloudKit record.
+        migrator.registerMigration("v32_membership_tombstones") { db in
+            try db.alter(table: "bookCategoryMemberships") { t in
+                t.add(column: "deletedAt", .datetime)
+            }
+
+            let stamp = "strftime('%Y-%m-%dT%H:%M:%f', 'now')"
+            let composite = "\(Self.uuidTextSQL("NEW.bookID")) || '_' || "
+                + Self.uuidTextSQL("NEW.categoryID")
+
+            try db.execute(sql: "DROP TRIGGER IF EXISTS bookCategoryMemberships_ck_update")
+            try db.execute(sql: """
+                CREATE TRIGGER bookCategoryMemberships_ck_update
+                AFTER UPDATE ON bookCategoryMemberships
+                BEGIN
+                    INSERT OR REPLACE INTO cloudkit_pending_changes
+                        (recordType, recordID, operation, queuedAt)
+                    VALUES ('BookCategoryMembership', \(composite), 'upsert', \(stamp));
+                END
+                """)
+        }
+
         return migrator
     }
 

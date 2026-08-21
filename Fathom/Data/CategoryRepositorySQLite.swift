@@ -62,6 +62,9 @@ final actor CategoryRepositorySQLite: CategoryRepository {
         do {
             return try await dbQueue.read { db in
                 try BookCategoryMembership
+                    // Removed memberships stay as tombstones so the removal can
+                    // reach other devices; they are not on the shelf.
+                    .filter(Column("deletedAt") == nil)
                     .order(Column("categoryID"), Column("sortOrder"), Column("addedAt").desc)
                     .fetchAll(db)
             }
@@ -74,8 +77,26 @@ final actor CategoryRepositorySQLite: CategoryRepository {
     func addBookToCategory(bookID: UUID, categoryID: UUID) async {
         do {
             try await dbQueue.write { db in
-                let membership = BookCategoryMembership(bookID: bookID, categoryID: categoryID, addedAt: Date())
-                try membership.insert(db, onConflict: .ignore)
+                // A row may already exist as a tombstone from an earlier
+                // removal. Re-adding has to clear it rather than be ignored by
+                // the primary key — otherwise a book removed from a shelf could
+                // never be put back.
+                //
+                // Fetch-then-write, not an upsert: a statement with its own
+                // ON CONFLICT clause overrides the conflict resolution inside
+                // the CDC trigger it fires, breaking the sync queue.
+                if var existing = try BookCategoryMembership
+                    .filter(Column("bookID") == bookID && Column("categoryID") == categoryID)
+                    .fetchOne(db) {
+                    guard existing.deletedAt != nil else { return }
+                    existing.deletedAt = nil
+                    existing.modifiedAt = Date()
+                    try existing.update(db)
+                } else {
+                    try BookCategoryMembership(bookID: bookID,
+                                               categoryID: categoryID,
+                                               addedAt: Date()).insert(db)
+                }
             }
         } catch {
             AppLogger.logError(tag: "CategoryRepository", error)
@@ -85,9 +106,17 @@ final actor CategoryRepositorySQLite: CategoryRepository {
     func removeBookFromCategory(bookID: UUID, categoryID: UUID) async {
         do {
             try await dbQueue.write { db in
-                try BookCategoryMembership
+                // Tombstone rather than delete: a hard delete carries no
+                // evidence it happened, so a device that was offline during the
+                // removal cannot tell it from "not synced yet" and re-adds the
+                // book. See §3.3 of docs/sync-conflict-policy.md.
+                guard var existing = try BookCategoryMembership
                     .filter(Column("bookID") == bookID && Column("categoryID") == categoryID)
-                    .deleteAll(db)
+                    .fetchOne(db), existing.deletedAt == nil else { return }
+                let now = Date()
+                existing.deletedAt = now
+                existing.modifiedAt = now
+                try existing.update(db)
             }
         } catch {
             AppLogger.logError(tag: "CategoryRepository", error)
@@ -114,9 +143,12 @@ final actor CategoryRepositorySQLite: CategoryRepository {
         do {
             try await dbQueue.write { db in
                 for (index, bookID) in bookIDs.enumerated() {
+                    // Skips tombstones: reordering a shelf must not silently
+                    // resurrect a book that was removed from it.
                     try db.execute(
-                        sql: "UPDATE bookCategoryMemberships SET sortOrder = ? WHERE bookID = ? AND categoryID = ?",
-                        arguments: [index, bookID, categoryID]
+                        sql: "UPDATE bookCategoryMemberships SET sortOrder = ?, modifiedAt = ? "
+                           + "WHERE bookID = ? AND categoryID = ? AND deletedAt IS NULL",
+                        arguments: [index, Date(), bookID, categoryID]
                     )
                 }
             }

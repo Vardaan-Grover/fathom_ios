@@ -43,8 +43,17 @@ struct CKRecordRoundTripTests {
         #expect(decoded.language == book.language)
         #expect(decoded.publisher == book.publisher)
         #expect(decoded.coverFilename == book.coverFilename)
-        #expect(decoded.aiEnabled == book.aiEnabled)
-        #expect(decoded.backendBookID == book.backendBookID)
+        // Device-local fields are deliberately NOT carried on the record.
+        // preprocessingStatus, aiAnalysisProgress, aiEnabled and backendBookID
+        // describe work done to *this device's* copy of the file; telling
+        // another device its own copy is ready when it has never processed it
+        // is worse than telling it nothing. `SyncEngine.apply` keeps the
+        // existing local values when updating a row. See §3.2 of
+        // docs/sync-conflict-policy.md.
+        #expect(decoded.aiEnabled == false)
+        #expect(decoded.backendBookID == nil)
+        #expect(decoded.preprocessingStatus == .pending)
+        #expect(decoded.aiAnalysisProgress == 0)
         #expect(decoded.contentHash == book.contentHash)
         #expect(decoded.estimatedPageCount == book.estimatedPageCount)
         #expect(decoded.estimatedReadingTimeMinutes == book.estimatedReadingTimeMinutes)
@@ -132,8 +141,12 @@ struct CKRecordRoundTripTests {
         #expect(decodedMembership.bookID == membership.bookID)
         #expect(decodedMembership.categoryID == membership.categoryID)
         #expect(decodedMembership.sortOrder == membership.sortOrder)
-        // The composite record name is what the CDC queue and pull path parse.
-        #expect(membership.ckRecordName
-                == "\(membership.bookID.uuidString)|\(membership.categoryID.uuidString)")
+        // The composite key is what the CDC queue and apply path parse. It
+        // joins with "_" rather than "|": record names are restricted to ASCII
+        // letters, digits, "-", "_" and ".", and "|" is not among them.
+        #expect(membership.ckLocalID
+                == "\(membership.bookID.uuidString)_\(membership.categoryID.uuidString)")
+        #expect(CKRecordName.parseMembership(localID: membership.ckLocalID)?.bookID
+                == membership.bookID)
     }
 }

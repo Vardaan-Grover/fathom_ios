@@ -3,7 +3,7 @@ import Foundation
 
 // MARK: - Record type constants
 
-enum CKRecordType {
+nonisolated enum CKRecordType {
     static let book                    = "Book"
     static let bookCategory            = "BookCategory"
     static let bookCategoryMembership  = "BookCategoryMembership"
@@ -11,68 +11,185 @@ enum CKRecordType {
     static let note                    = "Note"
     static let bookmark                = "Bookmark"
     static let savedWord               = "SavedWord"
-    static let aiConversation          = "AIConversation"
     static let readingActivity         = "ReadingActivity"
     static let readingPosition         = "ReadingPosition"
     static let readerSettings          = "ReaderSettings"
     static let userProfile             = "UserProfile"
+
+    /// Every type the engine pushes and applies.
+    ///
+    /// `AIConversation` is deliberately absent. The feature is dormant behind
+    /// `FeatureFlags.aiCompanionEnabled`, its apply path is known-broken, and
+    /// CloudKit's production schema is additive-only — a record type deployed
+    /// once can never be removed or retyped. See §3.8 of the conflict policy.
+    static let all: [String] = [
+        book, bookCategory, bookCategoryMembership,
+        highlight, note, bookmark, savedWord,
+        readingActivity, readingPosition, readerSettings, userProfile
+    ]
+}
+
+// MARK: - Record names
+
+/// Builds and parses CloudKit record names.
+///
+/// A record name identifies a record uniquely **within a zone, across all
+/// record types** — CloudKit has no per-type namespace. The previous scheme
+/// used the bare model UUID, which meant a `Book` and its `ReadingPosition`
+/// both claimed `<bookID>` in the same zone and could not coexist. Nothing
+/// caught it because the sync path had never run against real CloudKit.
+///
+/// Names are therefore type-prefixed: `Book.<uuid>`, `ReadingPosition.<uuid>`.
+/// That removes the collision and makes names self-describing, which is what
+/// lets the push path recover a record's type from its ID alone.
+///
+/// Only characters CloudKit accepts in a record name are used — ASCII letters,
+/// digits, `-`, `_` and `.`. The composite membership key previously joined its
+/// two UUIDs with `|`, which is not in that set; it now joins with `_`.
+nonisolated enum CKRecordName {
+
+    private static let separator: Character = "."
+
+    static func make(type: CKRecord.RecordType, localID: String) -> String {
+        "\(type)\(separator)\(localID)"
+    }
+
+    static func id(type: CKRecord.RecordType,
+                   localID: String,
+                   zoneID: CKRecordZone.ID) -> CKRecord.ID {
+        CKRecord.ID(recordName: make(type: type, localID: localID), zoneID: zoneID)
+    }
+
+    /// Splits a record name back into its type and local identifier.
+    /// Returns nil for names that predate this scheme or are otherwise unknown.
+    static func parse(_ recordName: String) -> (type: String, localID: String)? {
+        guard let idx = recordName.firstIndex(of: separator) else { return nil }
+        let type = String(recordName[recordName.startIndex..<idx])
+        let localID = String(recordName[recordName.index(after: idx)...])
+        guard !type.isEmpty, !localID.isEmpty, CKRecordType.all.contains(type) else { return nil }
+        return (type, localID)
+    }
+
+    /// The local identifier for a record, or nil when the name is not ours.
+    static func localID(of record: CKRecord) -> String? {
+        parse(record.recordID.recordName)?.localID
+    }
+
+    /// Composite key for a category membership.
+    static func membershipLocalID(bookID: UUID, categoryID: UUID) -> String {
+        "\(bookID.uuidString)_\(categoryID.uuidString)"
+    }
+
+    static func parseMembership(localID: String) -> (bookID: UUID, categoryID: UUID)? {
+        let parts = localID.split(separator: "_", maxSplits: 1).map(String.init)
+        guard parts.count == 2,
+              let bookID = UUID(uuidString: parts[0]),
+              let categoryID = UUID(uuidString: parts[1]) else { return nil }
+        return (bookID, categoryID)
+    }
 }
 
 // MARK: - Helpers
 
 private extension CKRecord {
-    /// Sets `key` to `value`, or does nothing when `value` is nil.
-    /// Uses the concrete `__CKRecordObjCValue` existential that CKRecord's
-    /// subscript expects (the Swift overlay changed names across SDK versions).
-    func set(_ key: String, _ value: __CKRecordObjCValue?) {
-        guard let value else { return }
-        self[key] = value
+    /// Sets `key` to `value`, or clears it when `value` is nil.
+    ///
+    /// Clearing matters: an explicit nil is how a cleared rating or a deleted
+    /// reflection travels. The previous implementation skipped nils entirely,
+    /// which made erasure unrepresentable and is exactly the bug the three-way
+    /// merge exists to fix — a field can only be "deliberately cleared" if the
+    /// record is capable of carrying its absence.
+    ///
+    /// One overload per value kind: Swift bridges a non-optional `String` to
+    /// `__CKRecordObjCValue` implicitly, but will not do the same for
+    /// `String?` into `(any __CKRecordObjCValue)?`, so the bridge is explicit.
+    nonisolated func set(_ key: String, _ value: String?) {
+        self[key] = value.map { $0 as NSString }
+    }
+    nonisolated func set(_ key: String, _ value: Int?) {
+        self[key] = value.map { NSNumber(value: $0) }
+    }
+    nonisolated func set(_ key: String, _ value: Double?) {
+        self[key] = value.map { NSNumber(value: $0) }
+    }
+    nonisolated func set(_ key: String, _ value: Date?) {
+        self[key] = value.map { $0 as NSDate }
+    }
+    nonisolated func set(_ key: String, _ value: Data?) {
+        self[key] = value.map { $0 as NSData }
+    }
+}
+
+/// A model that can be written into, and read out of, a CKRecord.
+nonisolated protocol CloudKitSyncable {
+    nonisolated static var ckRecordType: CKRecord.RecordType { get }
+    /// Identifier within the record type — the part after the type prefix.
+    nonisolated var ckLocalID: String { get }
+    /// Writes this model's fields onto an existing record, preserving whatever
+    /// system fields (notably the change tag) the record already carries.
+    nonisolated func apply(to record: CKRecord)
+}
+
+extension CloudKitSyncable {
+    /// Convenience for tests and for the first push of a record the server has
+    /// never seen.
+    nonisolated func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
+        let record = CKRecord(
+            recordType: Self.ckRecordType,
+            recordID: CKRecordName.id(type: Self.ckRecordType,
+                                      localID: ckLocalID,
+                                      zoneID: zoneID)
+        )
+        apply(to: record)
+        return record
     }
 }
 
 // MARK: - Book
 
-extension Book {
-    func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
-        let rid = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)
-        let r   = CKRecord(recordType: CKRecordType.book, recordID: rid)
-        r["title"]                       = title as CKRecordValue
-        r.set("author",                    author as? CKRecordValue)
-        r.set("format",                    format.rawValue as CKRecordValue)
-        r.set("localFilename",             localFilename as? CKRecordValue)
-        r.set("description",               description as? CKRecordValue)
-        r.set("language",                  language as? CKRecordValue)
-        r.set("publisher",                 publisher as? CKRecordValue)
-        r.set("coverFilename",             coverFilename as? CKRecordValue)
-        r["importDate"]                  = importDate as CKRecordValue
-        r["preprocessingStatus"]         = preprocessingStatus.rawValue as CKRecordValue
-        r["aiEnabled"]                   = (aiEnabled ? 1 : 0) as CKRecordValue
-        r.set("backendBookID",             backendBookID?.uuidString as? CKRecordValue)
-        r.set("contentHash",               contentHash as? CKRecordValue)
-        r.set("estimatedPageCount",        estimatedPageCount as? CKRecordValue)
-        r.set("estimatedReadingTimeMinutes", estimatedReadingTimeMinutes as? CKRecordValue)
-        r.set("lastReadAt",                lastReadAt as? CKRecordValue)
-        r.set("rating",                    rating as? CKRecordValue)
-        r.set("reflection",                reflection as? CKRecordValue)
-        r.set("reflectionImageFilename",   reflectionImageFilename as? CKRecordValue)
-        r.set("finishedAt",                finishedAt as? CKRecordValue)
-        r["modifiedAt"]                  = modifiedAt as CKRecordValue
-        return r
+extension Book: CloudKitSyncable {
+    nonisolated static var ckRecordType: CKRecord.RecordType { CKRecordType.book }
+    nonisolated var ckLocalID: String { id.uuidString }
+
+    nonisolated func apply(to r: CKRecord) {
+        r["title"] = title
+        r.set("author", author)
+        r["format"] = format.rawValue
+        r.set("localFilename", localFilename)
+        r.set("description", description)
+        r.set("language", language)
+        r.set("publisher", publisher)
+        r.set("coverFilename", coverFilename)
+        r["importDate"] = importDate
+        r.set("contentHash", contentHash)
+        r.set("estimatedPageCount", estimatedPageCount)
+        r.set("estimatedReadingTimeMinutes", estimatedReadingTimeMinutes)
+        r.set("lastReadAt", lastReadAt)
+        r.set("rating", rating)
+        r.set("reflection", reflection)
+        r.set("reflectionImageFilename", reflectionImageFilename)
+        r.set("finishedAt", finishedAt)
+        r["modifiedAt"] = modifiedAt
+
+        // preprocessingStatus, aiAnalysisProgress, aiEnabled and backendBookID
+        // are deliberately not synced. They describe work done to *this
+        // device's* copy of the file; telling another device that its own copy
+        // is `.ready` when it has never processed it is worse than telling it
+        // nothing. See §3.2 of the conflict policy.
     }
 
-    static func from(ckRecord r: CKRecord) -> Book? {
+    /// Builds a Book from a record. Fields that are not synced take the
+    /// caller's local values — see `SyncEngine.apply` for how existing rows
+    /// preserve them.
+    nonisolated static func from(ckRecord r: CKRecord) -> Book? {
         guard
-            let id     = UUID(uuidString: r.recordID.recordName),
-            let title  = r["title"] as? String,
+            let localID = CKRecordName.localID(of: r),
+            let id = UUID(uuidString: localID),
+            let title = r["title"] as? String,
             let fmtRaw = r["format"] as? String,
             let format = BookFormat(rawValue: fmtRaw),
             let importDate = r["importDate"] as? Date
         else { return nil }
-
-        let statusRaw = r["preprocessingStatus"] as? String ?? PreprocessingStatus.pending.rawValue
-        let status    = PreprocessingStatus(rawValue: statusRaw) ?? .pending
-        let aiEnabled = (r["aiEnabled"] as? Int ?? 0) != 0
-        let modifiedAt = r["modifiedAt"] as? Date ?? importDate
 
         return Book(
             id: id,
@@ -85,10 +202,10 @@ extension Book {
             publisher: r["publisher"] as? String,
             coverFilename: r["coverFilename"] as? String,
             importDate: importDate,
-            preprocessingStatus: status,
+            preprocessingStatus: .pending,
             aiAnalysisProgress: 0,
-            aiEnabled: aiEnabled,
-            backendBookID: (r["backendBookID"] as? String).flatMap(UUID.init),
+            aiEnabled: false,
+            backendBookID: nil,
             contentHash: r["contentHash"] as? String,
             estimatedPageCount: r["estimatedPageCount"] as? Int,
             estimatedReadingTimeMinutes: r["estimatedReadingTimeMinutes"] as? Int,
@@ -97,29 +214,30 @@ extension Book {
             reflection: r["reflection"] as? String,
             reflectionImageFilename: r["reflectionImageFilename"] as? String,
             finishedAt: r["finishedAt"] as? Date,
-            modifiedAt: modifiedAt
+            modifiedAt: r["modifiedAt"] as? Date ?? importDate
         )
     }
 }
 
 // MARK: - BookCategory
 
-extension BookCategory {
-    func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
-        let rid = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)
-        let r   = CKRecord(recordType: CKRecordType.bookCategory, recordID: rid)
-        r["name"]          = name as CKRecordValue
-        r["shelfColorHex"] = shelfColorHex as CKRecordValue
-        r["createdAt"]     = createdAt as CKRecordValue
-        r["sortOrder"]     = sortOrder as CKRecordValue
-        r["modifiedAt"]    = modifiedAt as CKRecordValue
-        return r
+extension BookCategory: CloudKitSyncable {
+    nonisolated static var ckRecordType: CKRecord.RecordType { CKRecordType.bookCategory }
+    nonisolated var ckLocalID: String { id.uuidString }
+
+    nonisolated func apply(to r: CKRecord) {
+        r["name"] = name
+        r["shelfColorHex"] = shelfColorHex
+        r["createdAt"] = createdAt
+        r["sortOrder"] = sortOrder
+        r["modifiedAt"] = modifiedAt
     }
 
-    static func from(ckRecord r: CKRecord) -> BookCategory? {
+    nonisolated static func from(ckRecord r: CKRecord) -> BookCategory? {
         guard
-            let id    = UUID(uuidString: r.recordID.recordName),
-            let name  = r["name"] as? String,
+            let localID = CKRecordName.localID(of: r),
+            let id = UUID(uuidString: localID),
+            let name = r["name"] as? String,
             let color = r["shelfColorHex"] as? String,
             let createdAt = r["createdAt"] as? Date
         else { return nil }
@@ -136,29 +254,28 @@ extension BookCategory {
 }
 
 // MARK: - BookCategoryMembership
-// recordName is "bookID|categoryID"
 
-extension BookCategoryMembership {
-    var ckRecordName: String { "\(bookID.uuidString)|\(categoryID.uuidString)" }
-
-    func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
-        let rid = CKRecord.ID(recordName: ckRecordName, zoneID: zoneID)
-        let r   = CKRecord(recordType: CKRecordType.bookCategoryMembership, recordID: rid)
-        r["bookID"]     = bookID.uuidString as CKRecordValue
-        r["categoryID"] = categoryID.uuidString as CKRecordValue
-        r["addedAt"]    = addedAt as CKRecordValue
-        r["sortOrder"]  = sortOrder as CKRecordValue
-        r["modifiedAt"] = modifiedAt as CKRecordValue
-        return r
+extension BookCategoryMembership: CloudKitSyncable {
+    nonisolated static var ckRecordType: CKRecord.RecordType { CKRecordType.bookCategoryMembership }
+    nonisolated var ckLocalID: String {
+        CKRecordName.membershipLocalID(bookID: bookID, categoryID: categoryID)
     }
 
-    static func from(ckRecord r: CKRecord) -> BookCategoryMembership? {
+    nonisolated func apply(to r: CKRecord) {
+        r["bookID"] = bookID.uuidString
+        r["categoryID"] = categoryID.uuidString
+        r["addedAt"] = addedAt
+        r["sortOrder"] = sortOrder
+        r["modifiedAt"] = modifiedAt
+    }
+
+    nonisolated static func from(ckRecord r: CKRecord) -> BookCategoryMembership? {
         guard
-            let bookIDStr  = r["bookID"] as? String,
-            let catIDStr   = r["categoryID"] as? String,
-            let bookID     = UUID(uuidString: bookIDStr),
+            let bookIDStr = r["bookID"] as? String,
+            let catIDStr = r["categoryID"] as? String,
+            let bookID = UUID(uuidString: bookIDStr),
             let categoryID = UUID(uuidString: catIDStr),
-            let addedAt    = r["addedAt"] as? Date
+            let addedAt = r["addedAt"] as? Date
         else { return nil }
 
         return BookCategoryMembership(
@@ -173,30 +290,31 @@ extension BookCategoryMembership {
 
 // MARK: - Highlight
 
-extension Highlight {
-    func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
-        let rid = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)
-        let r   = CKRecord(recordType: CKRecordType.highlight, recordID: rid)
-        r["bookID"]      = bookID.uuidString as CKRecordValue
-        r["locatorJSON"] = locatorJSON as CKRecordValue
-        r["text"]        = text as CKRecordValue
-        r["createdAt"]   = createdAt as CKRecordValue
-        r["color"]       = color.rawValue as CKRecordValue
-        r.set("deletedAt", deletedAt as? CKRecordValue)
-        r["modifiedAt"]  = modifiedAt as CKRecordValue
-        return r
+extension Highlight: CloudKitSyncable {
+    nonisolated static var ckRecordType: CKRecord.RecordType { CKRecordType.highlight }
+    nonisolated var ckLocalID: String { id.uuidString }
+
+    nonisolated func apply(to r: CKRecord) {
+        r["bookID"] = bookID.uuidString
+        r["locatorJSON"] = locatorJSON
+        r["text"] = text
+        r["createdAt"] = createdAt
+        r["color"] = color.rawValue
+        r.set("deletedAt", deletedAt)
+        r["modifiedAt"] = modifiedAt
     }
 
-    static func from(ckRecord r: CKRecord) -> Highlight? {
+    nonisolated static func from(ckRecord r: CKRecord) -> Highlight? {
         guard
-            let id          = UUID(uuidString: r.recordID.recordName),
-            let bookIDStr   = r["bookID"] as? String,
-            let bookID      = UUID(uuidString: bookIDStr),
+            let localID = CKRecordName.localID(of: r),
+            let id = UUID(uuidString: localID),
+            let bookIDStr = r["bookID"] as? String,
+            let bookID = UUID(uuidString: bookIDStr),
             let locatorJSON = r["locatorJSON"] as? String,
-            let text        = r["text"] as? String,
-            let createdAt   = r["createdAt"] as? Date,
-            let colorRaw    = r["color"] as? String,
-            let color       = HighlightColor(rawValue: colorRaw)
+            let text = r["text"] as? String,
+            let createdAt = r["createdAt"] as? Date,
+            let colorRaw = r["color"] as? String,
+            let color = HighlightColor(rawValue: colorRaw)
         else { return nil }
 
         return Highlight(
@@ -214,34 +332,35 @@ extension Highlight {
 
 // MARK: - Note
 
-extension Note {
-    func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
-        let rid = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)
-        let r   = CKRecord(recordType: CKRecordType.note, recordID: rid)
-        r["bookID"]        = bookID.uuidString as CKRecordValue
-        r["locatorJSON"]   = locatorJSON as CKRecordValue
-        r["selectedText"]  = selectedText as CKRecordValue
-        r["noteContent"]   = noteContent as CKRecordValue
-        r["createdAt"]     = createdAt as CKRecordValue
-        r.set("chapterTitle",  chapterTitle as? CKRecordValue)
-        r.set("pageNumber",    pageNumber as? CKRecordValue)
-        r["highlightColor"] = highlightColor.rawValue as CKRecordValue
-        r.set("deletedAt",    deletedAt as? CKRecordValue)
-        r["modifiedAt"]    = modifiedAt as CKRecordValue
-        return r
+extension Note: CloudKitSyncable {
+    nonisolated static var ckRecordType: CKRecord.RecordType { CKRecordType.note }
+    nonisolated var ckLocalID: String { id.uuidString }
+
+    nonisolated func apply(to r: CKRecord) {
+        r["bookID"] = bookID.uuidString
+        r["locatorJSON"] = locatorJSON
+        r["selectedText"] = selectedText
+        r["noteContent"] = noteContent
+        r["createdAt"] = createdAt
+        r.set("chapterTitle", chapterTitle)
+        r.set("pageNumber", pageNumber)
+        r["highlightColor"] = highlightColor.rawValue
+        r.set("deletedAt", deletedAt)
+        r["modifiedAt"] = modifiedAt
     }
 
-    static func from(ckRecord r: CKRecord) -> Note? {
+    nonisolated static func from(ckRecord r: CKRecord) -> Note? {
         guard
-            let id           = UUID(uuidString: r.recordID.recordName),
-            let bookIDStr    = r["bookID"] as? String,
-            let bookID       = UUID(uuidString: bookIDStr),
-            let locatorJSON  = r["locatorJSON"] as? String,
+            let localID = CKRecordName.localID(of: r),
+            let id = UUID(uuidString: localID),
+            let bookIDStr = r["bookID"] as? String,
+            let bookID = UUID(uuidString: bookIDStr),
+            let locatorJSON = r["locatorJSON"] as? String,
             let selectedText = r["selectedText"] as? String,
-            let noteContent  = r["noteContent"] as? String,
-            let createdAt    = r["createdAt"] as? Date,
-            let colorRaw     = r["highlightColor"] as? String,
-            let color        = HighlightColor(rawValue: colorRaw)
+            let noteContent = r["noteContent"] as? String,
+            let createdAt = r["createdAt"] as? Date,
+            let colorRaw = r["highlightColor"] as? String,
+            let color = HighlightColor(rawValue: colorRaw)
         else { return nil }
 
         return Note(
@@ -262,29 +381,30 @@ extension Note {
 
 // MARK: - Bookmark
 
-extension Bookmark {
-    func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
-        let rid = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)
-        let r   = CKRecord(recordType: CKRecordType.bookmark, recordID: rid)
-        r["bookID"]      = bookID.uuidString as CKRecordValue
-        r["locatorJSON"] = locatorJSON as CKRecordValue
-        r["progression"] = progression as CKRecordValue
-        r["createdAt"]   = createdAt as CKRecordValue
-        r.set("chapterTitle", chapterTitle as? CKRecordValue)
-        r.set("pageNumber",   pageNumber as? CKRecordValue)
-        r.set("deletedAt",    deletedAt as? CKRecordValue)
-        r["modifiedAt"]  = modifiedAt as CKRecordValue
-        return r
+extension Bookmark: CloudKitSyncable {
+    nonisolated static var ckRecordType: CKRecord.RecordType { CKRecordType.bookmark }
+    nonisolated var ckLocalID: String { id.uuidString }
+
+    nonisolated func apply(to r: CKRecord) {
+        r["bookID"] = bookID.uuidString
+        r["locatorJSON"] = locatorJSON
+        r["progression"] = progression
+        r["createdAt"] = createdAt
+        r.set("chapterTitle", chapterTitle)
+        r.set("pageNumber", pageNumber)
+        r.set("deletedAt", deletedAt)
+        r["modifiedAt"] = modifiedAt
     }
 
-    static func from(ckRecord r: CKRecord) -> Bookmark? {
+    nonisolated static func from(ckRecord r: CKRecord) -> Bookmark? {
         guard
-            let id          = UUID(uuidString: r.recordID.recordName),
-            let bookIDStr   = r["bookID"] as? String,
-            let bookID      = UUID(uuidString: bookIDStr),
+            let localID = CKRecordName.localID(of: r),
+            let id = UUID(uuidString: localID),
+            let bookIDStr = r["bookID"] as? String,
+            let bookID = UUID(uuidString: bookIDStr),
             let locatorJSON = r["locatorJSON"] as? String,
             let progression = r["progression"] as? Double,
-            let createdAt   = r["createdAt"] as? Date
+            let createdAt = r["createdAt"] as? Date
         else { return nil }
 
         return Bookmark(
@@ -303,36 +423,35 @@ extension Bookmark {
 
 // MARK: - SavedWord
 
-extension SavedWord {
-    func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
-        let rid = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)
-        let r   = CKRecord(recordType: CKRecordType.savedWord, recordID: rid)
-        r["word"]           = word as CKRecordValue
-        r["language"]       = language as CKRecordValue
-        r["partsOfSpeech"]  = partsOfSpeech as CKRecordValue
-        r.set("bookID",       bookID?.uuidString as? CKRecordValue)
-        r.set("bookTitle",    bookTitle as? CKRecordValue)
-        r.set("chapter",      chapter as? CKRecordValue)
-        r.set("pageNumber",   pageNumber as? CKRecordValue)
-        r.set("locatorJSON",  locatorJSON as? CKRecordValue)
-        r.set("contextSentence", contextSentence as? CKRecordValue)
-        if let json = fullDictionaryJSON {
-            r["fullDictionaryJSON"] = json as CKRecordValue
-        }
-        r["createdAt"]      = createdAt as CKRecordValue
-        r.set("pinnedAt",     pinnedAt as? CKRecordValue)
-        r.set("deletedAt",    deletedAt as? CKRecordValue)
-        r["modifiedAt"]     = modifiedAt as CKRecordValue
-        return r
+extension SavedWord: CloudKitSyncable {
+    public nonisolated static var ckRecordType: CKRecord.RecordType { CKRecordType.savedWord }
+    public nonisolated var ckLocalID: String { id.uuidString }
+
+    public nonisolated func apply(to r: CKRecord) {
+        r["word"] = word
+        r["language"] = language
+        r["partsOfSpeech"] = partsOfSpeech
+        r.set("bookID", bookID?.uuidString)
+        r.set("bookTitle", bookTitle)
+        r.set("chapter", chapter)
+        r.set("pageNumber", pageNumber)
+        r.set("locatorJSON", locatorJSON)
+        r.set("contextSentence", contextSentence)
+        r.set("fullDictionaryJSON", fullDictionaryJSON)
+        r["createdAt"] = createdAt
+        r.set("pinnedAt", pinnedAt)
+        r.set("deletedAt", deletedAt)
+        r["modifiedAt"] = modifiedAt
     }
 
-    static func from(ckRecord r: CKRecord) -> SavedWord? {
+    public nonisolated static func from(ckRecord r: CKRecord) -> SavedWord? {
         guard
-            let id           = UUID(uuidString: r.recordID.recordName),
-            let word         = r["word"] as? String,
-            let language     = r["language"] as? String,
+            let localID = CKRecordName.localID(of: r),
+            let id = UUID(uuidString: localID),
+            let word = r["word"] as? String,
+            let language = r["language"] as? String,
             let partsOfSpeech = r["partsOfSpeech"] as? String,
-            let createdAt    = r["createdAt"] as? Date
+            let createdAt = r["createdAt"] as? Date
         else { return nil }
 
         return SavedWord(
@@ -357,25 +476,26 @@ extension SavedWord {
 
 // MARK: - ReadingActivity
 
-extension ReadingActivity {
-    func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
-        let rid = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)
-        let r   = CKRecord(recordType: CKRecordType.readingActivity, recordID: rid)
-        r["bookID"]     = bookID.uuidString as CKRecordValue
-        r["date"]       = date as CKRecordValue
-        r["duration"]   = duration as CKRecordValue
-        r["createdAt"]  = createdAt as CKRecordValue
-        r["modifiedAt"] = modifiedAt as CKRecordValue
-        return r
+extension ReadingActivity: CloudKitSyncable {
+    nonisolated static var ckRecordType: CKRecord.RecordType { CKRecordType.readingActivity }
+    nonisolated var ckLocalID: String { id.uuidString }
+
+    nonisolated func apply(to r: CKRecord) {
+        r["bookID"] = bookID.uuidString
+        r["date"] = date
+        r["duration"] = duration
+        r["createdAt"] = createdAt
+        r["modifiedAt"] = modifiedAt
     }
 
-    static func from(ckRecord r: CKRecord) -> ReadingActivity? {
+    nonisolated static func from(ckRecord r: CKRecord) -> ReadingActivity? {
         guard
-            let id        = UUID(uuidString: r.recordID.recordName),
+            let localID = CKRecordName.localID(of: r),
+            let id = UUID(uuidString: localID),
             let bookIDStr = r["bookID"] as? String,
-            let bookID    = UUID(uuidString: bookIDStr),
-            let date      = r["date"] as? String,
-            let duration  = r["duration"] as? Double,
+            let bookID = UUID(uuidString: bookIDStr),
+            let date = r["date"] as? String,
+            let duration = r["duration"] as? Double,
             let createdAt = r["createdAt"] as? Date
         else { return nil }
 
@@ -386,53 +506,6 @@ extension ReadingActivity {
             duration: duration,
             createdAt: createdAt,
             modifiedAt: r["modifiedAt"] as? Date ?? createdAt
-        )
-    }
-}
-
-// MARK: - AIConversation
-// Messages are embedded as a JSON blob to keep record count manageable.
-
-extension AIThread {
-    func toCKRecord(zoneID: CKRecordZone.ID) -> CKRecord {
-        let rid = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)
-        let r   = CKRecord(recordType: CKRecordType.aiConversation, recordID: rid)
-        r["bookID"]       = bookID.uuidString as CKRecordValue
-        r["passageText"]  = passageText as CKRecordValue
-        r["createdAt"]    = createdAt as CKRecordValue
-        r.set("locatorJSON",  locatorJSON as? CKRecordValue)
-        r.set("chapterTitle", chapterTitle as? CKRecordValue)
-        if let blob = try? JSONEncoder().encode(messages) {
-            r["messagesJSON"] = blob as CKRecordValue
-        }
-        return r
-    }
-
-    static func from(ckRecord r: CKRecord) -> AIThread? {
-        guard
-            let id          = UUID(uuidString: r.recordID.recordName),
-            let bookIDStr   = r["bookID"] as? String,
-            let bookID      = UUID(uuidString: bookIDStr),
-            let passageText = r["passageText"] as? String,
-            let createdAt   = r["createdAt"] as? Date
-        else { return nil }
-
-        let messages: [AIMessage]
-        if let blob = r["messagesJSON"] as? Data,
-           let decoded = try? JSONDecoder().decode([AIMessage].self, from: blob) {
-            messages = decoded
-        } else {
-            messages = []
-        }
-
-        return AIThread(
-            id: id,
-            bookID: bookID,
-            passageText: passageText,
-            locatorJSON: r["locatorJSON"] as? String,
-            chapterTitle: r["chapterTitle"] as? String,
-            createdAt: createdAt,
-            messages: messages
         )
     }
 }

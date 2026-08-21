@@ -733,6 +733,32 @@ final class DatabaseManager {
                 """)
         }
 
+        // v29 — cache the system fields of every record the server has seen.
+        //
+        // A CKRecord built from scratch carries no change tag, so CloudKit has
+        // no way to tell an update from a blind overwrite: with
+        // `.ifServerRecordUnchanged` (what CKSyncEngine uses) every save after
+        // the first fails with `serverRecordChanged`. The previous engine
+        // worked around this by forcing `.changedKeys`, which trades the
+        // conflict for silent clobbering — the server's version is overwritten
+        // without ever being looked at.
+        //
+        // Storing the system fields (change tag, record ID, zone, creation
+        // metadata — never the user data) lets each push carry the tag of the
+        // version it was derived from. Conflicts then mean what they should:
+        // someone else really did change this record in the meantime, and the
+        // three-way merge in SyncMerge runs against a real ancestor.
+        migrator.registerMigration("v29_cloudkit_record_metadata") { db in
+            try db.create(table: "cloudkit_record_metadata") { t in
+                t.column("recordType", .text).notNull()
+                t.column("recordID", .text).notNull()
+                // NSKeyedArchiver output of CKRecord.encodeSystemFields.
+                t.column("systemFields", .blob).notNull()
+                t.column("updatedAt", .datetime).notNull()
+                t.primaryKey(["recordType", "recordID"])
+            }
+        }
+
         return migrator
     }
 

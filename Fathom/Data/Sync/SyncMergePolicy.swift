@@ -260,6 +260,16 @@ nonisolated enum SyncMerge {
         for key in keys {
             let clientValue   = client[key]
             let serverValue   = server[key]
+
+            // Two sides that already agree are not in conflict, whatever the
+            // ancestor says. This is not just an optimisation: CloudKit's
+            // ancestor for a record this device never fetched carries system
+            // fields but no user values, so without this check every field
+            // reads as contended and every immutable one gets reported as
+            // diverged. The first real run logged that for all 250 records —
+            // describing values that were identical on both sides.
+            if equal(clientValue, serverValue) { continue }
+
             let ancestorValue = ancestor[key]
 
             let clientChanged = !equal(clientValue, ancestorValue)
@@ -334,6 +344,9 @@ nonisolated enum SyncMerge {
         for key in keys {
             let clientValue = client[key]
             let serverValue = server[key]
+
+            // Agreement is never a conflict — see the note in `resolve`.
+            if equal(clientValue, serverValue) { continue }
 
             switch SyncMergePolicy.merge(for: type, field: key) {
 

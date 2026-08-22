@@ -20,3 +20,7 @@ graphify-out/
 
 # Bundled ML model weights (distributed separately)
 Fathom/Resources/SenseEmbedding.mlpackage/
+
+# Debug logs captured from device runs
+fathom_log*.rtf
+fathom_log*.txt

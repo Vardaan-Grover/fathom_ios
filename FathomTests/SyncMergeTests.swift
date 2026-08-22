@@ -151,6 +151,43 @@ struct SyncMergeTests {
         #expect(merged["deletedAt"] as? Date == deletedAt)
     }
 
+    // MARK: - Agreement is not conflict
+
+    @Test("Identical values are not treated as a conflict, whatever the ancestor says")
+    func agreementIsNotConflict() {
+        let id = UUID().uuidString
+
+        // CloudKit's ancestor for a record this device never fetched carries
+        // system fields but no user values. Without a short-circuit that makes
+        // every field read as contended — and every immutable field gets
+        // reported as diverged, which is what the first real run logged for
+        // all 250 records while both sides held identical data.
+        let ancestor = bookRecord(id)          // no user fields, as CloudKit sends
+        let client = bookRecord(id)
+        client["title"] = "Cosmos"
+        client["rating"] = 4
+        let server = bookRecord(id)
+        server["title"] = "Cosmos"
+        server["rating"] = 4
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: ancestor)
+        #expect(merged["title"] as? String == "Cosmos")
+        #expect(merged["rating"] as? Int == 4)
+    }
+
+    @Test("An empty ancestor still lets a one-sided value through")
+    func emptyAncestorKeepsClientOnlyValue() {
+        let id = UUID().uuidString
+        let ancestor = bookRecord(id)
+        let client = bookRecord(id); client["reflection"] = "Only mine."
+        let server = bookRecord(id)
+
+        // Server has nothing for this field, so there is no contention to
+        // resolve and the value must survive.
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: ancestor)
+        #expect(merged["reflection"] as? String == "Only mine.")
+    }
+
     // MARK: - No ancestor
     //
     // CloudKit omits the ancestor whenever the client record was never derived

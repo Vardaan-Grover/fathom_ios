@@ -47,15 +47,12 @@ struct BookCoverView: View {
         .shadow(color: .black.opacity(0.18), radius: 8, x: 2, y: 4)
         .contextMenu { contextMenuContent }
         .task(id: book.coverFilename) {
-            // Off the main actor deliberately. `.task` on a View is
-            // MainActor-isolated, and reading a cover that iCloud has not
-            // downloaded yet blocks until the download finishes. On a clean
-            // install every cover is remote at once, so the whole grid stalls
-            // the main thread and the app stops responding until they land.
-            let filename = book.coverFilename
-            coverImage = await Task.detached(priority: .utility) {
-                Self.loadCoverImage(filename: filename)
-            }.value
+            // Must go through CoverImageLoader. This used to detach here and
+            // call a static helper on this view, and because a View struct is
+            // main-actor isolated by default, that helper pulled the whole
+            // read back onto the main thread — where it blocked for 13s
+            // waiting on iCloud.
+            coverImage = await CoverImageLoader.image(for: book.coverFilename)
         }
         .sheet(isPresented: $showShelfPicker) {
             ShelfPickerSheet(
@@ -113,10 +110,6 @@ struct BookCoverView: View {
             book.coverColor
                 .frame(width: width, height: height)
         }
-    }
-
-    private static func loadCoverImage(filename: String?) -> UIImage? {
-        BookFileStore.coverImage(for: filename)
     }
 
     // Subtle left-edge spine shading — only visible on the color fallback,

@@ -181,23 +181,20 @@ struct RecentlyReadTile: View {
 
     @MainActor
     private func loadCover() async {
-        let filename = book.coverFilename
-        cover = await Task.detached(priority: .userInitiated) {
-            BookFileStore.coverImage(for: filename)
-        }.value
+        cover = await CoverImageLoader.image(for: book.coverFilename)
     }
 
     @MainActor
     private func loadColors() async {
         let coverFilename = book.coverFilename
         let coverColor = book.coverColor
-        let extracted = await Task.detached(priority: .userInitiated) {
+        let extracted = await CoverImageLoader.offMain {
             if let image = BookFileStore.coverImage(for: coverFilename) {
                 return extractDominantColors(from: image, count: 4)
             } else {
                 return deriveColors(from: coverColor ?? .blue)
             }
-        }.value
+        }
         withAnimation(.easeIn(duration: 0.6)) {
             dominantColors = extracted
         }
@@ -206,7 +203,7 @@ struct RecentlyReadTile: View {
 
 // MARK: - Color extraction
 
-private func extractDominantColors(from image: UIImage, count: Int) -> [Color] {
+private nonisolated func extractDominantColors(from image: UIImage, count: Int) -> [Color] {
     let size = CGSize(width: 10, height: 10)
     let renderer = UIGraphicsImageRenderer(size: size)
     let small = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
@@ -265,7 +262,7 @@ private func extractDominantColors(from image: UIImage, count: Int) -> [Color] {
     return selected.map { Color(red: $0.r, green: $0.g, blue: $0.bl) }
 }
 
-private func deriveColors(from base: Color) -> [Color] {
+private nonisolated func deriveColors(from base: Color) -> [Color] {
     var h: CGFloat = 0
     var s: CGFloat = 0
     var b: CGFloat = 0

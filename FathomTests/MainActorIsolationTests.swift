@@ -51,6 +51,31 @@ struct MainActorIsolationTests {
         #expect(!onMain)
     }
 
+    @Test("CoverImageLoader runs its work off the main thread")
+    func coverImageLoaderStaysOffMain() async {
+        // The one place cover reads are allowed to detach. Every call site goes
+        // through here precisely so none of them can reintroduce a main-actor
+        // hop of its own.
+        let onMain = await CoverImageLoader.offMain { Thread.isMainThread }
+        #expect(!onMain)
+    }
+
+    @Test("A synchronous off-main closure cannot be hopped away")
+    func synchronousClosureStaysOffMain() async {
+        // The hop needs a suspension point. `Task.detached` takes an *async*
+        // closure, so a call to a main-actor helper inside it becomes an
+        // implicit await and the work lands back on the main thread — that is
+        // the bug above, and it is why `offMain` takes a *synchronous* closure
+        // instead. Same main-actor helper, no hop.
+        //
+        // Under Swift 5 language mode the isolation violation is a warning
+        // rather than an error, so this is a guard rail, not a guarantee.
+        // Everything reached from `offMain` is explicitly `nonisolated` so that
+        // there is no violation to begin with.
+        let onMain = await CoverImageLoader.offMain { UnannotatedStore.isMainThread() }
+        #expect(!onMain)
+    }
+
     @Test("ICloudFileStore does not drag its caller onto the main thread")
     func icloudFileStoreStaysOffMain() async {
         // Same reasoning for the launch path: resolving the ubiquity container

@@ -1,4 +1,5 @@
 import Combine
+import GRDB
 import ReadiumShared
 import SwiftUI
 
@@ -39,12 +40,58 @@ class HomeViewModel: ObservableObject {
 
     // No default for categoryRepository: an accidental fallback to an
     // in-memory repo would silently discard the user's shelves.
+    private var libraryObserver: AnyDatabaseCancellable?
+    private var reloadTask: Task<Void, Never>?
+
     init(
         bookRepository: BookRepository,
         categoryRepository: CategoryRepository
     ) {
         self.bookRepository = bookRepository
         self.categoryRepository = categoryRepository
+    }
+
+    /// Reloads whenever the library changes underneath us.
+    ///
+    /// A notification is not enough on its own: sync applies its first batch
+    /// during startup, often before this screen has subscribed to anything, so
+    /// a clean install pulled the whole library into SQLite and left the shelf
+    /// empty until the app was relaunched. Observing the database has no such
+    /// race, and it also covers the case that matters day to day — a book or
+    /// shelf arriving from the other device while you are looking at the
+    /// screen.
+    ///
+    /// Reloads are coalesced: a first sync applies hundreds of rows in separate
+    /// transactions, and rebuilding the shelves for each one would be wasted
+    /// work.
+    func startObservingLibrary() {
+        guard libraryObserver == nil else { return }
+
+        let observation = ValueObservation.tracking { db in
+            [try Book.fetchCount(db),
+             try BookCategory.fetchCount(db),
+             try BookCategoryMembership.fetchCount(db)]
+        }
+
+        libraryObserver = observation.start(
+            in: DatabaseManager.shared.dbQueue,
+            scheduling: .async(onQueue: .main),
+            onError: { error in
+                AppLogger.log(tag: "HomeViewModel", "Library observation failed: \(error)")
+            },
+            onChange: { [weak self] _ in
+                self?.scheduleReload()
+            }
+        )
+    }
+
+    private func scheduleReload() {
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            await self?.load()
+        }
     }
 
     func load() async {

@@ -168,9 +168,17 @@ struct HomeScreen: View {
                             book: recentBook,
                             progress: viewModel.recentBookProgress,
                             onTap: {
-                                guard let book = viewModel.recentFullBook,
-                                      downloadMonitor.isReadable(bookFilename: book.localFilename)
-                                else { return }
+                                guard let book = viewModel.recentFullBook else { return }
+                                // No readability guard: the Start Reading button
+                                // on the details screen opens unconditionally and
+                                // works, while this silently did nothing whenever
+                                // the file was still in iCloud — which is every
+                                // book on a fresh install. Ask for the download
+                                // and open; the loader waits for it.
+                                if !downloadMonitor.isReadable(bookFilename: book.localFilename),
+                                   let filename = book.localFilename {
+                                    downloadMonitor.requestDownload(filename: filename)
+                                }
                                 UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
                                 readerBook = book
                             }
@@ -546,9 +554,7 @@ struct HomeScreen: View {
         .fullScreenCover(item: $bookToMarkFinished) { book in
             BookCompletionScreen(book: book, bookRepository: bookRepository)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
-            Task { await viewModel.load() }
-        }
+        .onAppear { viewModel.startObservingLibrary() }
         .onReceive(NotificationCenter.default.publisher(for: .bookCompletionDidSave)) { _ in
             Task { await viewModel.load() }
         }

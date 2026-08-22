@@ -90,6 +90,14 @@ actor SyncEngine: CKSyncEngineDelegate {
 
         let restored = SyncStateStore.load()
 
+        // Whether this device has a library of its own yet. Only a device that
+        // does not gets the full-screen arrival surface — an existing reader
+        // opening the app after a change on another device gets the banner.
+        let bookCount = (try? await DatabaseManager.shared.dbQueue.read { db in
+            try Book.fetchCount(db)
+        }) ?? 0
+        await SyncActivity.shared.prime(firstSync: bookCount == 0)
+
         let configuration = CKSyncEngine.Configuration(
             database: database,
             stateSerialization: restored,
@@ -281,6 +289,7 @@ actor SyncEngine: CKSyncEngineDelegate {
             tally.fetched += e.modifications.count
             tally.deleted += e.deletions.count
             await applyFetched(modifications: e.modifications, deletions: e.deletions)
+            await SyncActivity.shared.note(received: e.modifications.count + e.deletions.count)
 
         case .fetchedDatabaseChanges(let e):
             await handleDatabaseChanges(e)
@@ -297,10 +306,17 @@ actor SyncEngine: CKSyncEngineDelegate {
                               "Zone save failed \(failure.zone.zoneID.zoneName): \(failure.error)")
             }
 
-        case .didFetchChanges, .didSendChanges:
+        case .didFetchChanges:
+            flushTally()
+            await SyncActivity.shared.finish()
+
+        case .didSendChanges:
             flushTally()
 
-        case .willFetchChanges, .willSendChanges, .willFetchRecordZoneChanges:
+        case .willFetchChanges:
+            await SyncActivity.shared.begin()
+
+        case .willSendChanges, .willFetchRecordZoneChanges:
             break
 
         case .didFetchRecordZoneChanges(let e):

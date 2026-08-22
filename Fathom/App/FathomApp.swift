@@ -19,6 +19,7 @@ struct FathomApp: App {
         // thread means queueing behind whatever block we are trying to sample,
         // which is why the first block of a launch used to report no stack.
         MainThreadWatchdog.start()
+        SyncActivity.startPreviewIfRequested()
         #endif
 
         let container = AppContainer.shared

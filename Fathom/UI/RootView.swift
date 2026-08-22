@@ -36,6 +36,11 @@ struct RootView: View {
     @State private var showImporter = false
     @State private var showShelfSheet = false
 
+    /// Sync's own state, owned by the engine and observed here. A singleton
+    /// rather than a StateObject: it outlives any one view and the engine posts
+    /// into it from outside the view tree entirely.
+    @ObservedObject private var syncActivity = SyncActivity.shared
+
     @Environment(\.showToast) private var showToast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.appTheme) private var theme
@@ -78,6 +83,10 @@ struct RootView: View {
     /// every pass and cancels the tab bar's in-flight taps. ~48pt clears the
     /// 34pt home indicator on every current iPhone with a little headroom.
     private let bottomBlurHeight: CGFloat = 48
+
+    /// Keeps the sync banner clear of the floating tab bar. A constant for the
+    /// same reason `bottomBlurHeight` is one.
+    private let syncBannerClearance: CGFloat = 104
 
     var body: some View {
         ZStack {
@@ -161,7 +170,34 @@ struct RootView: View {
                     .frame(height: isSearching ? 0 : nil)
                     .animation(.spring(duration: 0.3, bounce: 0.05), value: isSearching)
             }
+
+            // Sync status, on the surface where arriving records are visible.
+            //
+            // Bottom rather than top: the library header carries the Fathom
+            // wordmark, and a top-anchored pill lands straight on it. Photos
+            // puts its own "updating" line at the foot of the grid for the same
+            // reason. The clearance is a constant, deliberately — see
+            // `bottomBlurHeight` for what reading the safe area inside `body`
+            // does to the tab bar's taps.
+            if activeTab == .library && !isSearching {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    SyncStatusBanner(activity: syncActivity)
+                        .padding(.bottom, syncBannerClearance)
+                }
+                .allowsHitTesting(false)
+            }
+
+            // First run on this device. Above everything, tab bar included:
+            // there is nothing to navigate to yet, and a shelf that is still
+            // assembling itself is worse to look at than an honest wait.
+            if syncActivity.isPresentingSetup {
+                SyncSetupScreen(activity: syncActivity)
+                    .transition(.opacity)
+                    .zIndex(2)
+            }
         }
+        .animation(.easeInOut(duration: 0.35), value: syncActivity.isPresentingSetup)
         .sheet(isPresented: $vocabularyTabViewModel.isShowingShareSheet) {
             if let word = vocabularyTabViewModel.wordToShare {
                 WordSharePreviewSheet(

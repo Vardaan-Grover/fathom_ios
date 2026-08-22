@@ -58,11 +58,6 @@ struct ReaderScreen: View {
     @State private var totalPages: Int = 0
     @State private var positions: [Locator] = []
     @State private var positionIndex: BookPositionIndex = .empty
-
-    /// How far another device got, when that is worth offering. Nil the rest of
-    /// the time, which is almost always.
-    @State private var jumpOffer: Double?
-    @State private var hasCheckedJumpOffer = false
     @State private var currentProgression: Double = 0.0
     @State private var currentLocator: Locator?
     @StateObject private var navigationHistory = ReaderNavigationHistory()
@@ -115,48 +110,6 @@ struct ReaderScreen: View {
     /// arrives second (and harmlessly after the first).
     private func rebuildPositionIndex() {
         positionIndex = BookPositionIndex(positions: positions, tableOfContents: tableOfContents)
-        checkJumpOffer()
-    }
-
-    // MARK: - Catching up with another device
-
-    /// Waits for the positions list, because the offer is a progression and the
-    /// jump needs a locator. Runs once — `rebuildPositionIndex` fires again
-    /// when the table of contents arrives.
-    private func checkJumpOffer() {
-        guard !hasCheckedJumpOffer, !positions.isEmpty else { return }
-        hasCheckedJumpOffer = true
-        jumpOffer = ReadingStateStore.shared.jumpOffer(forBookID: bookID)
-    }
-
-    private func takeJump() {
-        guard let progression = jumpOffer else { return }
-        withAnimation(.easeOut(duration: 0.25)) { jumpOffer = nil }
-
-        guard let locator = positionIndex.locator(atTotalProgression: progression),
-              let json = locator.jsonString
-        else { return }
-
-        // Recorded as history so the back gesture returns to where they were —
-        // a jump the reader regrets should cost one tap, not a scrub.
-        if let currentLocator { navigationHistory.push(currentLocator) }
-        Task { @MainActor in await commands.goToLocatorJSON?(json) }
-    }
-
-    private func declineJump() {
-        ReadingStateStore.shared.declineJump(forBookID: bookID)
-        withAnimation(.easeOut(duration: 0.25)) { jumpOffer = nil }
-    }
-
-    @ViewBuilder
-    private var jumpPrompt: some View {
-        if let jumpOffer {
-            ReadingJumpPrompt(progression: jumpOffer,
-                              onJump: takeJump,
-                              onDismiss: declineJump)
-                .padding(.bottom, 34)
-                .transition(.opacity)
-        }
     }
 
     var body: some View {
@@ -200,7 +153,6 @@ struct ReaderScreen: View {
 
             case .loaded(let publication):
                 loadedView(publication: publication)
-                    .overlay(alignment: .bottom) { jumpPrompt }
             }
         }
         .statusBarHidden(!isShowingBars)
@@ -459,14 +411,6 @@ extension ReaderScreen {
 
     func onLocationChange(_ locator: Locator) {
         ReadingStateStore.shared.saveLocator(locator, forBookID: bookID)
-
-        // Reading on is not an answer, but it is a clear enough signal that the
-        // offer is in the way. Hidden rather than declined, so it comes back
-        // next time the book is opened instead of being silently spent.
-        if jumpOffer != nil {
-            withAnimation(.easeOut(duration: 0.25)) { jumpOffer = nil }
-        }
-
         currentLocator = locator
         if let page = locator.locations.position {
             currentPage = page

@@ -120,6 +120,12 @@ actor SyncEngine: CKSyncEngineDelegate {
         // line a cold launch never fetches at all — which is why every early
         // run reported `fetched 0` while records sat waiting in the zone.
         await fetchChangesIfNeeded()
+
+        // An empty cycle logs nothing, so without this a startup fetch that
+        // found no changes is indistinguishable from one that never ran — the
+        // exact ambiguity that made the missing fetch hard to spot. Seeing this
+        // line with no `cycle:` line after it means "fetched, nothing waiting".
+        AppLogger.log(tag: "SyncEngine", "startup fetch complete")
     }
 
     func stop() {
@@ -136,9 +142,11 @@ actor SyncEngine: CKSyncEngineDelegate {
     /// makes a returning user's first screen current without waiting for it.
     func fetchChangesIfNeeded() async {
         guard let engine else {
-            // Not a silent no-op: this firing repeatedly would mean the
-            // foreground hook is racing startup again.
-            AppLogger.log(tag: "SyncEngine", "fetch requested before start — ignored")
+            // Expected once per cold launch: scenePhase reaches .active before
+            // SyncBootstrap has started the engine. Harmless, because start()
+            // fetches itself — but worth seeing, because a silent return here
+            // is what hid the missing startup fetch for four rounds.
+            AppLogger.log(tag: "SyncEngine", "foreground fetch beat startup — start() will cover it")
             return
         }
         do {

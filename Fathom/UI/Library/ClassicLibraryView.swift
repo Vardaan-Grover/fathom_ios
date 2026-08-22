@@ -170,6 +170,9 @@ struct ClassicLibraryView: View {
     .fullScreenCover(item: $bookToMarkFinished) { book in
       BookCompletionScreen(book: book, bookRepository: bookRepository)
     }
+    .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
+      Task { await viewModel.load() }
+    }
     .onReceive(NotificationCenter.default.publisher(for: .bookCompletionDidSave)) { _ in
       Task { await viewModel.load() }
     }

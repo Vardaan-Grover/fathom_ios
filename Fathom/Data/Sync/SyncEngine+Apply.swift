@@ -3,6 +3,13 @@ import Foundation
 import GRDB
 import ReadiumShared
 
+extension Notification.Name {
+    /// Posted on the main queue after remote records have been written to the
+    /// local database, so screens holding loaded results can refresh.
+    static let fathomSyncDidApplyRemoteChanges =
+        Notification.Name("fathom.syncDidApplyRemoteChanges")
+}
+
 // MARK: - Building records to push
 
 extension SyncEngine {
@@ -185,8 +192,7 @@ extension SyncEngine {
                 noteDeferred()
                 continue
             }
-            await apply(record: record, cacheSystemFields: true)
-            noteApplied()
+            if await apply(record: record, cacheSystemFields: true) { noteApplied() }
         }
 
         for deletion in deletions {
@@ -196,6 +202,17 @@ extension SyncEngine {
         // A parent may have arrived in this batch, or in an earlier one during
         // a previous launch. Either way, now is when parked children can go in.
         await drainDeferred()
+
+        // Tell the UI. View models load once and hold their results, so
+        // without this a clean install pulls the whole library into SQLite and
+        // shows an empty shelf until the app is relaunched — which is exactly
+        // what the first clean install did.
+        if !modifications.isEmpty || !deletions.isEmpty {
+            await MainActor.run {
+                NotificationCenter.default.post(name: .fathomSyncDidApplyRemoteChanges,
+                                                object: nil)
+            }
+        }
     }
 
     /// Applies parked records whose parent has since arrived, and drops any
@@ -274,8 +291,9 @@ extension SyncEngine {
     }
 
     // swiftlint:disable:next cyclomatic_complexity function_body_length
-    private func apply(record: CKRecord, cacheSystemFields: Bool) async {
-        guard let parsed = CKRecordName.parse(record.recordID.recordName) else { return }
+    @discardableResult
+    private func apply(record: CKRecord, cacheSystemFields: Bool) async -> Bool {
+        guard let parsed = CKRecordName.parse(record.recordID.recordName) else { return false }
         let (type, localID) = parsed
 
         // Singletons are not database rows.
@@ -283,27 +301,29 @@ extension SyncEngine {
         case CKRecordType.readingPosition:
             applyReadingPosition(record)
             if cacheSystemFields { await cacheFields(record) }
-            return
+            return true
         case CKRecordType.readerSettings:
             applyReaderSettings(record)
             if cacheSystemFields { await cacheFields(record) }
-            return
+            return true
         case CKRecordType.userProfile:
             applyUserProfile(record)
             if cacheSystemFields { await cacheFields(record) }
-            return
+            return true
         default:
             break
         }
 
+        var parked = false
         do {
             try await DatabaseManager.shared.dbQueue.write { db in
-                // Every NOT NULL foreign key this record points at has to be
-                // present, or the insert throws and the record is lost —
-                // CloudKit does not redeliver it. Park it instead and retry
-                // once the parent lands.
+                // Every foreign key this record points at has to be present, or
+                // the insert throws and the record is lost — CloudKit does not
+                // redeliver it. Park it instead and retry once the parent
+                // lands.
                 guard try SyncDeferredApplies.parentsExist(db: db, record: record) else {
                     try SyncDeferredApplies.park(db: db, record: record)
+                    parked = true
                     return
                 }
 
@@ -377,8 +397,10 @@ extension SyncEngine {
                     try SyncRecordMetadata.save(db: db, record: record)
                 }
             }
+            return !parked
         } catch {
             AppLogger.log(tag: "SyncEngine", "Apply failed for \(type)/\(localID): \(error)")
+            return false
         }
     }
 

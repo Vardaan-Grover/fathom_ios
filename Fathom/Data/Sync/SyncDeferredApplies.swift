@@ -108,16 +108,24 @@ nonisolated enum SyncDeferredApplies {
 
     /// Whether every row this record points at exists locally.
     ///
-    /// Only the foreign keys that are NOT NULL matter — `saved_words.bookID` is
-    /// nullable with `ON DELETE SET NULL`, so a missing book is representable
-    /// there and the row inserts fine.
+    /// Nullability is not the question. `saved_words.bookID` is nullable with
+    /// `ON DELETE SET NULL`, which permits *NULL* — it does not permit a
+    /// non-NULL value pointing at a row that is not there. Any foreign key can
+    /// fail that way, so every reference is checked, and a nil id is treated as
+    /// satisfied rather than skipped.
     static func parentsExist(db: Database, record: CKRecord) throws -> Bool {
         switch record.recordType {
         case CKRecordType.bookCompletion,
              CKRecordType.highlight,
              CKRecordType.note,
              CKRecordType.bookmark,
-             CKRecordType.readingActivity:
+             CKRecordType.readingActivity,
+             CKRecordType.savedWord:
+            // A nil bookID is fine — a word can be saved outside any book, and
+            // saved_words.bookID is nullable for exactly that. What is not fine
+            // is a non-nil id pointing at a book that is not here: a nullable
+            // column still rejects a dangling reference, which is what dropped
+            // 20 saved words on the first clean install.
             guard let bookID = uuid(record["bookID"]) else { return true }
             return try Book.exists(db, key: bookID)
 

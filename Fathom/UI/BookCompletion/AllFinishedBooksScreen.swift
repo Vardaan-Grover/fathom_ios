@@ -37,6 +37,9 @@ struct AllFinishedBooksScreen: View {
         .navigationTitle("Books I've Read")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
+            Task { await load() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .bookCompletionDidSave)) { _ in
             Task { await load() }
         }

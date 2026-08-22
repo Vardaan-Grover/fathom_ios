@@ -81,6 +81,9 @@ struct VocabularyTabView: View {
             StudyModeView(viewModel: viewModel)
         }
         .task { await viewModel.load() }
+        .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
+            Task { await viewModel.load() }
+        }
         .onChange(of: viewModel.allWords) { _, _ in triggerEntranceAnimations() }
         .onChange(of: viewModel.selectedBookFilter) { _, _ in triggerEntranceAnimations() }
         .onChange(of: isSearchFocused) { _, focused in viewModel.isSearchFocused = focused }

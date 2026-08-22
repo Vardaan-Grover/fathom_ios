@@ -71,19 +71,48 @@ struct DeferredApplyTests {
         })
     }
 
-    @Test("A saved word with an unknown book is still applicable")
-    func savedWordDoesNotBlock() throws {
-        // saved_words.bookID is nullable with ON DELETE SET NULL, so a missing
-        // book is representable there and the row inserts fine.
+    private func savedWord(bookID: UUID?) -> SavedWord {
+        SavedWord(id: UUID(), word: "w", language: "en", partsOfSpeech: "noun",
+                  bookID: bookID, bookTitle: nil, chapter: nil, pageNumber: nil,
+                  locatorJSON: nil, contextSentence: nil,
+                  fullDictionaryJSON: nil, createdAt: Date())
+    }
+
+    @Test("A saved word pointing at an absent book is not applicable")
+    func savedWordWithMissingBookIsDeferred() throws {
+        // saved_words.bookID is nullable with ON DELETE SET NULL, which permits
+        // NULL — it does not permit a non-NULL value pointing at a row that is
+        // not there. Believing otherwise dropped 20 saved words on the first
+        // clean install, with a bare FOREIGN KEY constraint failed in the log.
         let dbQueue = try makeMigratedQueue()
-        let word = SavedWord(id: UUID(), word: "w", language: "en", partsOfSpeech: "noun",
-                             bookID: UUID(), bookTitle: nil, chapter: nil, pageNumber: nil,
-                             locatorJSON: nil, contextSentence: nil,
-                             fullDictionaryJSON: nil, createdAt: Date())
+        let record = savedWord(bookID: UUID()).toCKRecord(zoneID: zoneID)
 
         #expect(try dbQueue.read { db in
-            try SyncDeferredApplies.parentsExist(db: db, record: word.toCKRecord(zoneID: zoneID))
+            try SyncDeferredApplies.parentsExist(db: db, record: record)
+        } == false)
+
+        // And the insert really does fail, so the guard is load-bearing.
+        #expect(throws: (any Error).self) {
+            try dbQueue.write { db in
+                try #require(SavedWord.from(ckRecord: record)).insert(db)
+            }
+        }
+    }
+
+    @Test("A saved word with no book at all is applicable")
+    func savedWordWithoutBookApplies() throws {
+        // A word can be saved outside any book; that is what the nullable
+        // column is for, and it must not be parked forever waiting on nothing.
+        let dbQueue = try makeMigratedQueue()
+        let record = savedWord(bookID: nil).toCKRecord(zoneID: zoneID)
+
+        #expect(try dbQueue.read { db in
+            try SyncDeferredApplies.parentsExist(db: db, record: record)
         })
+        try dbQueue.write { db in
+            try #require(SavedWord.from(ckRecord: record)).insert(db)
+        }
+        #expect(try dbQueue.read { db in try SavedWord.fetchCount(db) } == 1)
     }
 
     // MARK: - Parking round trip

@@ -152,19 +152,107 @@ struct SyncMergeTests {
     }
 
     // MARK: - No ancestor
+    //
+    // CloudKit omits the ancestor whenever the client record was never derived
+    // from a server version — the "record to insert already exists" case, which
+    // is what a device with an empty metadata cache and a populated zone
+    // produces. The first real run against CloudKit hit it on all 250 records.
 
-    @Test("Without an ancestor the merge still converges rather than throwing away data")
-    func missingAncestorFallsBackSafely() {
+    @Test("A field only this device has survives when there is no ancestor")
+    func missingAncestorKeepsClientOnlyFields() {
         let id = UUID().uuidString
         let client = bookRecord(id); client["rating"] = 5
         let server = bookRecord(id); server["reflection"] = "Theirs."
 
-        // With no ancestor every present field reads as "changed", so both
-        // sides are contended; the result must still be deterministic and must
-        // not drop the field only one side has.
         let merged = SyncMerge.resolve(client: client, server: server, ancestor: nil)
         #expect(merged["reflection"] as? String == "Theirs.")
         #expect(merged["rating"] as? Int == 5)
+    }
+
+    @Test("Without an ancestor the newer record wins a contended field")
+    func missingAncestorPrefersNewer() {
+        let id = UUID().uuidString
+        let older = Date(timeIntervalSince1970: 1_700_000_000)
+        let newer = Date(timeIntervalSince1970: 1_800_000_000)
+
+        // This device edited more recently but never pushed, so there is no
+        // ancestor. Preferring the server here would silently discard the
+        // newer local edit — the exact data loss the policy exists to prevent.
+        let client = bookRecord(id)
+        client["reflection"] = "Mine, newer."
+        client["modifiedAt"] = newer
+
+        let server = bookRecord(id)
+        server["reflection"] = "Theirs, older."
+        server["modifiedAt"] = older
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: nil)
+        #expect(merged["reflection"] as? String == "Mine, newer.")
+    }
+
+    @Test("Without an ancestor an older local edit does not overwrite the server")
+    func missingAncestorKeepsServerWhenOlder() {
+        let id = UUID().uuidString
+        let client = bookRecord(id)
+        client["reflection"] = "Mine, older."
+        client["modifiedAt"] = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let server = bookRecord(id)
+        server["reflection"] = "Theirs, newer."
+        server["modifiedAt"] = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: nil)
+        #expect(merged["reflection"] as? String == "Theirs, newer.")
+    }
+
+    @Test("Immutable fields are taken from the server without being called divergent")
+    func missingAncestorDoesNotReportImmutableDivergence() {
+        let id = UUID().uuidString
+        // Both sides carry the same import metadata. With no ancestor the old
+        // code read every one of these as contended and logged an immutable
+        // divergence for each — 51 Book fields per pass in the real run.
+        let client = bookRecord(id); client["title"] = "Cosmos"
+        let server = bookRecord(id); server["title"] = "Cosmos"
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: nil)
+        #expect(merged["title"] as? String == "Cosmos")
+    }
+
+    @Test("A tombstone still wins when there is no ancestor")
+    func missingAncestorTombstoneStillWins() {
+        let deletedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let recordID = CKRecordName.id(type: CKRecordType.highlight,
+                                       localID: UUID().uuidString, zoneID: zoneID)
+        let client = CKRecord(recordType: CKRecordType.highlight, recordID: recordID)
+        client["color"] = "blue"
+        // The client is newer, but a delete is final regardless.
+        client["modifiedAt"] = Date(timeIntervalSince1970: 1_900_000_000)
+
+        let server = CKRecord(recordType: CKRecordType.highlight, recordID: recordID)
+        server["deletedAt"] = deletedAt
+        server["modifiedAt"] = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: nil)
+        #expect(merged["deletedAt"] as? Date == deletedAt)
+    }
+
+    @Test("A high-water mark still takes the larger value with no ancestor")
+    func missingAncestorMaxWinsStillApplies() {
+        let id = UUID().uuidString
+        let late = Date(timeIntervalSince1970: 1_900_000_000)
+
+        // The client is older overall, so lastWriterWins would drop this — but
+        // lastReadAt only ever moves forward.
+        let client = bookRecord(id)
+        client["lastReadAt"] = late
+        client["modifiedAt"] = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let server = bookRecord(id)
+        server["lastReadAt"] = Date(timeIntervalSince1970: 1_750_000_000)
+        server["modifiedAt"] = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: nil)
+        #expect(merged["lastReadAt"] as? Date == late)
     }
 }
 

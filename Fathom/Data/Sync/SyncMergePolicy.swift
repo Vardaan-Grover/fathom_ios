@@ -240,16 +240,27 @@ nonisolated enum SyncMerge {
                         server: CKRecord,
                         ancestor: CKRecord?) -> CKRecord {
 
+        // CloudKit does not always supply an ancestor. It is absent whenever
+        // the client record was never derived from a server version at all —
+        // the "record to insert already exists" case, which is what a device
+        // with an empty metadata cache and a populated zone produces. Without
+        // it there is no structural information about who changed what, and
+        // pretending otherwise makes every field read as contended and every
+        // immutable field look like it diverged.
+        guard let ancestor else {
+            return resolveWithoutAncestor(client: client, server: server)
+        }
+
         let type   = server.recordType
         let merged = server              // carries the current change tag
         let keys   = Set(client.allKeys())
             .union(server.allKeys())
-            .union(ancestor?.allKeys() ?? [])
+            .union(ancestor.allKeys())
 
         for key in keys {
             let clientValue   = client[key]
             let serverValue   = server[key]
-            let ancestorValue = ancestor?[key]
+            let ancestorValue = ancestor[key]
 
             let clientChanged = !equal(clientValue, ancestorValue)
             let serverChanged = !equal(serverValue, ancestorValue)
@@ -287,6 +298,65 @@ nonisolated enum SyncMerge {
                                                type: type,
                                                client: clientValue,
                                                server: serverValue)
+            }
+        }
+
+        return merged
+    }
+
+    /// Merges when CloudKit gave us no common ancestor.
+    ///
+    /// Nothing here can distinguish "this side changed the field" from "this
+    /// side never touched it", so the field-level reasoning the three-way merge
+    /// depends on is unavailable. What is left is the record's own
+    /// `modifiedAt` — the client wall-clock this policy otherwise refuses to
+    /// trust (§0.1). It is used *only* here, because the alternative is worse:
+    /// always preferring the server silently discards a local edit that was
+    /// never pushed, which is exactly the data loss the policy exists to stop.
+    ///
+    /// Field policies that do not need an ancestor still apply: a tombstone is
+    /// final and a high-water mark still takes the larger value, whichever side
+    /// each came from.
+    private static func resolveWithoutAncestor(client: CKRecord,
+                                               server: CKRecord) -> CKRecord {
+        let type   = server.recordType
+        let merged = server              // carries the current change tag
+        let keys   = Set(client.allKeys()).union(server.allKeys())
+
+        let clientDate = client["modifiedAt"] as? Date
+        let serverDate = server["modifiedAt"] as? Date
+        let clientIsNewer: Bool = {
+            guard let clientDate else { return false }
+            guard let serverDate else { return true }
+            return clientDate > serverDate
+        }()
+
+        for key in keys {
+            let clientValue = client[key]
+            let serverValue = server[key]
+
+            switch SyncMergePolicy.merge(for: type, field: key) {
+
+            case .tombstone:
+                if let winner = firstNonNil(serverValue, clientValue) {
+                    merged[key] = winner
+                }
+
+            case .maxWins:
+                merged[key] = higher(clientValue, serverValue)
+
+            case .immutable:
+                // Not a divergence — we simply have no basis to compare. The
+                // server's value is the one every device already agrees on.
+                continue
+
+            case .lastWriterWins:
+                if serverValue == nil {
+                    // Only this device has it; nothing to lose by keeping it.
+                    merged[key] = clientValue
+                } else if clientIsNewer {
+                    merged[key] = clientValue
+                }
             }
         }
 

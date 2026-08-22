@@ -179,10 +179,18 @@ extension SyncEngine {
         }
     }
 
-    /// Writes a merged record into the local database without caching system
-    /// fields — the merged version has not been accepted by the server yet.
-    func applyMerged(_ record: CKRecord) async {
+    /// Writes a merged record into the local database, and caches the change
+    /// tag the retry has to present.
+    ///
+    /// `tagSource` is the server's copy of the record from the conflict error.
+    /// Its system fields are what the next save must carry: without them the
+    /// retry goes out as an insert, CloudKit answers "record to insert already
+    /// exists", and the conflict repeats indefinitely.
+    func applyMerged(_ record: CKRecord, cacheSystemFieldsFrom tagSource: CKRecord) async {
         await apply(record: record, cacheSystemFields: false)
+        try? await DatabaseManager.shared.dbQueue.write { db in
+            try SyncRecordMetadata.save(db: db, record: tagSource)
+        }
     }
 
     private func pendingSaveRecordNames() -> Set<String> {

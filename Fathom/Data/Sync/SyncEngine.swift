@@ -326,9 +326,9 @@ actor SyncEngine: CKSyncEngineDelegate {
         switch failure.error.code {
 
         case .serverRecordChanged:
-            // A genuine concurrent edit. Merge against the ancestor, write the
-            // result locally so this device converges too, and re-queue so the
-            // merged version reaches the server.
+            // Merge against the ancestor, write the result locally so this
+            // device converges too, and re-queue so the merged version reaches
+            // the server.
             guard let server = failure.error.serverRecord else {
                 AppLogger.log(tag: "SyncEngine", "Conflict without server record: \(name)")
                 return
@@ -336,7 +336,19 @@ actor SyncEngine: CKSyncEngineDelegate {
             let merged = SyncMerge.resolve(client: failure.error.clientRecord ?? record,
                                            server: server,
                                            ancestor: failure.error.ancestorRecord)
-            await applyMerged(merged)
+
+            // Cache the server's system fields BEFORE re-queueing. Without
+            // this the retry rebuilds its record from the database through
+            // `seededRecord`, finds no cached tag, and pushes as an insert
+            // again — so CloudKit answers "record to insert already exists"
+            // and the same conflict repeats forever.
+            //
+            // That deadlock is not hypothetical: it is what the first real
+            // run against CloudKit did, 250 records looping with no record
+            // ever reaching the server. Any device whose metadata cache is
+            // empty while the zone already holds its records — a reinstall, a
+            // restore from backup, a cleared cache — lands in it.
+            await applyMerged(merged, cacheSystemFieldsFrom: server)
             syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(record.recordID)])
             AppLogger.log(tag: "SyncEngine", "Merged conflict for \(name)")
 

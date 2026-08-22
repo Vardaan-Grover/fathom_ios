@@ -110,6 +110,16 @@ actor SyncEngine: CKSyncEngineDelegate {
         startNotificationObservers()
 
         AppLogger.log(tag: "SyncEngine", "Started (zone \(Self.zoneName))")
+
+        // Pull whatever changed while this device was not running.
+        //
+        // The foreground hook in FathomApp cannot do this on a cold launch:
+        // `scenePhase` reaches `.active` long before SyncBootstrap has resolved
+        // the iCloud container, run the file migration and got here, so that
+        // call arrives while `engine` is still nil and is dropped. Without this
+        // line a cold launch never fetches at all — which is why every early
+        // run reported `fetched 0` while records sat waiting in the zone.
+        await fetchChangesIfNeeded()
     }
 
     func stop() {
@@ -125,7 +135,12 @@ actor SyncEngine: CKSyncEngineDelegate {
     /// Foreground refresh. CKSyncEngine also syncs on its own schedule; this
     /// makes a returning user's first screen current without waiting for it.
     func fetchChangesIfNeeded() async {
-        guard let engine else { return }
+        guard let engine else {
+            // Not a silent no-op: this firing repeatedly would mean the
+            // foreground hook is racing startup again.
+            AppLogger.log(tag: "SyncEngine", "fetch requested before start — ignored")
+            return
+        }
         do {
             try await engine.fetchChanges()
         } catch {

@@ -7,7 +7,14 @@ import UIKit
 /// Existing call sites continue to compile unchanged while transparently writing
 /// to and reading from the iCloud container (with a local fallback when iCloud
 /// is unavailable).
-enum BookFileStore {
+///
+/// **Deliberately `nonisolated`.** `SWIFT_DEFAULT_ACTOR_ISOLATION` is MainActor,
+/// so an unannotated enum is a main-actor enum, and `coverImage(for:)` blocks in
+/// `pread` while iCloud materialises the file. Every caller that wrapped this in
+/// `Task.detached` to stay off the main thread was hopping right back onto it —
+/// the detached task starts off main and then the first call into this type
+/// returns it there. See `DetachedIsolationProbe` for the demonstration.
+nonisolated enum BookFileStore {
 
     /// Copies an EPUB into the managed store and returns its destination URL.
     /// `url.lastPathComponent` of the returned URL is what you store as
@@ -44,7 +51,10 @@ enum BookFileStore {
     /// reorder sheets, etc.); caching the decoded image avoids re-reading and
     /// re-decoding from disk on every view re-render, which is a major source
     /// of scroll jank.
-    private static let coverImageCache: NSCache<NSString, UIImage> = {
+    /// `nonisolated(unsafe)` because NSCache does its own locking — it is
+    /// documented as safe to use from multiple threads — but is not marked
+    /// Sendable, so the compiler cannot see that.
+    nonisolated(unsafe) private static let coverImageCache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
         cache.totalCostLimit = 48 * 1024 * 1024
         return cache

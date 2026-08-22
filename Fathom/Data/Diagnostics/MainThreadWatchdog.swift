@@ -50,8 +50,13 @@ enum MainThreadWatchdog {
         guard !running else { return }
         running = true
 
-        DispatchQueue.main.async {
+        // Synchronously when possible: dispatching to a main thread that is
+        // already busy means the port is not captured until the block clears,
+        // and the sample we most want is the one taken during it.
+        if Thread.isMainThread {
             mainThread = mach_thread_self()
+        } else {
+            DispatchQueue.main.async { mainThread = mach_thread_self() }
         }
 
         Thread.detachNewThread {

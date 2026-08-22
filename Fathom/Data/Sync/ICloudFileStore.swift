@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Manages all file paths and write operations for books and covers.
 ///
@@ -19,13 +20,31 @@ import Foundation
 ///
 /// Call `configure()` once at launch (see `SyncBootstrap`). All other call
 /// sites just use the shared instance.
-final class ICloudFileStore {
+///
+/// **Deliberately `nonisolated`.** Every method here is path arithmetic or file
+/// I/O, none of which wants the main thread — and leaving the isolation
+/// unwritten was actively harmful, because `SWIFT_DEFAULT_ACTOR_ISOLATION` is
+/// MainActor: an unannotated type is a *main-actor* type. Callers that went to
+/// real trouble to get off the main thread (`SyncBootstrap`, and every
+/// `Task.detached` that loads a cover) hopped straight back here on the first
+/// call, and one of those calls blocks in `pread` until iCloud materialises the
+/// file. That is what froze the app for 14 seconds on a clean install.
+nonisolated final class ICloudFileStore: Sendable {
 
     static let shared = ICloudFileStore()
 
-    // MARK: - State (written only on the main queue via configure/reset)
+    // MARK: - State
 
-    private var _containerURL: URL?   // nil → iCloud unavailable
+    /// The resolved ubiquity container, or nil when iCloud is unavailable.
+    ///
+    /// Written once at launch and read from any thread thereafter, so it is
+    /// behind a lock rather than relying on an actor to serialise it.
+    private let container = OSAllocatedUnfairLock<URL?>(initialState: nil)
+
+    private var _containerURL: URL? {
+        get { container.withLock { $0 } }
+        set { container.withLock { $0 = newValue } }
+    }
 
     private init() {}
 
@@ -34,9 +53,10 @@ final class ICloudFileStore {
     /// Resolves the iCloud container and prepares its directories.
     /// Must be called before any book is imported or opened.
     func configure() {
-        // url(forUbiquityContainerIdentifier:) can do I/O — call from a background thread.
-        // We do it here synchronously only because it is called from the launch
-        // bootstrap (already off the main actor) and the result is tiny.
+        // url(forUbiquityContainerIdentifier:) does real I/O — measured at
+        // ~870ms on a clean install — so this must not run on the main thread.
+        // The class being `nonisolated` is what actually guarantees that; the
+        // caller being off the main actor is not enough on its own.
         _containerURL = FileManager.default.url(
             forUbiquityContainerIdentifier: "iCloud.com.Vardaan.Fathom"
         )

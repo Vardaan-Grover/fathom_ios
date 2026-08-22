@@ -14,19 +14,19 @@ import Foundation
 /// a SwiftUI view, which is MainActor-isolated, so every non-async call in here
 /// would otherwise run on the main thread — and the first one,
 /// `ICloudFileStore.configure()`, resolves the ubiquity container, which is
-/// documented as slow I/O and measured at ~1s of main-thread block on a clean
-/// install. `nonisolated` detaches the whole sequence; the one step that truly
-/// needs the main actor asks for it explicitly.
+/// documented as slow I/O and measured at ~870ms on a clean install.
+///
+/// `nonisolated` here is necessary but **not sufficient**, which cost a build
+/// cycle to learn: `SWIFT_DEFAULT_ACTOR_ISOLATION` is MainActor, so calling
+/// into a type that does not say otherwise hops straight back to the main
+/// thread no matter how the caller is annotated. The stores this touches are
+/// `nonisolated` for that reason, and `MainActorIsolationTests` keeps them
+/// that way. The one step that genuinely needs the main actor asks for it
+/// explicitly.
 nonisolated enum SyncBootstrap {
 
     /// Idempotent: safe to call once per launch from the app root.
     static func start() async {
-        #if DEBUG
-        // Measures main-thread blocking directly, rather than inferring it from
-        // "the app felt unresponsive".
-        MainThreadWatchdog.start()
-        #endif
-
         let began = Date()
         func phase(_ name: String, _ since: Date) -> Date {
             let now = Date()

@@ -12,6 +12,15 @@ struct FathomApp: App {
     private let vocabularyRepo: VocabularyRepository
 
     init() {
+        #if DEBUG
+        // Started here rather than from the launch bootstrap so it is running
+        // before the first main-thread work happens — and so it can capture the
+        // main thread's port synchronously. Capturing it from a background
+        // thread means queueing behind whatever block we are trying to sample,
+        // which is why the first block of a launch used to report no stack.
+        MainThreadWatchdog.start()
+        #endif
+
         let container = AppContainer.shared
         bookRepository = container.bookRepo
         vocabularyRepo = container.vocabularyRepo

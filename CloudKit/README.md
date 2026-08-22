@@ -60,6 +60,12 @@ The export is CloudKit's own rendering, so it will not be byte-identical to
 this file — comments are dropped and ordering may differ. Compare record types
 and field names and types.
 
+The export also includes a `Users` record type that this file does not. That
+one is CloudKit's built-in, present in every container and not removable; it is
+deliberately left out of `schema.ckdb` because it is not ours to define, and
+including it would make `SchemaFileTests` flag it as a type nothing syncs.
+Expect it in every diff.
+
 ## Promoting to production
 
 **This is the irreversible step.** Do it only after the development environment

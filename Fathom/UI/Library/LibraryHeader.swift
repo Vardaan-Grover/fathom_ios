@@ -69,6 +69,11 @@ struct LibraryHeader<Menu: View>: View {
 
                 Spacer(minLength: 4)
 
+                // Only on screen while records are actually moving, so it costs
+                // the title no width the rest of the time — which matters here,
+                // where the slack is already accounted for down to the point.
+                SyncStatusIndicator()
+
                 menu
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
 

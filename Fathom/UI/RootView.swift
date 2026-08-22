@@ -84,9 +84,6 @@ struct RootView: View {
     /// 34pt home indicator on every current iPhone with a little headroom.
     private let bottomBlurHeight: CGFloat = 48
 
-    /// Keeps the sync banner clear of the floating tab bar. A constant for the
-    /// same reason `bottomBlurHeight` is one.
-    private let syncBannerClearance: CGFloat = 104
 
     var body: some View {
         ZStack {
@@ -169,23 +166,6 @@ struct RootView: View {
                     .opacity(isSearching ? 0 : 1)
                     .frame(height: isSearching ? 0 : nil)
                     .animation(.spring(duration: 0.3, bounce: 0.05), value: isSearching)
-            }
-
-            // Sync status, on the surface where arriving records are visible.
-            //
-            // Bottom rather than top: the library header carries the Fathom
-            // wordmark, and a top-anchored pill lands straight on it. Photos
-            // puts its own "updating" line at the foot of the grid for the same
-            // reason. The clearance is a constant, deliberately — see
-            // `bottomBlurHeight` for what reading the safe area inside `body`
-            // does to the tab bar's taps.
-            if activeTab == .library && !isSearching {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    SyncStatusBanner(activity: syncActivity)
-                        .padding(.bottom, syncBannerClearance)
-                }
-                .allowsHitTesting(false)
             }
 
             // First run on this device. Above everything, tab bar included:

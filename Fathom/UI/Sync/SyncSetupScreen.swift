@@ -10,8 +10,8 @@ import SwiftUI
 /// is calmer than one that looks broken while it works.
 ///
 /// Visually it is the same hand it draws everywhere else: one template doodle
-/// lit by a blur of itself, a serif line, and nothing that spins. The telescope
-/// is the right doodle here — the app is looking for what is out there.
+/// lit by a blur of itself, a serif line, and nothing that spins. The doodle is
+/// someone shelving books, which is what the app is doing while you wait.
 struct SyncSetupScreen: View {
 
     @ObservedObject var activity: SyncActivity
@@ -33,7 +33,7 @@ struct SyncSetupScreen: View {
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
 
-                telescope
+                shelving
                     .padding(.bottom, 30)
 
                 Text("Bringing your library across")
@@ -71,26 +71,25 @@ struct SyncSetupScreen: View {
 
     // MARK: - Doodle
 
-    private var telescope: some View {
+    private var shelving: some View {
         ZStack {
             // Same ink-bleed treatment as the empty library: the halo is the
             // artwork blurred against itself, so it traces the drawing's own
             // strokes instead of sitting behind it as a disc.
             //
-            // Lighter on dark than the shelf uses, though. The shelf is fine
-            // parallel lines; the telescope is a few heavy strokes, and the
-            // shelf's opacities pile those up into a neon tube rather than a
-            // halo.
-            telescopeArt
+            // Lighter on dark than the empty-library shelf uses. That drawing
+            // is fine parallel lines; this one carries large filled areas, and
+            // the shelf's opacities turn them into a lamp rather than a halo.
+            shelvingArt
                 .blur(radius: 24)
                 .opacity(colorScheme == .dark ? 0.32 : 0.16)
                 .scaleEffect(1.03)
 
-            telescopeArt
+            shelvingArt
                 .blur(radius: 7)
                 .opacity(colorScheme == .dark ? 0.18 : 0.1)
 
-            telescopeArt
+            shelvingArt
         }
         .offset(y: breathe ? -5 : 5)
         .scaleEffect(breathe ? 1.015 : 0.985)
@@ -99,13 +98,16 @@ struct SyncSetupScreen: View {
         .padding(-40)
     }
 
-    private var telescopeArt: some View {
-        Image("Telescope")
+    private var shelvingArt: some View {
+        Image("ArrangingBooks")
             .renderingMode(.template)
             .resizable()
             .scaledToFit()
             .foregroundStyle(ink)
-            .frame(height: 190)
+            // Taller than the shelf doodle is drawn at, because this artwork
+            // sits inside a lot of transparent canvas — the figure ends up
+            // noticeably smaller than the nominal height suggests.
+            .frame(height: 240)
     }
 
     // MARK: - Progress

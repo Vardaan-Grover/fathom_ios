@@ -94,12 +94,20 @@ final class SyncActivity: ObservableObject {
     /// Iterating on a design you can only reach by wiping the app is how a
     /// screen ends up unreviewed.
     ///
-    /// Pass `-FathomPreviewSync setup` or `-FathomPreviewSync banner`.
+    /// Pass `-FathomPreviewSync setup`, `banner`, or `done` (the completion
+    /// state held still, which otherwise lasts about two seconds).
     static func startPreviewIfRequested() {
         let mode = UserDefaults.standard.string(forKey: "FathomPreviewSync")
         guard let mode else { return }
 
         let activity = SyncActivity.shared
+
+        if mode == "done" {
+            activity.received = 312
+            activity.phase = .settled
+            return
+        }
+
         activity.isFirstSync = (mode == "setup")
         activity.phase = .gathering
         activity.isPresentingSetup = (mode == "setup")

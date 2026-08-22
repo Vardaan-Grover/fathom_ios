@@ -10,7 +10,14 @@ import Foundation
 ///
 /// Ordering matters — the file store must resolve the container before the
 /// migrator or the download monitor touch any path.
-enum SyncBootstrap {
+/// **This runs off the main actor deliberately.** It is called from `.task` on
+/// a SwiftUI view, which is MainActor-isolated, so every non-async call in here
+/// would otherwise run on the main thread — and the first one,
+/// `ICloudFileStore.configure()`, resolves the ubiquity container, which is
+/// documented as slow I/O and measured at ~1s of main-thread block on a clean
+/// install. `nonisolated` detaches the whole sequence; the one step that truly
+/// needs the main actor asks for it explicitly.
+nonisolated enum SyncBootstrap {
 
     /// Idempotent: safe to call once per launch from the app root.
     static func start() async {
@@ -20,8 +27,17 @@ enum SyncBootstrap {
         MainThreadWatchdog.start()
         #endif
 
+        let began = Date()
+        func phase(_ name: String, _ since: Date) -> Date {
+            let now = Date()
+            AppLogger.log(tag: "SyncBootstrap",
+                          "\(name) took \(Int(now.timeIntervalSince(since) * 1000))ms")
+            return now
+        }
+
         // 1. Resolve the iCloud container (no-op result if unavailable).
         ICloudFileStore.shared.configure()
+        var mark = phase("container resolve", began)
 
         guard ICloudFileStore.shared.isAvailable else {
             // No entitlement, or the user is signed out of iCloud. Everything
@@ -30,17 +46,22 @@ enum SyncBootstrap {
             return
         }
 
-        // 2. Start the iCloud download monitor on the main actor.
+        // 2. Start the iCloud download monitor. This one genuinely needs the
+        //    main actor — it owns an NSMetadataQuery and publishes to SwiftUI.
         await MainActor.run {
             ICloudDownloadMonitor.shared.start()
         }
+        mark = phase("monitor start", mark)
 
         // 3. Lift any pre-iCloud local files into the container.
         await LocalToICloudMigration.shared.migrateIfNeeded()
+        mark = phase("file migration", mark)
 
         // 4. Start the CloudKit sync engine (push + pull).
         await SyncEngine.shared.start()
+        _ = phase("engine start", mark)
 
-        AppLogger.log(tag: "SyncBootstrap", "iCloud sync started")
+        AppLogger.log(tag: "SyncBootstrap",
+                      "iCloud sync started (\(Int(Date().timeIntervalSince(began) * 1000))ms total)")
     }
 }

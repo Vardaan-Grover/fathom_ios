@@ -73,26 +73,38 @@ class HomeViewModel: ObservableObject {
              try BookCategoryMembership.fetchCount(db)]
         }
 
+        // Delivered on a background queue, not the main one. GRDB notifies on
+        // every write transaction, and a first sync commits hundreds of them —
+        // delivering each to the main queue floods it even though the reload
+        // itself is debounced. The coalescing therefore has to happen before
+        // the hop, not after.
         libraryObserver = observation.start(
             in: DatabaseManager.shared.dbQueue,
-            scheduling: .async(onQueue: .main),
+            scheduling: .async(onQueue: Self.observationQueue),
             onError: { error in
                 AppLogger.log(tag: "HomeViewModel", "Library observation failed: \(error)")
             },
-            onChange: { [weak self] _ in
-                self?.scheduleReload()
+            onChange: { _ in
+                Self.coalesce { [weak self] in
+                    Task { @MainActor in await self?.load() }
+                }
             }
         )
     }
 
-    private func scheduleReload() {
-        reloadTask?.cancel()
-        reloadTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            await self?.load()
-        }
+    private static let observationQueue =
+        DispatchQueue(label: "com.fathom.library-observation", qos: .utility)
+
+    /// Runs `work` at most once per window, on the observation queue.
+    private static func coalesce(_ work: @escaping @Sendable () -> Void) {
+        dispatchPrecondition(condition: .onQueue(observationQueue))
+        pendingCoalesce?.cancel()
+        let item = DispatchWorkItem(block: work)
+        pendingCoalesce = item
+        observationQueue.asyncAfter(deadline: .now() + 0.3, execute: item)
     }
+
+    nonisolated(unsafe) private static var pendingCoalesce: DispatchWorkItem?
 
     func load() async {
         isLoading = true

@@ -20,6 +20,30 @@ import SwiftUI
         var onTranslate: (@MainActor (String) -> Void)?
         var onSearchText: (@MainActor (String) -> Void)?
         var applySearchHighlight: (@MainActor (String) -> Void)?
+
+        /// Drops every stored callback.
+        ///
+        /// `ReaderScreen` is a struct, so the closures it installs here capture
+        /// a *copy of the whole view* — including its `@StateObject` wrappers,
+        /// one of which is this object. That is a retain cycle, and it drags
+        /// the copy's other state (the `PublicationLoader` and its open
+        /// `Publication`, `BookSearchState`, the positions array…) along with
+        /// it: every reader session stayed resident for the life of the app.
+        /// Called from `dismantleUIViewController`, the one hook that fires
+        /// exactly once when the navigator is really torn down.
+        func reset() {
+            goLeft = nil
+            goRight = nil
+            goToLocatorJSON = nil
+            onTap = nil
+            onExplain = nil
+            onAddNote = nil
+            onEditNote = nil
+            onDefine = nil
+            onTranslate = nil
+            onSearchText = nil
+            applySearchHighlight = nil
+        }
     }
 
     class OverlayPassthroughView: UIView {
@@ -524,6 +548,19 @@ import SwiftUI
                 name: HighlightStore.didChangeNotification,
                 object: nil
             )
+
+            // A highlight arriving from another device never passes through
+            // HighlightStore — sync writes it straight to SQLite — so the
+            // notification above does not fire for it. Without this the reader
+            // stays on whatever decorations it had when the book opened, and a
+            // highlight made on the other phone appears only after closing and
+            // reopening the book.
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleRemoteChangesApplied),
+                name: .fathomSyncDidApplyRemoteChanges,
+                object: nil
+            )
         }
 
         @objc private func handleHighlightsDidChange(_ notification: Notification) {
@@ -531,6 +568,17 @@ import SwiftUI
                   changedBookID == bookID
             else { return }
             applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
+        }
+
+        /// Posted on the main queue after a batch of remote records lands.
+        ///
+        /// It does not say which records changed, so both annotation groups are
+        /// rebuilt. That is two indexed reads for the current book against a
+        /// notification that fires once per fetched batch, which is cheap
+        /// enough not to be worth threading record types through sync for.
+        @objc private func handleRemoteChangesApplied() {
+            applyHighlights(HighlightStore.shared.highlights(forBookID: bookID))
+            applyNoteHighlights(NoteStore.shared.notes(forBookID: bookID))
         }
 
         func applyNoteHighlights(_ notes: [Note]) {
@@ -939,6 +987,18 @@ import SwiftUI
             return container
         }
 
+        static func dismantleUIViewController(
+            _ uiViewController: UIViewController,
+            coordinator: Coordinator
+        ) {
+            // Breaks the ReaderScreen ⇄ NavigatorCommands cycle; see
+            // `NavigatorCommands.reset()`.
+            coordinator.commands?.reset()
+            coordinator.commands = nil
+            coordinator.container = nil
+            (uiViewController as? ReaderContainerViewController)?.overlayForLocator = nil
+        }
+
         func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
             guard let container = uiViewController as? ReaderContainerViewController,
                 let navigator = container.navigator
@@ -961,8 +1021,9 @@ import SwiftUI
 
                 // Any settings change repaginates the chapter, so cached page
                 // snapshots no longer correspond to their positions and an
-                // in-flight curl is animating stale geometry.
-                container.curlController?.abortForEnvironmentChange()
+                // in-flight curl is animating stale geometry. Block new turns
+                // for a settle window while WebKit finishes repagination.
+                container.curlController?.abortForSettingsChange()
 
                 let bg = ReadiumNavigator.Color(hex: settings.colorTheme.backgroundHex)
                 let fg = ReadiumNavigator.Color(hex: settings.colorTheme.foregroundHex)

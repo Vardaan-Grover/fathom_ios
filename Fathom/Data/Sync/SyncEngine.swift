@@ -63,6 +63,25 @@ actor SyncEngine: CKSyncEngineDelegate {
     /// dropped change is not.
     private var enqueuedAt: [String: String] = [:]
 
+    /// Tallies for one fetch/send cycle, logged as a single summary line.
+    ///
+    /// Successful applies used to produce no output at all, which meant the
+    /// only visible sync activity was its failures — a run that worked and a
+    /// run that did nothing looked identical in the log. That is no way to
+    /// verify a system whose whole job is to move records quietly.
+    private struct Tally {
+        var fetched = 0, applied = 0, deferred = 0, deleted = 0
+        var sent = 0, sentDeletes = 0, conflicts = 0, failed = 0
+        var isEmpty: Bool {
+            fetched == 0 && applied == 0 && deferred == 0 && deleted == 0
+                && sent == 0 && sentDeletes == 0 && conflicts == 0 && failed == 0
+        }
+    }
+    private var tally = Tally()
+
+    func noteApplied() { tally.applied += 1 }
+    func noteDeferred() { tally.deferred += 1 }
+
     // MARK: - Lifecycle
 
     /// Call once after `ICloudFileStore.configure()` reports iCloud available.
@@ -169,6 +188,7 @@ actor SyncEngine: CKSyncEngineDelegate {
 
         guard !changes.isEmpty else { return }
         engine.state.add(pendingRecordZoneChanges: changes)
+        AppLogger.log(tag: "SyncEngine", "queued \(changes.count) local change(s) to push")
     }
 
     /// Queues a record that has no CDC trigger behind it — the three singletons
@@ -231,12 +251,17 @@ actor SyncEngine: CKSyncEngineDelegate {
             await handleAccountChange(e)
 
         case .fetchedRecordZoneChanges(let e):
+            tally.fetched += e.modifications.count
+            tally.deleted += e.deletions.count
             await applyFetched(modifications: e.modifications, deletions: e.deletions)
 
         case .fetchedDatabaseChanges(let e):
             await handleDatabaseChanges(e)
 
         case .sentRecordZoneChanges(let e):
+            tally.sent += e.savedRecords.count
+            tally.sentDeletes += e.deletedRecordIDs.count
+            tally.failed += e.failedRecordSaves.count + e.failedRecordDeletes.count
             await handleSentChanges(e, syncEngine: syncEngine)
 
         case .sentDatabaseChanges(let e):
@@ -245,9 +270,10 @@ actor SyncEngine: CKSyncEngineDelegate {
                               "Zone save failed \(failure.zone.zoneID.zoneName): \(failure.error)")
             }
 
-        case .willFetchChanges, .didFetchChanges,
-             .willSendChanges, .didSendChanges,
-             .willFetchRecordZoneChanges:
+        case .didFetchChanges, .didSendChanges:
+            flushTally()
+
+        case .willFetchChanges, .willSendChanges, .willFetchRecordZoneChanges:
             break
 
         case .didFetchRecordZoneChanges(let e):
@@ -348,6 +374,7 @@ actor SyncEngine: CKSyncEngineDelegate {
             // ever reaching the server. Any device whose metadata cache is
             // empty while the zone already holds its records — a reinstall, a
             // restore from backup, a cleared cache — lands in it.
+            tally.conflicts += 1
             await applyMerged(merged, cacheSystemFieldsFrom: server)
             syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(record.recordID)])
             AppLogger.log(tag: "SyncEngine", "Merged conflict for \(name)")
@@ -384,6 +411,16 @@ actor SyncEngine: CKSyncEngineDelegate {
         default:
             AppLogger.log(tag: "SyncEngine", "Save failed \(name): \(failure.error)")
         }
+    }
+
+    /// Emits one line describing what the cycle actually did, then resets.
+    /// Silent when nothing happened, so an idle app stays quiet.
+    private func flushTally() {
+        guard !tally.isEmpty else { return }
+        AppLogger.log(tag: "SyncEngine", """
+            cycle: fetched \(tally.fetched) (applied \(tally.applied),             deferred \(tally.deferred), deletes \(tally.deleted)) ·             sent \(tally.sent) (deletes \(tally.sentDeletes),             conflicts \(tally.conflicts), failed \(tally.failed))
+            """)
+        tally = Tally()
     }
 
     // MARK: - Account and database changes

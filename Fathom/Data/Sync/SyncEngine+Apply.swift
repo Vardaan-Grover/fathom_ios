@@ -182,10 +182,11 @@ extension SyncEngine {
             let name = record.recordID.recordName
             guard CKRecordName.parse(name) != nil else { continue }
             if pendingNames.contains(name) {
-                AppLogger.log(tag: "SyncEngine", "Deferring \(name) to push-side merge")
+                noteDeferred()
                 continue
             }
             await apply(record: record, cacheSystemFields: true)
+            noteApplied()
         }
 
         for deletion in deletions {

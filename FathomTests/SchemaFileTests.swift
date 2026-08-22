@@ -187,3 +187,44 @@ struct SchemaFileTests {
         }
     }
 }
+
+/// A fetched batch must apply parents before children. Highlights, notes,
+/// bookmarks, reading activity, completions and shelf memberships all carry a
+/// NOT NULL foreign key to `books`, and CloudKit does not promise an order.
+struct ApplyOrderingTests {
+
+    @Test("Books and shelves sort ahead of everything that references them")
+    func parentsSortFirst() {
+        let parents = [CKRecordType.book, CKRecordType.bookCategory]
+        let children = [
+            CKRecordType.bookCompletion, CKRecordType.bookCategoryMembership,
+            CKRecordType.highlight, CKRecordType.note, CKRecordType.bookmark,
+            CKRecordType.savedWord, CKRecordType.readingActivity,
+            CKRecordType.readingPosition,
+        ]
+
+        for parent in parents {
+            for child in children {
+                #expect(SyncEngine.applyRank(parent) < SyncEngine.applyRank(child),
+                        "\(child) must not be applied before \(parent)")
+            }
+        }
+    }
+
+    @Test("Sorting a shuffled batch puts every parent ahead of every child")
+    func shuffledBatchOrders() {
+        // The failure this guards is silent: applying a child first throws an
+        // FK violation, the record is dropped, and the annotation never
+        // appears on that device.
+        let types = [
+            CKRecordType.highlight, CKRecordType.book, CKRecordType.note,
+            CKRecordType.bookCategoryMembership, CKRecordType.bookCategory,
+            CKRecordType.readingActivity, CKRecordType.bookCompletion,
+        ]
+        let sorted = types.sorted { SyncEngine.applyRank($0) < SyncEngine.applyRank($1) }
+
+        let lastParent = sorted.lastIndex { SyncEngine.applyRank($0) == 0 } ?? -1
+        let firstChild = sorted.firstIndex { SyncEngine.applyRank($0) == 1 } ?? sorted.count
+        #expect(lastParent < firstChild)
+    }
+}

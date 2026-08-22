@@ -163,7 +163,21 @@ extension SyncEngine {
         // where it can actually be done correctly.
         let pendingNames = pendingSaveRecordNames()
 
-        for modification in modifications {
+        // Parents before children. Highlights, notes, bookmarks, reading
+        // activity, completions and shelf memberships all carry a NOT NULL
+        // foreign key to `books`, and CloudKit makes no promise about the order
+        // records arrive in. Applying a child first throws an FK violation, and
+        // the record is then dropped — the annotation would simply never appear
+        // on that device.
+        //
+        // Sorting the batch fixes it whenever parent and child arrive together,
+        // which is the ordinary case. A child that arrives in an earlier batch
+        // than its book is still dropped; see `orphanedChildren` below.
+        let ordered = modifications.sorted { lhs, rhs in
+            Self.applyRank(lhs.record.recordType) < Self.applyRank(rhs.record.recordType)
+        }
+
+        for modification in ordered {
             let record = modification.record
             let name = record.recordID.recordName
             guard CKRecordName.parse(name) != nil else { continue }
@@ -190,6 +204,17 @@ extension SyncEngine {
         await apply(record: record, cacheSystemFields: false)
         try? await DatabaseManager.shared.dbQueue.write { db in
             try SyncRecordMetadata.save(db: db, record: tagSource)
+        }
+    }
+
+    /// Ordering for a fetched batch: a record type must be applied after
+    /// anything it references. Lower sorts earlier.
+    nonisolated static func applyRank(_ type: CKRecord.RecordType) -> Int {
+        switch type {
+        case CKRecordType.book, CKRecordType.bookCategory:
+            return 0                    // referenced by everything below
+        default:
+            return 1
         }
     }
 

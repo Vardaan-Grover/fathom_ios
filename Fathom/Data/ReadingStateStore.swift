@@ -16,6 +16,29 @@ struct ReadingState: Codable, Equatable {
     var savedAt: Date
     /// High-water mark of `locations.totalProgression`, 0...1. Never decreases.
     var furthestProgression: Double
+
+    // MARK: Local only
+    //
+    // Neither field is written to CloudKit — `ReadingPositionRecord` names the
+    // four synced fields explicitly, and these are not among them. They are
+    // about what *this* device should offer its reader, which is nobody else's
+    // business.
+    //
+    // Both are Optional so that a `reading_state.json` written before they
+    // existed still decodes: the synthesized Codable uses `decodeIfPresent` for
+    // Optionals, where a non-optional would throw on the missing key and take
+    // every saved position with it.
+
+    /// The furthest another device reported reaching.
+    ///
+    /// Distinct from `furthestProgression`, which this device's own reading
+    /// also raises. Offering "you read further elsewhere" off that combined
+    /// mark would prompt every time the reader deliberately turned back a
+    /// chapter on this very phone.
+    var remoteFurthest: Double?
+
+    /// An offer the reader has already turned down, so it is not made again.
+    var declinedJump: Double?
 }
 
 /// Persists reading state (Readium locator, save time, furthest progress) per
@@ -77,14 +100,20 @@ final class ReadingStateStore {
         lock.lock()
         loadCacheIfNeededLocked()
         let key = bookID.uuidString
-        let previousFurthest = cache?[key]?.furthestProgression ?? 0
-        cache?[key] = ReadingState(
+        let existing = cache?[key]
+        var updated = ReadingState(
             locatorJSON: jsonString,
             savedAt: Date(),
             // Reading backwards, re-reading, or jumping to a bookmark must not
             // pull the high-water mark down with it.
-            furthestProgression: max(previousFurthest, progression)
+            furthestProgression: max(existing?.furthestProgression ?? 0, progression)
         )
+        // A position write is not an answer to a pending offer — carry both
+        // local fields across, or turning one page would silently discard what
+        // the other device told us.
+        updated.remoteFurthest = existing?.remoteFurthest
+        updated.declinedJump = existing?.declinedJump
+        cache?[key] = updated
         isDirty = true
         if !suppressSync { booksAwaitingSyncNotification.insert(bookID) }
         scheduleWriteLocked()
@@ -128,6 +157,48 @@ final class ReadingStateStore {
         state(forBookID: bookID)?.furthestProgression ?? 0
     }
 
+    // MARK: - Jump offer
+
+    /// Ignore differences smaller than this. Two percent of a book is a few
+    /// pages; offering to jump that far is noise, and the reader has almost
+    /// certainly just turned a page on the other device.
+    static let minimumJumpGap: Double = 0.02
+
+    /// How far ahead another device got, if that is worth offering to jump to.
+    ///
+    /// Compared live against the current position rather than being cached as a
+    /// flag, so reading past the mark on this device retires the offer without
+    /// anything having to remember to clear it.
+    func jumpOffer(forBookID bookID: UUID) -> Double? {
+        guard let state = state(forBookID: bookID),
+              let remote = state.remoteFurthest
+        else { return nil }
+
+        let current = (try? Locator(jsonString: state.locatorJSON))?
+            .locations.totalProgression ?? 0
+        guard remote - current >= Self.minimumJumpGap else { return nil }
+
+        if let declined = state.declinedJump, remote - declined < Self.minimumJumpGap {
+            return nil
+        }
+        return remote
+    }
+
+    /// Records that the reader would rather stay where they are. The offer
+    /// returns only if another device gets meaningfully further still.
+    func declineJump(forBookID bookID: UUID) {
+        lock.lock()
+        loadCacheIfNeededLocked()
+        let key = bookID.uuidString
+        if var state = cache?[key] {
+            state.declinedJump = state.remoteFurthest
+            cache?[key] = state
+            isDirty = true
+            scheduleWriteLocked()
+        }
+        lock.unlock()
+    }
+
     /// Applies a copy of this book's reading state that arrived from another
     /// device.
     ///
@@ -151,16 +222,27 @@ final class ReadingStateStore {
 
         let takePosition = existing.map { savedAt > $0.savedAt } ?? true
         let mergedFurthest = max(existing?.furthestProgression ?? 0, furthestProgression)
+        // Remembered separately from the merged mark: this is the part another
+        // device is responsible for, and the only part worth offering to jump to.
+        let mergedRemote = max(existing?.remoteFurthest ?? 0, furthestProgression)
 
         if takePosition {
-            cache?[key] = ReadingState(locatorJSON: locatorJSON,
+            var updated = ReadingState(locatorJSON: locatorJSON,
                                        savedAt: savedAt,
                                        furthestProgression: mergedFurthest)
+            updated.remoteFurthest = mergedRemote
+            updated.declinedJump = existing?.declinedJump
+            cache?[key] = updated
             isDirty = true
-        } else if mergedFurthest > (existing?.furthestProgression ?? 0), var kept = existing {
-            kept.furthestProgression = mergedFurthest
-            cache?[key] = kept
-            isDirty = true
+        } else if var kept = existing {
+            let raised = mergedFurthest > kept.furthestProgression
+                || mergedRemote > (kept.remoteFurthest ?? 0)
+            if raised {
+                kept.furthestProgression = mergedFurthest
+                kept.remoteFurthest = mergedRemote
+                cache?[key] = kept
+                isDirty = true
+            }
         }
 
         let changed = isDirty

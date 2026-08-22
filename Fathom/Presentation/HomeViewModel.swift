@@ -13,7 +13,17 @@ class HomeViewModel: ObservableObject {
     /// so `categories.flatMap(\.books)` yields duplicates and can't be used here.
     @Published private(set) var allBooks: [HomeBook] = []
 
-    @Published var isLoading = true
+    /// Whether to show a loading indicator. Deliberately *not* "a load is
+    /// running" — see `load()`.
+    @Published private(set) var isLoading = false
+
+    /// Whether the first load has finished. Distinct from `isLoading`: between
+    /// launch and that first result there is nothing to show and nothing to
+    /// say, and the empty state must not be mistaken for an answer.
+    @Published private(set) var hasLoaded = false
+
+    /// Defers the indicator so a fast load never flashes one.
+    private var indicatorTask: Task<Void, Never>?
     @Published var recentBook: HomeBook? = nil
     @Published var recentBookProgress: Double = 0
     @Published var recentFullBook: Book? = nil
@@ -107,7 +117,18 @@ class HomeViewModel: ObservableObject {
     nonisolated(unsafe) private static var pendingCoalesce: DispatchWorkItem?
 
     func load() async {
-        isLoading = true
+        // Only the first load gets an indicator, and only if it is slow.
+        //
+        // This used to set `isLoading = true` on every call, and `load()` is
+        // called from the sync notification, the scene phase hook, the reader
+        // dismissing and a book being finished. Each one blanked the shelves
+        // and put a spinner in their place for as long as a warm SQLite read
+        // takes — which is why quitting and reopening the app flickered.
+        //
+        // A reload now leaves the current shelves on screen and swaps the new
+        // values in underneath them.
+        if !hasLoaded { showIndicatorIfSlow() }
+
         async let books = bookRepository.listBooks()
         async let userCats = categoryRepository.listCategories()
         async let memberships = categoryRepository.listMemberships()
@@ -132,7 +153,21 @@ class HomeViewModel: ObservableObject {
             recentBookProgress = 0
         }
 
+        indicatorTask?.cancel()
         isLoading = false
+        hasLoaded = true
+    }
+
+    /// Shows the indicator only if the first load is still running after a
+    /// beat. A warm read finishes well inside this, so the ordinary launch
+    /// shows no indicator at all rather than flashing one for a frame or two.
+    private func showIndicatorIfSlow() {
+        indicatorTask?.cancel()
+        indicatorTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self, !self.hasLoaded else { return }
+            self.isLoading = true
+        }
     }
 
     func recordOpened(book: Book) {

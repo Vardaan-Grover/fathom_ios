@@ -66,7 +66,7 @@ struct ClassicLibraryView: View {
   /// See the matching property on HomeScreen — a first-run library is no books
   /// and no shelves the user made themselves.
   private var isLibraryEmpty: Bool {
-    !viewModel.isLoading
+    viewModel.hasLoaded
       && viewModel.allBooks.isEmpty
       && !viewModel.categories.contains(where: { !$0.shelfColorHex.isEmpty })
   }

@@ -133,7 +133,7 @@ struct HomeScreen: View {
     /// Someone who created a shelf before importing anything has expressed an
     /// intent the empty state would paper over, so they keep the shelf view.
     private var isLibraryEmpty: Bool {
-        !viewModel.isLoading
+        viewModel.hasLoaded
             && viewModel.allBooks.isEmpty
             && !viewModel.categories.contains(where: { !$0.shelfColorHex.isEmpty })
     }

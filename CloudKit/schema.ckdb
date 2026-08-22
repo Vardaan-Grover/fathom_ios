@@ -1,0 +1,273 @@
+DEFINE SCHEMA
+
+/*
+    Fathom's CloudKit schema, written by hand rather than auto-created.
+
+    CloudKit's production schema is ADDITIVE-ONLY: a record type deployed to
+    production can never be removed, and a field can never be retyped or
+    deleted. Letting a Debug run auto-create the schema means whatever the
+    Swift structs happened to look like that afternoon becomes permanent, and
+    dev and production drift apart silently. This file is the source of truth,
+    reviewed like any other code and applied with `cktool import-schema`.
+
+    Field lists are derived from `apply(to:)` in
+    Fathom/Data/Sync/CloudKitRecordTypes.swift and from the three singleton
+    record builders in Fathom/Data/Sync/SyncEngine+Apply.swift. Merge behaviour
+    for every field is specified in docs/sync-conflict-policy.md.
+
+    Two deliberate omissions:
+
+    - `AIConversation` is absent. The feature is dormant behind
+      FeatureFlags.aiCompanionEnabled and its apply path is known-broken.
+      Deploying a record type nobody has validated would lock it in forever.
+      See §3.8 of the conflict policy.
+
+    - No user field carries QUERYABLE, SEARCHABLE or SORTABLE. CKSyncEngine
+      fetches through zone changes and never queries, so indexes would cost
+      storage and write throughput to serve queries that are never made. Add
+      one only alongside the query that needs it.
+
+    Record names are type-prefixed (`Book.<uuid>`), because a record name is
+    unique per zone across ALL record types — see CKRecordName.
+*/
+
+    RECORD TYPE Book (
+        "___createTime"             TIMESTAMP,
+        "___createdBy"              REFERENCE,
+        "___etag"                   STRING,
+        "___modTime"                TIMESTAMP,
+        "___modifiedBy"             REFERENCE,
+        "___recordID"               REFERENCE QUERYABLE,
+        title                       STRING,
+        author                      STRING,
+        format                      STRING,
+        localFilename               STRING,
+        description                 STRING,
+        language                    STRING,
+        publisher                   STRING,
+        coverFilename               STRING,
+        importDate                  TIMESTAMP,
+        contentHash                 STRING,
+        estimatedPageCount          INT64,
+        estimatedReadingTimeMinutes INT64,
+        lastReadAt                  TIMESTAMP,
+        modifiedAt                  TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    /* The reader's own rating and reflection, kept apart from Book so that
+       Book stays immutable-by-construction. See §3.1. */
+    RECORD TYPE BookCompletion (
+        "___createTime"         TIMESTAMP,
+        "___createdBy"          REFERENCE,
+        "___etag"               STRING,
+        "___modTime"            TIMESTAMP,
+        "___modifiedBy"         REFERENCE,
+        "___recordID"           REFERENCE QUERYABLE,
+        bookID                  STRING,
+        rating                  INT64,
+        reflection              STRING,
+        reflectionImageFilename STRING,
+        finishedAt              TIMESTAMP,
+        modifiedAt              TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE BookCategory (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        name            STRING,
+        shelfColorHex   STRING,
+        createdAt       TIMESTAMP,
+        sortOrder       INT64,
+        modifiedAt      TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    /* Two-phase set: removal writes deletedAt rather than deleting the record,
+       so the removal itself can reach other devices. See §3.3. */
+    RECORD TYPE BookCategoryMembership (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        bookID          STRING,
+        categoryID      STRING,
+        addedAt         TIMESTAMP,
+        sortOrder       INT64,
+        modifiedAt      TIMESTAMP,
+        deletedAt       TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE Highlight (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        bookID          STRING,
+        locatorJSON     STRING,
+        text            STRING,
+        createdAt       TIMESTAMP,
+        color           STRING,
+        deletedAt       TIMESTAMP,
+        modifiedAt      TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE Note (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        bookID          STRING,
+        locatorJSON     STRING,
+        selectedText    STRING,
+        noteContent     STRING,
+        createdAt       TIMESTAMP,
+        chapterTitle    STRING,
+        pageNumber      INT64,
+        highlightColor  STRING,
+        deletedAt       TIMESTAMP,
+        modifiedAt      TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE Bookmark (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        bookID          STRING,
+        locatorJSON     STRING,
+        progression     DOUBLE,
+        createdAt       TIMESTAMP,
+        chapterTitle    STRING,
+        pageNumber      INT64,
+        deletedAt       TIMESTAMP,
+        modifiedAt      TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE SavedWord (
+        "___createTime"    TIMESTAMP,
+        "___createdBy"     REFERENCE,
+        "___etag"          STRING,
+        "___modTime"       TIMESTAMP,
+        "___modifiedBy"    REFERENCE,
+        "___recordID"      REFERENCE QUERYABLE,
+        word               STRING,
+        language           STRING,
+        partsOfSpeech      STRING,
+        bookID             STRING,
+        bookTitle          STRING,
+        chapter            STRING,
+        pageNumber         INT64,
+        locatorJSON        STRING,
+        contextSentence    STRING,
+        fullDictionaryJSON BYTES,
+        createdAt          TIMESTAMP,
+        pinnedAt           TIMESTAMP,
+        deletedAt          TIMESTAMP,
+        modifiedAt         TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    /* One row per (book, day, device). Reading time is additive, so each
+       device owns its own record and totals are summed at read. See §3.4. */
+    RECORD TYPE ReadingActivity (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        bookID          STRING,
+        date            STRING,
+        duration        DOUBLE,
+        createdAt       TIMESTAMP,
+        modifiedAt      TIMESTAMP,
+        deviceID        STRING,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    /* furthestProgression is a high-water mark resolved independently of the
+       current position, which is last-writer-wins. See §3.6. */
+    RECORD TYPE ReadingPosition (
+        "___createTime"     TIMESTAMP,
+        "___createdBy"      REFERENCE,
+        "___etag"           STRING,
+        "___modTime"        TIMESTAMP,
+        "___modifiedBy"     REFERENCE,
+        "___recordID"       REFERENCE QUERYABLE,
+        bookID              STRING,
+        locatorJSON         STRING,
+        savedAt             TIMESTAMP,
+        furthestProgression DOUBLE,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    /* Deliberately one opaque blob rather than a field per setting: settings
+       are adjusted rarely and almost always on the device in hand, and every
+       field added here would be a permanent schema entry. See §3.7. */
+    RECORD TYPE ReaderSettings (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        settingsJSON    BYTES,
+        modifiedAt      TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE UserProfile (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        displayName     STRING,
+        avatarEmoji     STRING,
+        avatarColorHex  STRING,
+        modifiedAt      TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );

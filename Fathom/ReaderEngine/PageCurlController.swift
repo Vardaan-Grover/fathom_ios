@@ -91,7 +91,7 @@ import SwiftUI
                 view.bringSubviewToFront(overlay)
             }
         }
-        
+
         func setFlippedOverlay(_ overlay: UIView, alpha: CGFloat = 0.15) {
             loadViewIfNeeded()
             self.overlayView?.removeFromSuperview()
@@ -217,6 +217,12 @@ import SwiftUI
         private var lastTotalProgression: Double?
         private var isRTL = false
 
+        /// Set while WebKit is repaginating after a settings change.
+        /// Cleared by the first `locationDidChange` that follows — or by a 2s
+        /// safety deadline if Readium somehow suppresses that event.
+        private var isSettlingAfterPreferences = false
+        private var settlingDeadline: Date = .distantPast
+
         // Both directions show the theme background until the destination
         // bitmap lands (~50ms). There is deliberately no snapshot cache: it
         // would need a destination position, and the only reliable source of
@@ -303,16 +309,22 @@ import SwiftUI
         }
 
         /// Tracks the reading position for boundary checks. Called for every
-        /// location change, including suppressed ones.
+        /// location change, including suppressed ones. Also serves as the
+        /// repagination-complete signal after a settings change.
         func noteLocation(_ locator: Locator) {
             currentPosition = locator.locations.position
             lastTotalProgression = locator.locations.totalProgression
+            if isSettlingAfterPreferences {
+                isSettlingAfterPreferences = false
+                settlingDeadline = .distantPast
+            }
         }
 
         // MARK: - Programmatic turns (tap zones)
 
         func requestTurn(_ direction: PhysicalDirection) {
             guard isInstalled else { return }
+            guard !isSettlingAfterPreferences, Date() >= settlingDeadline else { return }
             guard state.isIdle else {
                 // Queue at most 2; an opposite-direction request expresses
                 // "never mind" — clear instead of stacking a round trip.
@@ -370,6 +382,15 @@ import SwiftUI
             }
         }
 
+        /// Like `abortForEnvironmentChange`, but also blocks new turns until
+        /// Readium fires `locationDidChange` after repagination completes.
+        /// A 2s deadline acts as a safety valve if the event is suppressed.
+        func abortForSettingsChange() {
+            abortForEnvironmentChange()
+            isSettlingAfterPreferences = true
+            settlingDeadline = Date().addingTimeInterval(2)
+        }
+
         /// Cancels any in-flight curl and restores a consistent live page.
         /// Used on rotation, backgrounding and uninstall — the snapshots are
         /// stale for the new environment anyway.
@@ -422,6 +443,7 @@ import SwiftUI
                 return false
             }
 
+            guard !isSettlingAfterPreferences, Date() >= settlingDeadline else { return false }
             guard let navigator = navigator, navigator.currentSelection == nil else { return false }
 
             // Same exclusion zones as the reader's tap recognizer: drags in the
@@ -475,7 +497,7 @@ import SwiftUI
                 current = SnapshotPageViewController(background: themeBackground)
                 pageVC.setViewControllers([current], direction: .forward, animated: false)
             }
-            
+
             current.setSnapshotView(snapshot)
             if let container = hostViewController as? ReaderContainerViewController,
                let factory = container.overlayForLocator {
@@ -525,14 +547,14 @@ import SwiftUI
             guard let navigator = navigator else { return false }
 
             // Freeze the current page before turning the live navigator.
-            // snapshotView is a live CAPortalLayer, so without this freeze, 
+            // snapshotView is a live CAPortalLayer, so without this freeze,
             // the user sees the page underneath flash blank as WKWebView unloads tiles.
             if let webView = navigator.visibleWebViewForSnapshot {
                 if let image = try? await webView.takeSnapshot(configuration: nil), !isSuspiciouslyBlank(image) {
                     let frame = webView.convert(webView.bounds, to: navigator.view)
                     currentPageVC?.setImage(image, frame: frame)
                     currentPageVC?.clearSnapshotView()
-                    
+
                     if direction == .right {
                         backPage?.setFlippedImage(image, frame: frame, alpha: 0.15)
                         backPage?.clearSnapshotView()
@@ -624,15 +646,15 @@ import SwiftUI
                 data: &pixels, width: size, height: size, bitsPerComponent: 8, bytesPerRow: bytesPerRow,
                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             ) else { return false }
-            
+
             context.interpolationQuality = .low
             context.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
-            
+
             // Check if all pixels are exactly the same as the first pixel
             let r = pixels[0]
             let g = pixels[1]
             let b = pixels[2]
-            
+
             for i in 1..<(size * size) {
                 let offset = i * bytesPerPixel
                 // Allow a tiny bit of compression/interpolation noise, but an unpainted buffer will be perfectly uniform.
@@ -642,7 +664,7 @@ import SwiftUI
                     return false // Found varying pixels, so it has content (text/images)
                 }
             }
-            
+
             return true // Perfectly uniform -> suspiciously blank
         }
 
@@ -784,7 +806,7 @@ import SwiftUI
                     back.setFlippedSnapshotView(backSnapshot, alpha: 0.15)
                 }
             }
-            
+
             if let container = hostViewController as? ReaderContainerViewController,
                let factory = container.overlayForLocator {
                 let anyView = factory(navigator?.currentLocation)

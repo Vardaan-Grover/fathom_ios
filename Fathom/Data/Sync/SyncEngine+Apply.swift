@@ -117,10 +117,7 @@ extension SyncEngine {
             try Self.seededRecord(db: db, type: CKRecordType.readingPosition, recordID: recordID)
         }) ?? CKRecord(recordType: CKRecordType.readingPosition, recordID: recordID)
 
-        record["bookID"] = bookID.uuidString
-        record["locatorJSON"] = state.locatorJSON
-        record["savedAt"] = state.savedAt
-        record["furthestProgression"] = state.furthestProgression
+        ReadingPositionRecord.write(state, bookID: bookID, into: record)
         return record
     }
 
@@ -503,21 +500,16 @@ extension SyncEngine {
     // MARK: - Singleton apply
 
     private func applyReadingPosition(_ record: CKRecord) {
-        guard
-            let bookIDStr = record["bookID"] as? String,
-            let bookID = UUID(uuidString: bookIDStr),
-            let locatorJSON = record["locatorJSON"] as? String,
-            let savedAt = record["savedAt"] as? Date
-        else { return }
+        guard let (bookID, state) = ReadingPositionRecord.read(record) else { return }
 
         // Position and furthest progress resolve independently — the store
         // owns that decision so it happens atomically with the write. An older
         // remote position loses, but the progress it carries can still raise
         // the high-water mark. See §3.6.
         ReadingStateStore.shared.applyRemoteState(
-            locatorJSON: locatorJSON,
-            savedAt: savedAt,
-            furthestProgression: record["furthestProgression"] as? Double ?? 0,
+            locatorJSON: state.locatorJSON,
+            savedAt: state.savedAt,
+            furthestProgression: state.furthestProgression,
             forBookID: bookID)
     }
 

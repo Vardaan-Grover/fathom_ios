@@ -192,6 +192,51 @@ extension SyncEngine {
         for deletion in deletions {
             await applyDeletion(deletion)
         }
+
+        // A parent may have arrived in this batch, or in an earlier one during
+        // a previous launch. Either way, now is when parked children can go in.
+        await drainDeferred()
+    }
+
+    /// Applies parked records whose parent has since arrived, and drops any
+    /// that have waited too long.
+    func drainDeferred() async {
+        do {
+            let parked = try await DatabaseManager.shared.dbQueue.read { db in
+                try SyncDeferredApplies.pending(db: db)
+            }
+            guard !parked.isEmpty else { return }
+
+            var applied = 0
+            for record in parked {
+                let ready = (try? await DatabaseManager.shared.dbQueue.read { db in
+                    try SyncDeferredApplies.parentsExist(db: db, record: record)
+                }) ?? false
+                guard ready else { continue }
+
+                await apply(record: record, cacheSystemFields: true)
+                try? await DatabaseManager.shared.dbQueue.write { db in
+                    try SyncDeferredApplies.remove(db: db,
+                                                   type: record.recordType,
+                                                   recordName: record.recordID.recordName)
+                }
+                applied += 1
+            }
+
+            let pruned = try await DatabaseManager.shared.dbQueue.write { db in
+                try SyncDeferredApplies.prune(db: db)
+            }
+            let remaining = try await DatabaseManager.shared.dbQueue.read { db in
+                try SyncDeferredApplies.count(db: db)
+            }
+
+            if applied > 0 || pruned > 0 || remaining > 0 {
+                AppLogger.log(tag: "SyncEngine",
+                              "deferred: applied \(applied), pruned \(pruned), still waiting \(remaining)")
+            }
+        } catch {
+            AppLogger.log(tag: "SyncEngine", "Deferred drain failed: \(error)")
+        }
     }
 
     /// Writes a merged record into the local database, and caches the change
@@ -253,6 +298,15 @@ extension SyncEngine {
 
         do {
             try await DatabaseManager.shared.dbQueue.write { db in
+                // Every NOT NULL foreign key this record points at has to be
+                // present, or the insert throws and the record is lost —
+                // CloudKit does not redeliver it. Park it instead and retry
+                // once the parent lands.
+                guard try SyncDeferredApplies.parentsExist(db: db, record: record) else {
+                    try SyncDeferredApplies.park(db: db, record: record)
+                    return
+                }
+
                 switch type {
 
                 case CKRecordType.book:
@@ -281,15 +335,6 @@ extension SyncEngine {
                 // conflict clause.
                 case CKRecordType.bookCompletion:
                     guard let incoming = BookCompletion.from(ckRecord: record) else { return }
-                    // The foreign key requires the book. A completion can
-                    // arrive before its book on a fresh device; dropping it is
-                    // safe because the record stays in the zone and is applied
-                    // on the next fetch, once the book is there.
-                    guard try Book.exists(db, key: incoming.bookID) else {
-                        AppLogger.log(tag: "SyncEngine",
-                                      "Completion for unknown book \(incoming.bookID) — deferring")
-                        return
-                    }
                     try incoming.save(db)
 
                 case CKRecordType.bookCategory:

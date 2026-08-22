@@ -1040,6 +1040,35 @@ final class DatabaseManager {
                 """)
         }
 
+        // v34 — park fetched records whose parent has not arrived yet.
+        //
+        // Six synced tables carry a NOT NULL foreign key to `books`, and
+        // CloudKit makes no promise about the order records arrive in. Sorting
+        // each batch parents-first (see SyncEngine.applyRank) handles the
+        // ordinary case, but a highlight can still arrive in an earlier batch
+        // than the book it belongs to. Inserting it then throws, the throw is
+        // caught, and the record is dropped — permanently, because CloudKit
+        // does not redeliver it. The annotation simply never appears on that
+        // device.
+        //
+        // A device that already holds every book cannot hit this, which is why
+        // it survived testing on two established phones. A clean install —
+        // every TestFlight tester — hits it on the first sync.
+        //
+        // Rather than drop, park the whole record here and retry when the
+        // parent shows up.
+        migrator.registerMigration("v34_cloudkit_deferred_applies") { db in
+            try db.create(table: "cloudkit_deferred_applies") { t in
+                t.column("recordType", .text).notNull()
+                t.column("recordID", .text).notNull()
+                // The complete CKRecord, values included — NSKeyedArchiver
+                // output, not just the system fields cached elsewhere.
+                t.column("record", .blob).notNull()
+                t.column("deferredAt", .datetime).notNull()
+                t.primaryKey(["recordType", "recordID"])
+            }
+        }
+
         return migrator
     }
 

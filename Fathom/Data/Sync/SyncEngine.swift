@@ -119,6 +119,10 @@ actor SyncEngine: CKSyncEngineDelegate {
         // call arrives while `engine` is still nil and is dropped. Without this
         // line a cold launch never fetches at all — which is why every early
         // run reported `fetched 0` while records sat waiting in the zone.
+        // Parents may have arrived in an earlier session, so drain before the
+        // fetch as well as after it.
+        await drainDeferred()
+
         await fetchChangesIfNeeded()
 
         // An empty cycle logs nothing, so without this a startup fetch that

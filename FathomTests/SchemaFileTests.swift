@@ -42,12 +42,19 @@ struct SchemaFileTests {
             let name = block[block.startIndex..<nameEnd].trimmingCharacters(in: .whitespacesAndNewlines)
             let body = block[block.index(after: nameEnd)..<bodyEnd.lowerBound]
 
+            // Everything from the first GRANT onwards is permissions, not
+            // fields. Cut there rather than filtering line by line: CloudKit's
+            // own export renders them as `GRANT READ, WRITE TO "_creator"`, so
+            // a comma-split leaves a `WRITE TO ...` fragment that looks exactly
+            // like a field declaration. That matters because regenerating this
+            // file from `cktool export-schema` is a plausible thing to do.
+            let fieldsOnly = body.range(of: "GRANT").map { body[body.startIndex..<$0.lowerBound] }
+                ?? body[...]
+
             var fields = Set<String>()
-            for line in body.components(separatedBy: ",") {
+            for line in fieldsOnly.components(separatedBy: ",") {
                 let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty, !trimmed.hasPrefix("GRANT"), !trimmed.hasPrefix("\"___") else {
-                    continue
-                }
+                guard !trimmed.isEmpty, !trimmed.hasPrefix("\"___") else { continue }
                 if let field = trimmed.split(separator: " ").first {
                     fields.insert(String(field))
                 }

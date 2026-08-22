@@ -66,6 +66,12 @@ deliberately left out of `schema.ckdb` because it is not ours to define, and
 including it would make `SchemaFileTests` flag it as a type nothing syncs.
 Expect it in every diff.
 
+CloudKit also normalises the grants: this file declares `GRANT WRITE` and
+`GRANT READ` on separate lines, and the export renders them as a single
+`GRANT READ, WRITE TO "_creator"`. Same permissions, different rendering.
+Fields are re-sorted alphabetically too, so a byte-identical comparison is not
+achievable — compare meaning, not text.
+
 ## Promoting to production
 
 **This is the irreversible step.** Do it only after the development environment

@@ -21,15 +21,32 @@ enum ICloudDownloadStatus: Equatable {
 /// Start the monitor after `ICloudFileStore.configure()` is called.
 /// Stop it on sign-out.
 ///
-/// This is a `@MainActor` `ObservableObject` so SwiftUI views can observe
-/// `statusByFilename` directly.
+/// This is a `@MainActor` `ObservableObject`, but it publishes **only**
+/// `readableFilenames` — deliberately, and it matters.
+///
+/// `statusByFilename` carries per-file download progress, which changes
+/// continuously for every file being downloaded. Publishing it re-evaluated the
+/// body of every observing view on every change: with 40 files arriving at once
+/// on a clean install, that re-rendered the whole home screen and its grid of
+/// covers hundreds of times a second, and the app stopped responding until the
+/// downloads finished. Nothing read the progress value.
+///
+/// `readableFilenames` changes only when a file finishes downloading — around
+/// once per file rather than continuously — and it is all the observing screens
+/// actually ask for. Progress is still tracked, just not published; anything
+/// that wants to show it should observe a throttled signal rather than this.
 @MainActor
 final class ICloudDownloadMonitor: ObservableObject {
 
     static let shared = ICloudDownloadMonitor()
 
-    /// Keyed by bare filename (e.g. "MyBook-UUID.epub").
-    @Published private(set) var statusByFilename: [String: ICloudDownloadStatus] = [:]
+    /// Files fully downloaded and openable. Published, because it changes
+    /// rarely.
+    @Published private(set) var readableFilenames: Set<String> = []
+
+    /// Keyed by bare filename (e.g. "MyBook-UUID.epub"). Deliberately not
+    /// `@Published` — see the note above.
+    private(set) var statusByFilename: [String: ICloudDownloadStatus] = [:]
 
     private var query: NSMetadataQuery?
 
@@ -122,7 +139,16 @@ final class ICloudDownloadMonitor: ObservableObject {
         }
 
         statusByFilename = newStatus
-        AppLogger.log(tag: "ICloudDownloadMonitor", "Updated: \(newStatus.count) files tracked")
+
+        // Publish only when the readable set actually changes. Progress churn
+        // must not reach SwiftUI: this handler fires on every percent-complete
+        // change, for every file.
+        let readable = Set(newStatus.filter { $0.value == .local }.keys)
+        guard readable != readableFilenames else { return }
+
+        readableFilenames = readable
+        AppLogger.log(tag: "ICloudDownloadMonitor",
+                      "Updated: \(newStatus.count) tracked, \(readable.count) readable")
     }
 
     // MARK: - Convenience Accessors
@@ -145,6 +171,8 @@ final class ICloudDownloadMonitor: ObservableObject {
             guard let url = ICloudFileStore.shared.bookURL(for: filename) else { return false }
             return FileManager.default.fileExists(atPath: url.path)
         }
+
+        if readableFilenames.contains(filename) { return true }
 
         switch statusByFilename[filename] {
         case .local:

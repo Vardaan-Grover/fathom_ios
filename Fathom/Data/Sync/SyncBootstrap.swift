@@ -14,6 +14,12 @@ enum SyncBootstrap {
 
     /// Idempotent: safe to call once per launch from the app root.
     static func start() async {
+        #if DEBUG
+        // Measures main-thread blocking directly, rather than inferring it from
+        // "the app felt unresponsive".
+        MainThreadWatchdog.start()
+        #endif
+
         // 1. Resolve the iCloud container (no-op result if unavailable).
         ICloudFileStore.shared.configure()
 

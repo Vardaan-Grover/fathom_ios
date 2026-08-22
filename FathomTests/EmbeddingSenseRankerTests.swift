@@ -277,11 +277,12 @@ struct EmbeddingSenseRankerTests {
             word: "banked",
             language: "en",
             service: mockService,
-            repository: mockRepo
+            repository: mockRepo,
+            ranker: NoopSenseRanker()
         )
-        
-        try await Task.sleep(for: .seconds(0.5))
-        
+
+        try await waitUntil { await viewModel.suggestedRootWord != nil }
+
         let entry = await viewModel.entry
         #expect(entry?.word == "bank")
         let suggested = await viewModel.suggestedRootWord
@@ -317,11 +318,12 @@ struct EmbeddingSenseRankerTests {
             word: "draught",
             language: "en",
             service: mockService,
-            repository: mockRepo
+            repository: mockRepo,
+            ranker: NoopSenseRanker()
         )
-        
-        try await Task.sleep(for: .seconds(0.5))
-        
+
+        try await waitUntil { await viewModel.suggestedRootWord != nil }
+
         let suggested = await viewModel.suggestedRootWord
         #expect(suggested == "draft")
         let rel = await viewModel.rootWordRelationship
@@ -356,4 +358,36 @@ actor MockVocabularyRepository: VocabularyRepository {
     func removeSavedWord(id: UUID) async {}
     func getSavedWord(word: String, language: String) async -> SavedWord? { nil }
     func setPinnedAt(id: UUID, pinnedAt: Date?) async {}
+}
+
+/// Polls until `condition` holds rather than sleeping a fixed interval.
+///
+/// The work these tests wait on is kicked off by `VocabularySheetViewModel`'s
+/// initialiser, so there is no handle to await. It finishes in milliseconds on
+/// an idle machine, but a fixed sleep still races: the suite runs in parallel
+/// and the ranking tests saturate the cooperative pool, which is exactly how
+/// this pair failed in a full run while passing on their own.
+private func waitUntil(
+    timeout: Duration = .seconds(10),
+    _ condition: () async -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await condition() { return }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    // Fall through on timeout: the caller's expectations report what is
+    // actually missing, which is more useful than a bare timeout failure.
+}
+
+/// Stands in for `EmbeddingSenseRanker.shared` in the view-model tests.
+///
+/// Those tests are about the lemma/alternative-spelling redirect, not about
+/// ranking, but the default ranker is the shared Core ML one — so without this
+/// they load the real model and then contend with the ranking tests in this
+/// same suite for it. Ranking is not what they assert on, so a no-op is the
+/// honest substitute.
+struct NoopSenseRanker: SenseRanker {
+    func prewarm() async {}
+    func rank(_ request: SenseRankingRequest) async -> RankedDefinition? { nil }
 }

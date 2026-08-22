@@ -184,15 +184,25 @@ extension SyncEngine {
             Self.applyRank(lhs.record.recordType) < Self.applyRank(rhs.record.recordType)
         }
 
+        // Row-backed records go in together; the singletons own their own
+        // files and cannot join a database transaction.
+        var rows: [CKRecord] = []
         for modification in ordered {
             let record = modification.record
             let name = record.recordID.recordName
-            guard CKRecordName.parse(name) != nil else { continue }
+            guard let parsed = CKRecordName.parse(name) else { continue }
             if pendingNames.contains(name) {
                 noteDeferred()
                 continue
             }
-            if await apply(record: record, cacheSystemFields: true) { noteApplied() }
+            if Self.isSingleton(parsed.type) {
+                if await apply(record: record, cacheSystemFields: true) { noteApplied() }
+            } else {
+                rows.append(record)
+            }
+        }
+        if !rows.isEmpty {
+            noteApplied(await applyBatch(rows))
         }
 
         for deletion in deletions {
@@ -224,21 +234,33 @@ extension SyncEngine {
             }
             guard !parked.isEmpty else { return }
 
-            var applied = 0
-            for record in parked {
-                let ready = (try? await DatabaseManager.shared.dbQueue.read { db in
-                    try SyncDeferredApplies.parentsExist(db: db, record: record)
-                }) ?? false
-                guard ready else { continue }
-
-                await apply(record: record, cacheSystemFields: true)
-                try? await DatabaseManager.shared.dbQueue.write { db in
-                    try SyncDeferredApplies.remove(db: db,
-                                                   type: record.recordType,
-                                                   recordName: record.recordID.recordName)
-                }
-                applied += 1
+            // Same single-transaction treatment as a fetched batch, and for
+            // the same reason: 75 parked records used to mean 150 commits.
+            // Ordering matters here too — a parked child whose parent is also
+            // parked now applies in the same pass.
+            let ordered = parked.sorted {
+                Self.applyRank($0.recordType) < Self.applyRank($1.recordType)
             }
+            let applied = (try? await DatabaseManager.shared.dbQueue.write { db -> Int in
+                var count = 0
+                for record in ordered {
+                    guard let parsed = CKRecordName.parse(record.recordID.recordName),
+                          !Self.isSingleton(parsed.type) else { continue }
+                    do {
+                        guard try Self.applyRow(db: db, record: record,
+                                                type: parsed.type, localID: parsed.localID,
+                                                cacheSystemFields: true) else { continue }
+                        try SyncDeferredApplies.remove(db: db,
+                                                       type: record.recordType,
+                                                       recordName: record.recordID.recordName)
+                        count += 1
+                    } catch {
+                        AppLogger.log(tag: "SyncEngine",
+                                      "Deferred apply failed for \(parsed.type): \(error)")
+                    }
+                }
+                return count
+            }) ?? 0
 
             let pruned = try await DatabaseManager.shared.dbQueue.write { db in
                 try SyncDeferredApplies.prune(db: db)
@@ -291,117 +313,185 @@ extension SyncEngine {
     }
 
     // swiftlint:disable:next cyclomatic_complexity function_body_length
+    /// Applies one record in its own transaction. Used for the paths that
+    /// carry a single record — a merged conflict resolution, a singleton.
+    /// Batches go through `applyBatch`, which shares one transaction.
     @discardableResult
     private func apply(record: CKRecord, cacheSystemFields: Bool) async -> Bool {
         guard let parsed = CKRecordName.parse(record.recordID.recordName) else { return false }
         let (type, localID) = parsed
 
-        // Singletons are not database rows.
-        switch type {
-        case CKRecordType.readingPosition:
-            applyReadingPosition(record)
+        if Self.isSingleton(type) {
+            applySingleton(record, type: type)
             if cacheSystemFields { await cacheFields(record) }
             return true
-        case CKRecordType.readerSettings:
-            applyReaderSettings(record)
-            if cacheSystemFields { await cacheFields(record) }
-            return true
-        case CKRecordType.userProfile:
-            applyUserProfile(record)
-            if cacheSystemFields { await cacheFields(record) }
-            return true
-        default:
-            break
         }
 
-        var parked = false
         do {
-            try await DatabaseManager.shared.dbQueue.write { db in
-                // Every foreign key this record points at has to be present, or
-                // the insert throws and the record is lost — CloudKit does not
-                // redeliver it. Park it instead and retry once the parent
-                // lands.
-                guard try SyncDeferredApplies.parentsExist(db: db, record: record) else {
-                    try SyncDeferredApplies.park(db: db, record: record)
-                    parked = true
-                    return
-                }
-
-                switch type {
-
-                case CKRecordType.book:
-                    guard let incoming = Book.from(ckRecord: record) else { return }
-                    if let existing = try Book.fetchOne(db, key: incoming.id) {
-                        var merged = incoming
-                        // Fields that describe this device's copy of the file
-                        // are never carried on the record — keep the local
-                        // values rather than resetting them. (§3.2)
-                        merged.preprocessingStatus = existing.preprocessingStatus
-                        merged.aiAnalysisProgress  = existing.aiAnalysisProgress
-                        merged.aiEnabled           = existing.aiEnabled
-                        merged.backendBookID       = existing.backendBookID
-                        try merged.update(db)
-                    } else {
-                        try incoming.insert(db, onConflict: .ignore)
-                    }
-
-                // `save` rather than `upsert` throughout: GRDB's upsert emits
-                // ON CONFLICT DO UPDATE, and a statement carrying its own
-                // conflict clause overrides the conflict resolution inside any
-                // trigger it fires — which turns the CDC trigger's
-                // `INSERT OR REPLACE INTO cloudkit_pending_changes` into a
-                // plain INSERT and makes it fail whenever a change is already
-                // queued for that record. `save` is UPDATE-then-INSERT with no
-                // conflict clause.
-                case CKRecordType.bookCompletion:
-                    guard let incoming = BookCompletion.from(ckRecord: record) else { return }
-                    try incoming.save(db)
-
-                case CKRecordType.bookCategory:
-                    guard let incoming = BookCategory.from(ckRecord: record) else { return }
-                    try incoming.save(db)
-
-                case CKRecordType.bookCategoryMembership:
-                    guard let incoming = BookCategoryMembership.from(ckRecord: record) else { return }
-                    try incoming.save(db)
-
-                case CKRecordType.highlight:
-                    guard let incoming = Highlight.from(ckRecord: record) else { return }
-                    try incoming.save(db)
-
-                case CKRecordType.note:
-                    guard let incoming = Note.from(ckRecord: record) else { return }
-                    try incoming.save(db)
-
-                case CKRecordType.bookmark:
-                    guard let incoming = Bookmark.from(ckRecord: record) else { return }
-                    try incoming.save(db)
-
-                case CKRecordType.savedWord:
-                    guard let incoming = SavedWord.from(ckRecord: record) else { return }
-                    try incoming.save(db)
-
-                case CKRecordType.readingActivity:
-                    guard let incoming = ReadingActivity.from(ckRecord: record) else { return }
-                    try incoming.save(db)
-
-                default:
-                    return
-                }
-
-                // The write above fired the CDC trigger. Clear it, or this
-                // device immediately pushes back what it just pulled.
-                SyncEngine.removeFromQueue(db: db, type: type, id: localID)
-
-                if cacheSystemFields {
-                    try SyncRecordMetadata.save(db: db, record: record)
-                }
+            return try await DatabaseManager.shared.dbQueue.write { db in
+                try Self.applyRow(db: db, record: record, type: type, localID: localID,
+                                  cacheSystemFields: cacheSystemFields)
             }
-            return !parked
         } catch {
             AppLogger.log(tag: "SyncEngine", "Apply failed for \(type)/\(localID): \(error)")
             return false
         }
+    }
+
+    /// Applies a whole batch of row-backed records in a single transaction.
+    ///
+    /// One transaction per record meant 309 commits on the first sync, each
+    /// with its own fsync, and each one waking every `ValueObservation` in the
+    /// app — the sync engine's own CDC observation and the home screen's
+    /// library observation both re-ran their queries hundreds of times and
+    /// delivered hundreds of reloads to the main actor. Sharing one transaction
+    /// makes it one commit and one notification.
+    ///
+    /// It is also more correct: because the batch is ordered parents-first, a
+    /// child now sees its parent's insert *within the same transaction*, so
+    /// records that previously had to be parked apply immediately.
+    ///
+    /// - Returns: how many records were applied rather than parked.
+    private func applyBatch(_ records: [CKRecord]) async -> Int {
+        do {
+            return try await DatabaseManager.shared.dbQueue.write { db -> Int in
+                var applied = 0
+                for record in records {
+                    guard let parsed = CKRecordName.parse(record.recordID.recordName) else {
+                        continue
+                    }
+                    do {
+                        // Caught per record: one malformed record must not roll
+                        // back the other 308.
+                        if try Self.applyRow(db: db, record: record,
+                                             type: parsed.type, localID: parsed.localID,
+                                             cacheSystemFields: true) {
+                            applied += 1
+                        }
+                    } catch {
+                        AppLogger.log(tag: "SyncEngine",
+                                      "Apply failed for \(parsed.type)/\(parsed.localID): \(error)")
+                    }
+                }
+                return applied
+            }
+        } catch {
+            AppLogger.log(tag: "SyncEngine", "Batch apply failed: \(error)")
+            return 0
+        }
+    }
+
+    /// Reading position, reader settings and profile live in files, not rows.
+    nonisolated static func isSingleton(_ type: CKRecord.RecordType) -> Bool {
+        type == CKRecordType.readingPosition
+            || type == CKRecordType.readerSettings
+            || type == CKRecordType.userProfile
+    }
+
+    private func applySingleton(_ record: CKRecord, type: CKRecord.RecordType) {
+        switch type {
+        case CKRecordType.readingPosition: applyReadingPosition(record)
+        case CKRecordType.readerSettings:  applyReaderSettings(record)
+        case CKRecordType.userProfile:     applyUserProfile(record)
+        default: break
+        }
+    }
+
+    /// Writes one record inside an already-open transaction.
+    ///
+    /// - Returns: `true` if applied, `false` if parked awaiting a parent.
+    nonisolated static func applyRow(db: Database,
+                                     record: CKRecord,
+                                     type: CKRecord.RecordType,
+                                     localID: String,
+                                     cacheSystemFields: Bool) throws -> Bool {
+        // Every foreign key this record points at has to be present, or the
+        // insert throws and the record is lost — CloudKit does not redeliver
+        // it. Park it instead and retry once the parent lands.
+        guard try SyncDeferredApplies.parentsExist(db: db, record: record) else {
+            try SyncDeferredApplies.park(db: db, record: record)
+            return false
+        }
+
+        guard try writeModel(db: db, record: record, type: type) else { return true }
+
+        // The write above fired the CDC trigger. Clear it, or this device
+        // immediately pushes back what it just pulled.
+        SyncEngine.removeFromQueue(db: db, type: type, id: localID)
+
+        if cacheSystemFields {
+            try SyncRecordMetadata.save(db: db, record: record)
+        }
+        return true
+    }
+
+    /// Persists the model behind `record`. Returns `false` when there is
+    /// nothing to write — an unknown type, or a record that will not decode.
+    ///
+    /// `save` rather than `upsert` throughout: GRDB's upsert emits ON CONFLICT
+    /// DO UPDATE, and a statement carrying its own conflict clause overrides
+    /// the conflict resolution inside any trigger it fires — which turns the
+    /// CDC trigger's `INSERT OR REPLACE INTO cloudkit_pending_changes` into a
+    /// plain INSERT and makes it fail whenever a change is already queued for
+    /// that record. `save` is UPDATE-then-INSERT with no conflict clause.
+    // swiftlint:disable:next cyclomatic_complexity
+    private nonisolated static func writeModel(db: Database,
+                                               record: CKRecord,
+                                               type: CKRecord.RecordType) throws -> Bool {
+        switch type {
+
+        case CKRecordType.book:
+            guard let incoming = Book.from(ckRecord: record) else { return false }
+            if let existing = try Book.fetchOne(db, key: incoming.id) {
+                var merged = incoming
+                // Fields that describe this device's copy of the file are never
+                // carried on the record — keep the local values rather than
+                // resetting them. (§3.2)
+                merged.preprocessingStatus = existing.preprocessingStatus
+                merged.aiAnalysisProgress  = existing.aiAnalysisProgress
+                merged.aiEnabled           = existing.aiEnabled
+                merged.backendBookID       = existing.backendBookID
+                try merged.update(db)
+            } else {
+                try incoming.insert(db, onConflict: .ignore)
+            }
+
+        case CKRecordType.bookCompletion:
+            guard let incoming = BookCompletion.from(ckRecord: record) else { return false }
+            try incoming.save(db)
+
+        case CKRecordType.bookCategory:
+            guard let incoming = BookCategory.from(ckRecord: record) else { return false }
+            try incoming.save(db)
+
+        case CKRecordType.bookCategoryMembership:
+            guard let incoming = BookCategoryMembership.from(ckRecord: record) else { return false }
+            try incoming.save(db)
+
+        case CKRecordType.highlight:
+            guard let incoming = Highlight.from(ckRecord: record) else { return false }
+            try incoming.save(db)
+
+        case CKRecordType.note:
+            guard let incoming = Note.from(ckRecord: record) else { return false }
+            try incoming.save(db)
+
+        case CKRecordType.bookmark:
+            guard let incoming = Bookmark.from(ckRecord: record) else { return false }
+            try incoming.save(db)
+
+        case CKRecordType.savedWord:
+            guard let incoming = SavedWord.from(ckRecord: record) else { return false }
+            try incoming.save(db)
+
+        case CKRecordType.readingActivity:
+            guard let incoming = ReadingActivity.from(ckRecord: record) else { return false }
+            try incoming.save(db)
+
+        default:
+            return false
+        }
+        return true
     }
 
     private func cacheFields(_ record: CKRecord) async {

@@ -190,6 +190,77 @@ struct DeferredApplyTests {
         #expect(try dbQueue.read { db in try SyncDeferredApplies.count(db: db) } == 1)
     }
 
+    // MARK: - Batched application
+
+    @Test("A parent and child in one transaction both apply, with no parking")
+    func parentAndChildShareATransaction() throws {
+        // Applying a batch in a single transaction is not just faster than one
+        // write per record — a child inserted after its parent in the same
+        // transaction sees that parent, so records that used to be parked and
+        // retried on a later launch now land immediately.
+        let dbQueue = try makeMigratedQueue()
+        let book = Book(id: UUID(), title: "Cosmos", author: "Sagan", format: .epub)
+        let bookRecord = book.toCKRecord(zoneID: zoneID)
+        let childRecord = highlightRecord(bookID: book.id)
+
+        try dbQueue.write { db in
+            for record in [bookRecord, childRecord] {
+                let parsed = try #require(CKRecordName.parse(record.recordID.recordName))
+                let applied = try SyncEngine.applyRow(db: db, record: record,
+                                                      type: parsed.type,
+                                                      localID: parsed.localID,
+                                                      cacheSystemFields: true)
+                #expect(applied, "\(parsed.type) should apply, not park")
+            }
+        }
+
+        #expect(try dbQueue.read { db in try Book.fetchCount(db) } == 1)
+        #expect(try dbQueue.read { db in try Highlight.fetchCount(db) } == 1)
+        #expect(try dbQueue.read { db in try SyncDeferredApplies.count(db: db) } == 0)
+    }
+
+    @Test("A child ahead of its parent is still parked, not lost")
+    func childBeforeParentIsParked() throws {
+        // Ordering the batch parents-first is the caller's job. When it cannot
+        // help — the parent is in a different batch entirely — the child must
+        // still be parked rather than dropped.
+        let dbQueue = try makeMigratedQueue()
+        let record = highlightRecord(bookID: UUID())
+
+        try dbQueue.write { db in
+            let parsed = try #require(CKRecordName.parse(record.recordID.recordName))
+            let applied = try SyncEngine.applyRow(db: db, record: record,
+                                                  type: parsed.type,
+                                                  localID: parsed.localID,
+                                                  cacheSystemFields: true)
+            #expect(!applied)
+        }
+
+        #expect(try dbQueue.read { db in try Highlight.fetchCount(db) } == 0)
+        #expect(try dbQueue.read { db in try SyncDeferredApplies.count(db: db) } == 1)
+    }
+
+    @Test("Applying a pulled record does not queue it straight back for push")
+    func appliedRecordIsNotEchoed() throws {
+        // The CDC trigger fires on the insert regardless of where the row came
+        // from. Without the queue cleanup inside the same transaction, a clean
+        // install would push all 309 records it just pulled back to CloudKit.
+        let dbQueue = try makeMigratedQueue()
+        let book = Book(id: UUID(), title: "Cosmos", author: "Sagan", format: .epub)
+        let record = book.toCKRecord(zoneID: zoneID)
+
+        try dbQueue.write { db in
+            let parsed = try #require(CKRecordName.parse(record.recordID.recordName))
+            _ = try SyncEngine.applyRow(db: db, record: record, type: parsed.type,
+                                        localID: parsed.localID, cacheSystemFields: true)
+        }
+
+        let queued = try dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM cloudkit_pending_changes") ?? 0
+        }
+        #expect(queued == 0)
+    }
+
     // MARK: - The scenario
 
     @Test("A highlight that arrives before its book is applied once the book lands")

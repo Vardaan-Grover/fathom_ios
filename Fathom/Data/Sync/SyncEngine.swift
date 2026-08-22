@@ -79,7 +79,7 @@ actor SyncEngine: CKSyncEngineDelegate {
     }
     private var tally = Tally()
 
-    func noteApplied() { tally.applied += 1 }
+    func noteApplied(_ count: Int = 1) { tally.applied += count }
     func noteDeferred() { tally.deferred += 1 }
 
     // MARK: - Lifecycle

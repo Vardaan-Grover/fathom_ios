@@ -7,6 +7,13 @@ struct RecentlyReadTile: View {
 
     @State private var dominantColors: [Color] = []
 
+    /// Loaded off the main thread. Reading it inline in `body` meant a file
+    /// read and an ImageIO decode on the main thread every time this view was
+    /// re-evaluated — and because a missing cover is not cached, a book whose
+    /// cover had not finished downloading from iCloud repeated that work on
+    /// every single evaluation, which is exactly the state a first sync is in.
+    @State private var cover: UIImage?
+
     var body: some View {
         Button(action: onTap) {
             ZStack(alignment: .leading) {
@@ -25,6 +32,7 @@ struct RecentlyReadTile: View {
         .frame(height: 112)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+        .task { await loadCover() }
         .task { await loadColors() }
     }
 
@@ -52,7 +60,7 @@ struct RecentlyReadTile: View {
 
     private var coverView: some View {
         Group {
-            if let uiImage = BookFileStore.coverImage(for: book.coverFilename) {
+            if let uiImage = cover {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()
@@ -170,6 +178,14 @@ struct RecentlyReadTile: View {
     }
 
     // MARK: - Color loading
+
+    @MainActor
+    private func loadCover() async {
+        let filename = book.coverFilename
+        cover = await Task.detached(priority: .userInitiated) {
+            BookFileStore.coverImage(for: filename)
+        }.value
+    }
 
     @MainActor
     private func loadColors() async {

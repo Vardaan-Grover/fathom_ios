@@ -32,8 +32,8 @@ struct RecentlyReadTile: View {
         .frame(height: 112)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
-        .task { await loadCover() }
-        .task { await loadColors() }
+        .task(id: book.id) { await loadCover() }
+        .task(id: book.id) { await loadColors() }
     }
 
     // MARK: - Background

@@ -24,3 +24,6 @@ Fathom/Resources/SenseEmbedding.mlpackage/
 # Debug logs captured from device runs
 fathom_log*.rtf
 fathom_log*.txt
+
+# macOS Finder metadata
+.DS_Store

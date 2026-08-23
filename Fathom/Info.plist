@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- No custom cryptography — the only use of CryptoKit is SHA256 for
+	     book de-duplication, which App Store export compliance exempts.
+	     Declared here so every archive upload skips the compliance prompt
+	     instead of asking it once per build. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<!-- Lets the system "Save Image" action write share cards to Photos. -->
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Save your reading share cards to your photo library.</string>

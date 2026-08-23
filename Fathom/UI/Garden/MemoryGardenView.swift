@@ -136,49 +136,97 @@ struct MemoryGardenView: View {
     /// contextual title in the middle — the year badge in year view, or the
     /// month stepper in month view (no more duplicated year + month labels).
     private var header: some View {
-        ZStack {
+        // One row, not two stacked layers. This was a ZStack: a centred title
+        // behind an edge-anchored HStack of controls, neither of which knew the
+        // other's width. They collided — the month stepper's chevron landed on
+        // top of the share button and the title ran underneath both. Laying the
+        // three groups out in sequence makes the collision impossible rather
+        // than unlikely.
+        HStack(spacing: 8) {
+            // Three columns, with the outer two flexible and equal. Plain
+            // spacers would centre the title between the two clusters rather
+            // than in the bar, which pulls it off-centre by half the difference
+            // in their widths — visibly so, since the trailing side carries
+            // three controls to the leading side's one.
+            HStack(spacing: 8) {
+                headerIcon("xmark") { dismiss() }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             Group {
                 if mode == .month {
-                    HStack(spacing: 10) {
-                        headerChevron("chevron.left", enabled: currentMonth > 1) { stepMonth(-1) }
-                        Text(monthLabelDate, format: .dateTime.month(.wide).year())
-                            .font(.system(size: 18, weight: .bold, design: .serif))
-                            .foregroundColor(theme.colors.primary)
-                            .frame(minWidth: 152)
-                        headerChevron("chevron.right", enabled: currentMonth < 12) { stepMonth(1) }
-                    }
+                    monthStepper
                 } else {
-                    Text(String(year))
-                        .font(.system(size: 14, weight: .bold, design: .serif))
-                        .foregroundColor(theme.colors.background)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(ink)
-                        .clipShape(Capsule())
+                    yearBadge
                 }
             }
             .transition(.opacity)
+            .layoutPriority(1)
 
-            HStack {
-                headerIcon("xmark") { dismiss() }
-                Spacer(minLength: 0)
-                HStack(spacing: 8) {
-                    headerIcon(backfillMode ? "checkmark" : "wand.and.stars") {
-                        withAnimation(.easeInOut(duration: 0.2)) { backfillMode.toggle() }
-                    }
-                    headerIcon("square.and.arrow.up") { showShare = true }
-                    #if DEBUG
-                    // Dev-only: wipe all reading data (so you can test "spotting").
-                    headerIcon("trash") { Task { await viewModel.clearMockData(year: year) } }
-                    // Dev-only: seed randomized mock data (clears the year first).
-                    headerIcon("dice") { Task { await viewModel.injectDenseMockData(year: year) } }
-                    #endif
+            HStack(spacing: 8) {
+                headerIcon(backfillMode ? "checkmark" : "wand.and.stars") {
+                    withAnimation(.easeInOut(duration: 0.2)) { backfillMode.toggle() }
                 }
+                headerIcon("square.and.arrow.up") { showShare = true }
+
+                #if DEBUG
+                developerMenu
+                #endif
             }
-            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        .padding(.horizontal, 16)
         .animation(.easeInOut(duration: 0.2), value: mode)
     }
+
+    private var monthStepper: some View {
+        HStack(spacing: 8) {
+            headerChevron("chevron.left", enabled: currentMonth > 1) { stepMonth(-1) }
+            Text(monthLabelDate, format: .dateTime.month(.wide).year())
+                .font(.system(size: 18, weight: .bold, design: .serif))
+                .foregroundColor(theme.colors.primary)
+                // A floor rather than a fixed width, so the chevrons stop
+                // shuffling as month names change length — but the label gives
+                // way before anything overlaps on a narrow screen.
+                .frame(minWidth: 132)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            headerChevron("chevron.right", enabled: currentMonth < 12) { stepMonth(1) }
+        }
+    }
+
+    private var yearBadge: some View {
+        Text(String(year))
+            .font(.system(size: 14, weight: .bold, design: .serif))
+            .foregroundColor(theme.colors.background)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(ink)
+            .clipShape(Capsule())
+    }
+
+    #if DEBUG
+    /// The seeding tools, behind one control rather than two.
+    ///
+    /// As separate buttons these were a third of the header's width in a debug
+    /// build, which is how the row came to look broken in the first place.
+    private var developerMenu: some View {
+        Menu {
+            Button("Seed dense mock year", systemImage: "dice") {
+                Task { await viewModel.injectDenseMockData(year: year) }
+            }
+            Button("Clear this year", systemImage: "trash", role: .destructive) {
+                Task { await viewModel.clearMockData(year: year) }
+            }
+        } label: {
+            Image(systemName: "hammer")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(ink)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(ink.opacity(colorScheme == .dark ? 0.16 : 0.08)))
+        }
+    }
+    #endif
 
     private func headerIcon(_ system: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -448,7 +496,7 @@ struct MemoryGardenView: View {
             }
     }
 
-    /// The dense, full-year Canvas garden (with the bloom + the dev seed button).
+    /// The dense, full-year Canvas garden.
     private var yearGarden: some View {
         // The garden is always on screen so the dot grid paints immediately —
         // durations are all-zero until data loads (dots only), then fill in and
@@ -485,15 +533,30 @@ struct MemoryGardenView: View {
         .padding(.horizontal, 14)
         .padding(.bottom, 90)  // clear the floating tab bar
         .overlay {
-            // Once loaded with no reading at all, offer the dev seed button.
             if !viewModel.isLoading, viewModel.dailyActivities.isEmpty {
-                Button("Plant Some Seeds (Mock Data)") {
-                    Task { await viewModel.injectMockData(year: year) }
-                }
-                .font(.subheadline)
-                .foregroundColor(theme.colors.shelfAccent)
+                emptySky
             }
         }
+    }
+
+    /// A year with no reading in it yet.
+    ///
+    /// This used to be a button reading "Plant Some Seeds (Mock Data)", which
+    /// was not behind `#if DEBUG` — so it was on screen for every new reader,
+    /// offering to fill their first year with invented history. The seeder now
+    /// lives in the developer menu with the rest of the scaffolding.
+    ///
+    /// What replaces it says nothing and asks for nothing. An empty sky is the
+    /// correct state on day one, not a failure to be fixed: the grid below is
+    /// already the invitation, and the backfill wand in the header is there for
+    /// anyone who wants to mark nights they read before Fathom.
+    private var emptySky: some View {
+        Text("Your sky fills as you read.")
+            .font(theme.typography.body)
+            .foregroundColor(theme.colors.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 40)
+            .allowsHitTesting(false)
     }
 
     /// One cached formatter for the "yyyy-MM-dd" activity keys — building a

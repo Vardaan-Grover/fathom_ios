@@ -79,9 +79,26 @@ has been exercised by a real two-device run: a book imported on one device and
 opened on the other, a highlight made and deleted, a book removed from a shelf,
 and reading time logged on both devices on the same day.
 
-```bash
-xcrun cktool import-schema --team-id D8B7HB9L2J --container-id iCloud.com.Vardaan.Fathom --environment production --validate --file CloudKit/schema.ckdb
-```
+**`cktool` cannot do this.** It has no promote subcommand, and the server
+rejects both `import-schema` and `validate-schema` against production with
+`endpoint not applicable in the environment 'production'`. Only
+`export-schema` works there, and only for reading. An earlier version of this
+file documented an `import-schema --environment production` command; it fails,
+harmlessly, without changing anything.
+
+Production schema is *promoted from development*, through the CloudKit Console:
+
+1. <https://icloud.developer.apple.com/dashboard/>
+2. Choose the **iCloud.com.Vardaan.Fathom** container.
+3. **Schema → Deploy Schema Changes…**
+4. Read the diff it shows. It is the development schema minus the production
+   one, which — the first time — is every record type in `schema.ckdb`.
+5. Confirm.
+
+Deploying from the console is what makes the additive-only rule bite: whatever
+is in development at that moment is what production gets, permanently. Check
+`export-schema --environment development` against `schema.ckdb` first, so a
+half-finished experiment left in development does not go along with it.
 
 TestFlight and App Store builds always use the **production** environment, so
 this has to happen before any build goes to a tester. Otherwise the tester's

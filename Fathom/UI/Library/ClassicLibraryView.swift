@@ -95,9 +95,15 @@ struct ClassicLibraryView: View {
                 book: recentBook,
                 progress: viewModel.recentBookProgress,
                 onTap: {
-                  guard let book = viewModel.recentFullBook,
-                    downloadMonitor.isReadable(bookFilename: book.localFilename)
-                  else { return }
+                  guard let book = viewModel.recentFullBook else { return }
+                  // Same as the home screen's tile: a guard here made the tap
+                  // do nothing while the file was still arriving. Ask for it
+                  // and open; the loader waits for the download.
+                  if !downloadMonitor.isReadable(bookFilename: book.localFilename),
+                    let filename = book.localFilename
+                  {
+                    downloadMonitor.requestDownload(filename: filename)
+                  }
                   UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
                   readerBook = book
                 }

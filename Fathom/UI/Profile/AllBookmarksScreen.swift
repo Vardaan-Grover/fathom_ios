@@ -90,6 +90,11 @@ struct AllBookmarksScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: BookmarkStore.didChangeNotification)) { _ in
             loadBookmarks()
         }
+        // Changes from another device arrive through sync, not BookmarkStore.
+        .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
+            directory.reload()
+            loadBookmarks()
+        }
     }
 
     private var filterBar: some View {

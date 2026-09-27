@@ -31,7 +31,7 @@
 		<dict>
 			<!-- UserDefaults is used only for this app's own state: theme
 			     selection, reader/vocabulary preferences, notification
-			     settings, CloudKit change tokens, and migration flags. No
+			     settings, sync timestamps, per-device file preferences, and migration flags. No
 			     app-group or cross-app access. -->
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>

@@ -97,6 +97,11 @@ struct AllHighlightsScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: HighlightStore.didChangeNotification)) { _ in
             loadHighlights()
         }
+        // Changes from another device arrive through sync, not HighlightStore.
+        .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
+            directory.reload()
+            loadHighlights()
+        }
     }
 
     private var filterBar: some View {

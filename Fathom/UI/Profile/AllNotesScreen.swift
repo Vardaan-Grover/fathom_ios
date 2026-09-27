@@ -105,6 +105,11 @@ struct AllNotesScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: NoteStore.didChangeNotification)) { _ in
             loadNotes()
         }
+        // Changes from another device arrive through sync, not NoteStore.
+        .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
+            directory.reload()
+            loadNotes()
+        }
     }
 
     // MARK: - Filter bar

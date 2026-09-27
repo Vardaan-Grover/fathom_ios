@@ -1,6 +1,6 @@
 # Sync Conflict Policy
 
-Status: **implemented** — every one-way door is closed; the CloudKit schema can now be deployed. The tombstone purge policy in §4 is still outstanding, but is a maintenance concern rather than a schema change
+Status: **implemented**, with the corrections recorded in §7. The tombstone purge policy in §4 is still outstanding, but is a maintenance concern rather than a schema change.
 Scope: the CloudKit private-database sync in `Fathom/Data/Sync/`, as part of the
 migration from the hand-rolled `SyncEngine` to `CKSyncEngine`.
 
@@ -35,6 +35,13 @@ overwritten and gone.
 server-side from a single clock.** Keep the local `modifiedAt` column — it is
 still needed to drive the local change-detection queue
 (`cloudkit_pending_changes`) — but it stops being the conflict arbiter.
+
+> **As built (see §7):** row-backed records follow this — a contended
+> last-writer-wins field keeps the server's value, and no client clock is
+> consulted — *provided the merge has an ancestor*. Three places still order
+> by a client timestamp: the no-ancestor fallback (`modifiedAt`), the reading
+> position (`savedAt`), and the settings and profile singletons
+> (`modifiedAt`). `CKRecord.modificationDate` is not used anywhere.
 
 ### 0.2 Merge three-way, against the ancestor
 
@@ -87,7 +94,8 @@ by construction. It is the right shape for anything that accumulates.
 
 | Record type | User-editable? | Deletes | Class | Notes |
 |---|---|---|---|---|
-| `Book` — import metadata (`title`, `author`, `format`, `localFilename`, `contentHash`, `importDate`, `language`, `publisher`, `estimated*`) | No | Hard | **Immutable** | Derived from the EPUB at import. Identical on every device by construction; a conflict here means a bug, and should be logged rather than merged. |
+| `Book` — file metadata (`format`, `localFilename`, `contentHash`, `importDate`, `language`, `publisher`, `estimated*`) | No | Hard | **Immutable** | Derived from the EPUB at import. Identical on every device by construction; a conflict here means a bug, and should be logged rather than merged. |
+| `Book` — `title`, `author`, `description`, `coverFilename` | Yes | Hard | **LWW-Field** | Editable at import and from the book's edit sheet. These were once listed as immutable, which reverted a rename (and a cover change, whose old file was already deleted) on every conflict. |
 | `BookCompletion` (`rating`, `reflection`, `reflectionImageFilename`, `finishedAt`) | Yes | Hard (cascades with the book) | **LWW-Field** | Split out of `Book` in v33 — see §3.1. |
 | `Book` — `lastReadAt` | Indirectly | Hard | **Max wins** | A high-water mark, not a value. `max(local, remote)`. Never LWW. |
 | `Book` — `preprocessingStatus`, `aiEnabled`, `backendBookID` | No | Hard | **Local-only, do not sync** | See §3.2. |
@@ -97,10 +105,10 @@ by construction. It is the right shape for anything that accumulates.
 | `Note` | Yes | Soft | **Tombstone-wins** | `noteContent` is LWW-Field among the live fields; delete still wins over an edit. |
 | `Bookmark` | Yes | Soft | **Tombstone-wins** | Effectively immutable except for `deletedAt` — a bookmark is created or removed, never edited. |
 | `SavedWord` | Yes | Soft | **Tombstone-wins** | `pinnedAt` is LWW-Field. `fullDictionaryJSON` is immutable (deterministic lookup result). |
-| `ReadingActivity` | No | None | **Per-device counter** | Keyed on `(bookID, date, deviceID)` as of migration v30; totals are `SUM` across devices. See §3.4. |
+| `ReadingActivity` | No | Hard (cascades with the book) | **Per-device counter** | Keyed on `(bookID, date, deviceID)` as of migration v30; totals are `SUM` across devices. See §3.4. |
 | `ReadingPosition` | No | None | **LWW-Field + furthest** | `furthestProgression` added; position and progress resolve independently. The backwards-jump prompt is still deferred. See §3.6. |
 | `ReaderSettings` | Yes | None | **LWW-Blob** | Accepted tradeoff — see §3.7. |
-| `UserProfile` | Yes | None | **LWW-Field** | Three fields (`displayName`, `avatarEmoji`, `avatarColorHex`). Per-field is free here; do it rather than blob. |
+| `UserProfile` | Yes | None | **LWW-Blob** (as built) | Three fields (`displayName`, `avatarEmoji`, `avatarColorHex`). The merge table lists them per field, but the store applies a remote profile whole, by its `modifiedAt`, so in practice the newer profile wins as a unit. |
 | `AIConversation` | n/a | None | **Do not deploy** | See §3.8. |
 
 ---
@@ -322,28 +330,39 @@ schema until the feature is real and its shape is settled.
   device that was offline during the delete cannot distinguish "deleted
   remotely" from "not yet synced" and will resurrect the row.
 - **Delete beats edit.** A tombstone wins over a concurrent edit regardless of
-  which timestamp is later. Undelete, if it ever exists, must be an explicit
-  user action that clears `deletedAt` — never an implicit consequence of merge
-  ordering.
+  which timestamp is later. Undelete must be an explicit user action that
+  clears `deletedAt` — never an implicit consequence of merge ordering. The
+  merge tells the two apart with the ancestor: if one side cleared the marker
+  and the other left it alone, the clear wins (re-adding a book to a shelf);
+  if both sides touched it, the delete wins.
 - **Tombstones need a purge policy.** They currently accumulate without bound.
   Proposal: purge locally after 90 days, and never purge a tombstone newer than
   the oldest device's last successful sync. Ninety days is comfortably longer
   than any plausible offline period.
-- **`Book` deletion stays hard**, because it also removes a file from the
-  ubiquity container. Order matters: confirm the CloudKit record deletion
-  first, then remove the file. Reversing that orphans the file if the record
-  delete fails.
+- **`Book` deletion stays hard**, because it also removes files. The local
+  row is deleted first, then the files; the reverse left a book on every
+  device whose file was gone. Deleting a book cascades to its annotations,
+  completion, memberships and reading activity, and every one of those tables
+  has a delete trigger (v35), so their CloudKit records go too. The reading
+  position is removed with it.
+- **A save that fails with `unknownItem`** on a hard-deleted type (book,
+  shelf, completion, membership) means another device deleted it. It is
+  deleted locally, never re-uploaded.
 
 ---
 
-## 5. What is out of scope here
+## 5. Files
 
-`Book.localFilename` points at an EPUB in the iCloud Documents container, which
-syncs through a **different mechanism** than CloudKit records — `ICloudFileStore`
-and `ICloudDownloadMonitor`, not `CKRecord`. A record can therefore arrive
-before its file exists locally. That is a real consistency problem with its own
-state machine ("record present, file not yet downloaded"), and it deserves its
-own document rather than a row in this table.
+`Book.localFilename`, `coverFilename` and `reflectionImageFilename` point at
+files that travel through **iCloud Drive**, not CloudKit. Every file has a
+primary copy in Application Support — never evicted by iOS, so the library is
+always downloaded and survives an account change — and a mirrored copy in the
+ubiquity container. `BookFileSync` reconciles the two for every referenced
+file: upload what is only local, copy down what is only in iCloud, and evict
+the container's local copy once ours is primary. A record can still arrive
+before its file; the book then opens once the file lands. A reader can remove
+a book from one device ("Remove Download"), which keeps it in iCloud and
+brings it back when opened.
 
 ---
 
@@ -375,3 +394,30 @@ One further change landed with §3.6 that this table did not anticipate:
 file, so a crash between the two writes left a position stamped with the wrong
 time — and that timestamp decided sync conflicts. All three fields now live in
 one atomically-replaced file, with the legacy shape upgraded on first read.
+
+---
+
+## 7. Corrections after the first real-world audit
+
+Recorded here because each one changed behaviour the sections above describe.
+
+- **The three-way merge had no ancestor.** The metadata cache stored
+  `encodeSystemFields` only, uploads were built on it, and CloudKit derives a
+  conflict's `ancestorRecord` from that base — so every ancestor arrived with
+  metadata and no values, and the server won every conflict. The cache now
+  stores the full record (`encode(with:)`). The merge takes this device's
+  *current* state as the client side, not the record that was sent, and never
+  edits the server record in place. An ancestor with no values is treated as
+  no ancestor.
+- **Writes made by sync are invisible to the triggers** (`sync_apply_context`,
+  migration v35): no push is queued and `modifiedAt` is not restamped, so the
+  other device's time survives.
+- **Account changes keep the library.** A sign-in — first, or to a different
+  Apple ID — uploads everything on the device into that account, merging with
+  whatever it holds. A sign-out keeps the library on the device.
+- **A zone purged from Settings is not re-uploaded.** The library stays on the
+  device; changes made afterwards sync again. A zone lost any other way
+  (deleted, or an encrypted-data reset) is re-uploaded in full, reading
+  positions, settings and profile included.
+- **Settings and profile keep the remote edit time** when applied, instead of
+  stamping the time of the apply.

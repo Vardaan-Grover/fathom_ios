@@ -42,6 +42,11 @@ struct HighlightsListView: View {
             guard let changedID = notification.object as? UUID, changedID == bookID else { return }
             loadHighlights()
         }
+        // Sync writes straight to SQLite, bypassing HighlightStore, so its
+        // notification never fires for changes made on another device.
+        .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
+            loadHighlights()
+        }
     }
 
     // MARK: - Header

@@ -413,6 +413,12 @@ extension ReaderScreen {
             bookmarks = BookmarkStore.shared.bookmarks(forBookID: bookID)
             parsedBookmarkLocators = parseBookmarkLocators(bookmarks)
         }
+        // A bookmark made on another device arrives through sync, which does
+        // not post BookmarkStore's notification.
+        .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
+            bookmarks = BookmarkStore.shared.bookmarks(forBookID: bookID)
+            parsedBookmarkLocators = parseBookmarkLocators(bookmarks)
+        }
         .onAppear { setupOnAppear() }
         
         .translationPresentation(

@@ -1,5 +1,12 @@
 # Fathom iOS — Codebase Audit
 
+> **Sync sections are historical.** Everything below about CloudKit sync
+> describes the hand-rolled engine that `CKSyncEngine` replaced
+> (`SyncEngine+Pull.swift`, `.changedKeys`, per-record pushes). For the current
+> design see `Fathom/Data/Sync/`, `docs/sync-conflict-policy.md` (including its
+> §7 corrections) and `CloudKit/README.md`.
+
+
 Audit date: 2026-07-08. Scope: all ~150 Swift files (~30k lines) across App, Data, Domain, Presentation, ReaderEngine, ContextEngine, and UI layers. No changes were made — this is a findings report only.
 
 Severity legend: 🔴 Critical (data loss / broken feature) · 🟠 High (real bug or major perf cost) · 🟡 Medium (bad practice, latent bug) · ⚪ Low (hygiene / cleanup)

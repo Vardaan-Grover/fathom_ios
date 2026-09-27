@@ -542,9 +542,13 @@ struct HomeScreen: View {
             guard let bookID = note.userInfo?["bookID"] as? UUID else { return }
             Task {
                 let books = await bookRepository.listBooks()
-                guard let book = books.first(where: { $0.id == bookID }),
-                      ICloudDownloadMonitor.shared.isReadable(bookFilename: book.localFilename)
-                else { return }
+                guard let book = books.first(where: { $0.id == bookID }) else { return }
+                // Open even when the file is still arriving — the loader waits
+                // for it — rather than silently ignoring the request.
+                if !ICloudDownloadMonitor.shared.isReadable(bookFilename: book.localFilename),
+                   let filename = book.localFilename {
+                    ICloudDownloadMonitor.shared.requestDownload(filename: filename)
+                }
                 await MainActor.run { readerBook = book }
             }
         }

@@ -26,6 +26,11 @@ struct BookmarksListView: View {
             guard let changedID = notification.object as? UUID, changedID == bookID else { return }
             loadBookmarks()
         }
+        // Sync writes straight to SQLite, bypassing BookmarkStore, so its
+        // notification never fires for changes made on another device.
+        .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
+            loadBookmarks()
+        }
     }
 
     // MARK: - Header

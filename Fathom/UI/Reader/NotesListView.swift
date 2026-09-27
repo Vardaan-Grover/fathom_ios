@@ -41,6 +41,11 @@ struct NotesListView: View {
             guard let changedID = notification.object as? UUID, changedID == bookID else { return }
             loadNotes()
         }
+        // Sync writes straight to SQLite, bypassing NoteStore, so its
+        // notification never fires for changes made on another device.
+        .onReceive(NotificationCenter.default.publisher(for: .fathomSyncDidApplyRemoteChanges)) { _ in
+            loadNotes()
+        }
     }
 
     // MARK: - Header

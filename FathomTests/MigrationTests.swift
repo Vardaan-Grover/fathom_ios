@@ -52,8 +52,11 @@ struct MigrationTests {
                       "bookmarks", "saved_words", "readingActivity"] {
             #expect(triggers.contains("\(table)_ck_insert"), "missing insert trigger for \(table)")
             #expect(triggers.contains("\(table)_ck_update"), "missing update trigger for \(table)")
+            // v35: a cascade from a deleted book must delete these records in
+            // CloudKit too, not leave them behind.
+            #expect(triggers.contains("\(table)_ck_delete"), "missing delete trigger for \(table)")
         }
-        #expect(triggers.contains("books_ck_delete"))
+        #expect(triggers.contains("bookCompletions_ck_delete"))
         #expect(triggers.contains("bookCategoryMemberships_ck_insert"))
         #expect(triggers.contains("bookCategoryMemberships_ck_delete"))
     }

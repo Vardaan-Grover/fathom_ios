@@ -14,9 +14,10 @@ import Foundation
 /// replaced atomically, at least fails as a unit: either the new state is
 /// there or the old one is.
 ///
-/// The file lives in Application Support, which is local to the device and
-/// excluded from iCloud. Sync state is per-device by definition — syncing it
-/// would be a category error.
+/// The file lives in Application Support: never synced (sync state is
+/// per-device by definition), but included in device backups along with the
+/// database it describes. Restoring both together is consistent — the engine
+/// fetches whatever changed since the backup.
 nonisolated enum SyncStateStore {
 
     private static let filename = "cksyncengine-state.json"
@@ -65,9 +66,9 @@ nonisolated enum SyncStateStore {
 
     // MARK: - Reset
 
-    /// Clears persisted state. Called when the iCloud account changes — the
-    /// tokens and pending changes belong to the previous account's zone and are
-    /// meaningless (and misleading) against a different one.
+    /// Clears persisted state. Not called on account changes: CKSyncEngine
+    /// resets its own state for those and immediately persists the new one,
+    /// which deleting the file could race.
     static func reset() {
         guard let url = fileURL else { return }
         try? FileManager.default.removeItem(at: url)

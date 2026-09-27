@@ -56,13 +56,14 @@ nonisolated enum SyncBootstrap {
             await MainActor.run {
                 ICloudDownloadMonitor.shared.start()
             }
-            mark = phase("monitor start", mark)
-
-            await LocalToICloudMigration.shared.migrateIfNeeded()
-            _ = phase("file migration", mark)
+            _ = phase("monitor start", mark)
         } else {
             AppLogger.log(tag: "SyncBootstrap", "iCloud Drive unavailable — book files stay local")
         }
+
+        // 4. Keep every referenced file local and mirrored. Runs either way:
+        //    without iCloud Drive it only reports which books can open.
+        BookFileSync.shared.start()
 
         AppLogger.log(tag: "SyncBootstrap",
                       "iCloud sync started (\(Int(Date().timeIntervalSince(began) * 1000))ms total)")
@@ -90,9 +91,9 @@ nonisolated enum ICloudIdentityObserver {
                     ICloudDownloadMonitor.shared.stop()
                     if available { ICloudDownloadMonitor.shared.start() }
                 }
-                if available {
-                    await LocalToICloudMigration.shared.migrateIfNeeded()
-                }
+                // A new Apple ID has an empty container: this uploads the
+                // local library into it.
+                BookFileSync.shared.start()
             }
         }
     }

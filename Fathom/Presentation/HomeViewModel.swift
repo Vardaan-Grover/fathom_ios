@@ -246,9 +246,10 @@ class HomeViewModel: ObservableObject {
         book.description = customization.description.isEmpty ? nil : customization.description
 
         if customization.isCoverChanged {
-            if let old = book.coverFilename, let url = BookFileStore.coverURL(for: old) {
-                try? FileManager.default.removeItem(at: url)
-            }
+            // Removed here and from iCloud Drive, so the old cover does not
+            // linger on the reader's other devices or in their storage.
+            BookFileStore.deleteFiles(bookFilename: nil, coverFilename: book.coverFilename,
+                                      reflectionFilename: nil)
             if let data = customization.coverImageData,
                let filename = try? BookFileStore.saveCoverImage(data, coverID: UUID()) {
                 book.coverFilename = filename

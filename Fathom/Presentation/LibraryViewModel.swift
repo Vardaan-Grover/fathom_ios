@@ -226,29 +226,4 @@ final class LibraryViewModel: ObservableObject {
         pendingCustomization = nil
         pendingLocalURL = nil
     }
-
-    func deleteBooks(at offsets: IndexSet) async {
-        let booksToDelete = offsets.map { books[$0] }
-
-        for book in booksToDelete {
-            // 1. Delete physical file if it exists
-            if let url = book.localURL {
-                do {
-                    if FileManager.default.fileExists(atPath: url.path) {
-                        try FileManager.default.removeItem(at: url)
-                        AppLogger.log(
-                            tag: "LibraryViewModel", "Deleted exact local file at \(url.path)")
-                    }
-                } catch {
-                    AppLogger.logError(tag: "LibraryViewModel", error)
-                }
-            }
-
-            // 2. Remove from repository (database)
-            await bookRepo.deleteBook(book)
-        }
-
-        // 3. Refresh list
-        books = await bookRepo.listBooks()
-    }
 }

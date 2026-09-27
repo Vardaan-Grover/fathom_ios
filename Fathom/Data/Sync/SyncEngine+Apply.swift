@@ -676,17 +676,25 @@ extension SyncEngine {
         }
 
         do {
-            let deleted = try await DatabaseManager.shared.dbQueue.write { db -> Bool in
+            let (deleted, files) = try await DatabaseManager.shared.dbQueue.write { db -> (Bool, [BookFileRef]) in
                 try SyncApplyContext.perform(db) {
+                    // Read before deleting: the row is the only record of
+                    // which files were the book's.
+                    let files: [BookFileRef] = try type == CKRecordType.book
+                        ? Self.fileRefs(forBookID: localID, db: db)
+                        : []
                     let changed = try Self.deleteRow(db: db, type: type, localID: localID)
                     SyncEngine.removeFromQueue(db: db, type: type, id: localID)
                     try SyncRecordMetadata.delete(db: db, type: type, recordName: name)
                     try SyncDeferredApplies.remove(db: db, type: type, recordName: name)
-                    return changed
+                    return (changed, files)
                 }
             }
             if type == CKRecordType.book, let bookID = UUID(uuidString: localID) {
                 ReadingStateStore.shared.removeState(forBookID: bookID, notifySync: false)
+                // The deleting device removed the iCloud copies; this removes
+                // ours (and any iCloud copy it could not).
+                ICloudFileStore.shared.delete(files)
             }
             return deleted
         } catch {
@@ -721,6 +729,19 @@ extension SyncEngine {
         case CKRecordType.readingActivity: return try ReadingActivity.deleteOne(db, key: uuid)
         default:                           return false
         }
+    }
+
+    /// The files a book row points at, including its reflection image.
+    nonisolated private static func fileRefs(forBookID localID: String, db: Database) throws -> [BookFileRef] {
+        guard let uuid = UUID(uuidString: localID),
+              let book = try Book.fetchOne(db, key: uuid) else { return [] }
+        var refs: [BookFileRef] = []
+        if let name = book.localFilename { refs.append(BookFileRef(kind: .book, filename: name)) }
+        if let name = book.coverFilename { refs.append(BookFileRef(kind: .cover, filename: name)) }
+        if let name = try BookCompletion.fetchOne(db, key: uuid)?.reflectionImageFilename {
+            refs.append(BookFileRef(kind: .reflection, filename: name))
+        }
+        return refs
     }
 
     private func forgetCachedRecord(type: String, recordName: String) async {

@@ -10,13 +10,17 @@ struct StorageUsageScreen: View {
     @State private var coverBytes: Int64 = 0
     @State private var rows: [BookRow] = []
     @State private var loading = true
+    @State private var showNotInICloudAlert = false
 
-    struct BookRow: Identifiable {
+    nonisolated struct BookRow: Identifiable, Sendable {
         let id: UUID
         let title: String
         let author: String?
         let book: Book
         let bytes: Int64
+        /// Whether this device holds its own copy. False only for a book the
+        /// reader removed with "Remove Download", or one still arriving.
+        let isOnDevice: Bool
     }
 
     var body: some View {
@@ -45,14 +49,38 @@ struct StorageUsageScreen: View {
                                 }
                             }
                             Spacer()
-                            Text(byteFormatter.string(fromByteCount: row.bytes))
-                                .font(.system(size: 13, weight: .medium).monospacedDigit())
-                                .foregroundStyle(.secondary)
+                            if row.isOnDevice {
+                                Text(byteFormatter.string(fromByteCount: row.bytes))
+                                    .font(.system(size: 13, weight: .medium).monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Label("In iCloud", systemImage: "icloud")
+                                    .labelStyle(.titleAndIcon)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .padding(.vertical, 2)
+                        .swipeActions(edge: .trailing) {
+                            if let filename = row.book.localFilename {
+                                if row.isOnDevice {
+                                    Button("Remove Download", systemImage: "icloud.and.arrow.up") {
+                                        removeDownload(filename)
+                                    }
+                                    .tint(.orange)
+                                } else {
+                                    Button("Download", systemImage: "icloud.and.arrow.down") {
+                                        ICloudDownloadMonitor.shared.requestDownload(filename: filename)
+                                    }
+                                    .tint(.blue)
+                                }
+                            }
+                        }
                     }
                 } header: {
                     SectionHeader("By Book")
+                } footer: {
+                    Text("Every book stays downloaded so it opens offline. Swipe to remove one from this device — it stays in iCloud and downloads again when you open it.")
                 }
 
                 Section {
@@ -82,6 +110,20 @@ struct StorageUsageScreen: View {
         .contentMargins(.bottom, 90, for: .scrollContent)
         .task { await load() }
         .refreshable { await load() }
+        .alert("Not in iCloud yet", isPresented: $showNotInICloudAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("This book hasn't finished uploading to iCloud, so this device holds the only copy. Try again once it has uploaded.")
+        }
+    }
+
+    private func removeDownload(_ filename: String) {
+        Task {
+            let removed = await BookFileSync.shared.removeDownload(
+                BookFileRef(kind: .book, filename: filename))
+            if !removed { showNotInICloudAlert = true }
+            await load()
+        }
     }
 
     // MARK: - Summary
@@ -117,60 +159,18 @@ struct StorageUsageScreen: View {
         loading = true
         defer { loading = false }
 
-        // Run on a background task so we don't block the main thread on FS I/O.
-        let result = await Task.detached(priority: .userInitiated) { () -> (Int64, Int64, [BookRow]) in
-            let books = (try? DatabaseManager.shared.dbQueue.read { db in
-                try Book.fetchAll(db)
-            }) ?? []
-
-            var rows: [BookRow] = []
-            var bookBytesTotal: Int64 = 0
-            for book in books {
-                var bytes: Int64 = 0
-                if let url = book.localURL {
-                    bytes = Self.fileSize(url)
-                }
-                bookBytesTotal &+= bytes
-                rows.append(BookRow(
-                    id: book.id,
-                    title: book.title,
-                    author: book.author,
-                    book: book,
-                    bytes: bytes
-                ))
-            }
-            rows.sort { $0.bytes > $1.bytes }
-
-            let coverBytes = Self.directorySize(ICloudFileStore.shared.coversDirectory)
-            return (bookBytesTotal + coverBytes, coverBytes, rows)
+        let books = await Task.detached(priority: .userInitiated) {
+            (try? DatabaseManager.shared.dbQueue.read { db in try Book.fetchAll(db) }) ?? []
         }.value
+
+        // Sized off the main thread through a nonisolated helper: a static
+        // func on this View would be main-actor isolated and pull the file
+        // I/O straight back onto the main thread.
+        let result = await CoverImageLoader.offMain { StorageScan.scan(books) }
 
         self.totalBytes = result.0
         self.coverBytes = result.1
         self.rows = result.2
-    }
-
-    private static func fileSize(_ url: URL) -> Int64 {
-        guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
-        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
-        return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-    }
-
-    private static func directorySize(_ url: URL?) -> Int64 {
-        guard let url else { return 0 }
-        guard let enumerator = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ) else { return 0 }
-        var total: Int64 = 0
-        for case let fileURL as URL in enumerator {
-            if let attrs = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
-               let size = attrs.fileSize {
-                total &+= Int64(size)
-            }
-        }
-        return total
     }
 
     private var byteFormatter: ByteCountFormatter {
@@ -178,5 +178,55 @@ struct StorageUsageScreen: View {
         f.countStyle = .file
         f.allowedUnits = [.useKB, .useMB, .useGB]
         return f
+    }
+}
+
+/// Measures what the library occupies on this device. `nonisolated` so the
+/// scan really runs where it is sent.
+nonisolated enum StorageScan {
+
+    static func scan(_ books: [Book]) -> (Int64, Int64, [StorageUsageScreen.BookRow]) {
+        let store = ICloudFileStore.shared
+        var rows: [StorageUsageScreen.BookRow] = []
+        var bookBytesTotal: Int64 = 0
+        for book in books {
+            var bytes: Int64 = 0
+            var onDevice = false
+            if let filename = book.localFilename {
+                let ref = BookFileRef(kind: .book, filename: filename)
+                if let url = store.localURL(ref), FileManager.default.fileExists(atPath: url.path) {
+                    onDevice = true
+                    bytes = fileSize(url)
+                }
+            }
+            bookBytesTotal &+= bytes
+            rows.append(StorageUsageScreen.BookRow(
+                id: book.id, title: book.title, author: book.author,
+                book: book, bytes: bytes, isOnDevice: onDevice))
+        }
+        rows.sort { $0.bytes > $1.bytes }
+
+        let coverBytes = directorySize(store.localDirectory(.cover))
+        return (bookBytesTotal + coverBytes, coverBytes, rows)
+    }
+
+    static func fileSize(_ url: URL) -> Int64 {
+        guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    static func directorySize(_ url: URL?) -> Int64 {
+        guard let url,
+              let enumerator = FileManager.default.enumerator(
+                at: url, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles])
+        else { return 0 }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total &+= Int64(size)
+            }
+        }
+        return total
     }
 }

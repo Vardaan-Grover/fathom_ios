@@ -8,7 +8,7 @@ import Foundation
 /// This helper falls back through progressively less ideal directories
 /// instead; the app degrades (state may not persist this run) but keeps
 /// running.
-enum AppFiles {
+nonisolated enum AppFiles {
     /// Application Support, created if needed. Falls back to Caches, then the
     /// temporary directory, rather than crashing.
     static func applicationSupportDirectory() -> URL {

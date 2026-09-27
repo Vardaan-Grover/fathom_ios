@@ -589,6 +589,17 @@ struct BookCompletionScreen: View {
 
             await bookRepository.saveCompletion(updated)
 
+            // A replaced or removed reflection image is deleted, here and in
+            // iCloud Drive; it used to stay in the reader's iCloud storage.
+            // Not when saving a new image failed: then the old one is all
+            // there is.
+            let previousImage = completion?.reflectionImageFilename
+            let replacedOrRemoved = updated.reflectionImageFilename != nil || attachedImage == nil
+            if let previousImage, previousImage != updated.reflectionImageFilename, replacedOrRemoved {
+                BookFileStore.deleteFiles(bookFilename: nil, coverFilename: nil,
+                                          reflectionFilename: previousImage)
+            }
+
             await MainActor.run {
                 withAnimation(.easeOut(duration: 0.2)) {
                     screenAlpha = 0

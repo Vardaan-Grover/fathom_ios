@@ -1,282 +1,338 @@
 import Foundation
 import os
 
-/// Manages all file paths and write operations for books and covers.
+/// The kinds of file a book carries, and where each lives.
+nonisolated enum BookFileKind: String, CaseIterable, Sendable {
+    case book
+    case cover
+    case reflection
+
+    /// The directory name, locally and in the iCloud container alike.
+    var directoryName: String {
+        switch self {
+        case .book:       return "Books"
+        case .cover:      return "Covers"
+        case .reflection: return "Reflections"
+        }
+    }
+}
+
+/// One file a book record points at.
+nonisolated struct BookFileRef: Hashable, Sendable {
+    let kind: BookFileKind
+    let filename: String
+}
+
+/// Paths and file operations for EPUBs, covers and reflection images.
 ///
-/// When iCloud is available (user signed into iCloud and entitlement present),
-/// files live inside the app's ubiquity container:
-///   <iCloudContainer>/Documents/Books/<filename>
-///   <iCloudContainer>/Documents/Covers/<filename>
+/// **Local first.** Every file's primary copy lives in Application Support on
+/// this device — `Books/`, `Covers/`, `Reflections/` — and that is the copy the
+/// app reads. iOS never evicts Application Support, so a book on the shelf
+/// always opens, offline, and survives signing out of iCloud or switching
+/// Apple ID.
 ///
-/// The ubiquity container is already private to the signed-in Apple ID, so
-/// these paths carry no further per-user segment. An earlier version scoped
-/// them by Supabase user ID, which meant signing in with a different email on
-/// a second device produced a different folder inside the *same* Apple ID
-/// container — the library silently would not sync. Apple ID is the only
-/// identity iCloud actually keys on, so it is the only one used here.
+/// **iCloud Drive is the transport.** Each local file is mirrored into the
+/// app's ubiquity container (`<container>/Documents/<Kind>/`) so other
+/// devices can fetch it. Once a mirrored copy has uploaded, its local
+/// materialisation is evicted, so a file does not take up space twice.
+/// `BookFileSync` runs that reconciliation; this type provides the paths and
+/// the coordinated primitives.
 ///
-/// When iCloud is unavailable the store falls back to ApplicationSupportDirectory,
-/// preserving the original layout so existing users lose nothing.
+/// Files previously lived *only* in the container, where iOS could evict them
+/// under storage pressure and signing out removed them. `BookFileSync` copies
+/// any such file into local storage on first run.
 ///
-/// Call `configure()` once at launch (see `SyncBootstrap`). All other call
-/// sites just use the shared instance.
-///
-/// **Deliberately `nonisolated`.** Every method here is path arithmetic or file
-/// I/O, none of which wants the main thread — and leaving the isolation
-/// unwritten was actively harmful, because `SWIFT_DEFAULT_ACTOR_ISOLATION` is
-/// MainActor: an unannotated type is a *main-actor* type. Callers that went to
-/// real trouble to get off the main thread (`SyncBootstrap`, and every
-/// `Task.detached` that loads a cover) hopped straight back here on the first
-/// call, and one of those calls blocks in `pread` until iCloud materialises the
-/// file. That is what froze the app for 14 seconds on a clean install.
+/// **Deliberately `nonisolated`.** `SWIFT_DEFAULT_ACTOR_ISOLATION` is MainActor,
+/// so an unannotated type would be a main-actor type, and callers off the main
+/// thread would hop back onto it for file I/O. `MainActorIsolationTests` pins
+/// this down.
 nonisolated final class ICloudFileStore: Sendable {
 
     static let shared = ICloudFileStore()
 
-    // MARK: - State
+    static let containerIdentifier = "iCloud.com.Vardaan.Fathom"
 
-    /// The resolved ubiquity container, or nil when iCloud is unavailable.
-    ///
-    /// Written once at launch and read from any thread thereafter, so it is
-    /// behind a lock rather than relying on an actor to serialise it.
+    /// The resolved ubiquity container, or nil when iCloud Drive is
+    /// unavailable. Re-resolved when the iCloud identity changes.
     private let container = OSAllocatedUnfairLock<URL?>(initialState: nil)
-
-    private var _containerURL: URL? {
-        get { container.withLock { $0 } }
-        set { container.withLock { $0 = newValue } }
-    }
 
     private init() {}
 
     // MARK: - Lifecycle
 
-    /// Resolves the iCloud container and prepares its directories.
-    /// Must be called before any book is imported or opened.
+    /// Resolves the iCloud container and prepares its directories. Safe to
+    /// call again — `ICloudIdentityObserver` does so when the signed-in
+    /// Apple ID changes.
+    ///
+    /// `url(forUbiquityContainerIdentifier:)` does real I/O (~870ms on a clean
+    /// install); never call this on the main thread.
     func configure() {
-        // url(forUbiquityContainerIdentifier:) does real I/O — measured at
-        // ~870ms on a clean install — so this must not run on the main thread.
-        // The class being `nonisolated` is what actually guarantees that; the
-        // caller being off the main actor is not enough on its own.
-        _containerURL = FileManager.default.url(
-            forUbiquityContainerIdentifier: "iCloud.com.Vardaan.Fathom"
-        )
+        let url = FileManager.default.url(forUbiquityContainerIdentifier: Self.containerIdentifier)
+        container.withLock { $0 = url }
 
-        if _containerURL == nil {
-            AppLogger.log(tag: "ICloudFileStore", "iCloud unavailable — using local storage")
+        if url == nil {
+            AppLogger.log(tag: "ICloudFileStore", "iCloud Drive unavailable — files stay local")
         } else {
             AppLogger.log(tag: "ICloudFileStore", "iCloud container resolved")
         }
 
-        // Eagerly create the directories so they are ready for the migrator.
-        createDirectoriesIfNeeded()
+        for kind in BookFileKind.allCases {
+            createDirectory(localDirectory(kind))
+            createDirectory(cloudDirectory(kind))
+        }
     }
 
-    /// Tears down iCloud state.
-    func reset() {
-        _containerURL = nil
+    var isAvailable: Bool { containerURL != nil }
+    var containerURL: URL? { container.withLock { $0 } }
+
+    // MARK: - Directories
+
+    /// Where a kind's primary, always-present copies live.
+    func localDirectory(_ kind: BookFileKind) -> URL? {
+        AppFiles.applicationSupportDirectory()
+            .appendingPathComponent(kind.directoryName, isDirectory: true)
     }
 
-    var isAvailable: Bool { _containerURL != nil }
-    var containerURL: URL? { _containerURL }
-
-    // MARK: - Directory URLs
-
-    /// iCloud path for EPUB files. `nil` when iCloud is unavailable.
-    var booksDirectory: URL? { documentsSubdirectory("Books") }
-
-    /// iCloud path for cover images.
-    var coversDirectory: URL? { documentsSubdirectory("Covers") }
-
-    /// iCloud path for reflection images.
-    var reflectionsDirectory: URL? { documentsSubdirectory("Reflections") }
-
-    private func documentsSubdirectory(_ name: String) -> URL? {
-        guard let container = _containerURL else { return nil }
+    /// Where a kind's mirrored copies live in iCloud Drive, or nil when
+    /// iCloud Drive is unavailable.
+    func cloudDirectory(_ kind: BookFileKind) -> URL? {
+        guard let container = containerURL else { return nil }
         return container
             .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent(name, isDirectory: true)
+            .appendingPathComponent(kind.directoryName, isDirectory: true)
     }
 
-    // MARK: - URL Resolution
+    /// Kept for callers that size or list the covers on this device.
+    var coversDirectory: URL? { localDirectory(.cover) }
 
-    /// Resolves the best available URL for an EPUB filename.
-    ///
-    /// Priority:
-    ///  1. iCloud container path (present whether downloaded or not — use
-    ///     ICloudDownloadMonitor to know the actual download state)
-    ///  2. Legacy local path (ApplicationSupportDirectory/Books/) — used during
-    ///     the brief window before migration completes on first launch.
+    func localURL(_ ref: BookFileRef) -> URL? {
+        localDirectory(ref.kind)?.appendingPathComponent(ref.filename)
+    }
+
+    func cloudURL(_ ref: BookFileRef) -> URL? {
+        cloudDirectory(ref.kind)?.appendingPathComponent(ref.filename)
+    }
+
+    // MARK: - Resolution
+
+    /// The URL to read a file from: the local copy when it exists, otherwise
+    /// the iCloud copy (reading it makes iCloud fetch it), otherwise the local
+    /// path the file will arrive at.
+    func url(for ref: BookFileRef) -> URL? {
+        if let local = localURL(ref), FileManager.default.fileExists(atPath: local.path) {
+            return local
+        }
+        if let cloud = cloudURL(ref), cloudItemExists(cloud) {
+            return cloud
+        }
+        return localURL(ref)
+    }
+
     func bookURL(for filename: String) -> URL? {
-        if let dir = booksDirectory {
-            let icloudURL = dir.appendingPathComponent(filename)
-            // If the iCloud slot already exists (downloaded or placeholder), use it.
-            // Otherwise fall back to local so the app still works mid-migration.
-            if FileManager.default.fileExists(atPath: icloudURL.path) {
-                return icloudURL
-            }
-            if let localURL = legacyLocalBooksDirectory?.appendingPathComponent(filename),
-               FileManager.default.fileExists(atPath: localURL.path) {
-                return localURL
-            }
-            // File hasn't been migrated yet (or is incoming from another device).
-            // Return the iCloud URL so the caller can trigger a download.
-            return icloudURL
-        }
-        // iCloud unavailable — local only
-        return legacyLocalBooksDirectory?.appendingPathComponent(filename)
+        url(for: BookFileRef(kind: .book, filename: filename))
     }
 
-    /// Resolves the best available URL for a cover image filename.
     func coverURL(for filename: String) -> URL? {
-        if let dir = coversDirectory {
-            let icloudURL = dir.appendingPathComponent(filename)
-            if FileManager.default.fileExists(atPath: icloudURL.path) {
-                return icloudURL
-            }
-            if let localURL = legacyLocalCoversDirectory?.appendingPathComponent(filename),
-               FileManager.default.fileExists(atPath: localURL.path) {
-                return localURL
-            }
-            return icloudURL
-        }
-        return legacyLocalCoversDirectory?.appendingPathComponent(filename)
+        url(for: BookFileRef(kind: .cover, filename: filename))
     }
 
-    /// Resolves the best available URL for a reflection image filename.
     func reflectionImageURL(for filename: String) -> URL? {
-        if let dir = reflectionsDirectory {
-            let icloudURL = dir.appendingPathComponent(filename)
-            if FileManager.default.fileExists(atPath: icloudURL.path) {
-                return icloudURL
-            }
-            if let localURL = legacyLocalReflectionsDirectory?.appendingPathComponent(filename),
-               FileManager.default.fileExists(atPath: localURL.path) {
-                return localURL
-            }
-            return icloudURL
-        }
-        return legacyLocalReflectionsDirectory?.appendingPathComponent(filename)
+        url(for: BookFileRef(kind: .reflection, filename: filename))
     }
 
-    // MARK: - Write Operations
+    /// Whether this device holds its own copy of the file.
+    func hasLocalCopy(_ ref: BookFileRef) -> Bool {
+        guard let url = localURL(ref) else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
 
-    /// Copies an EPUB from a security-scoped or temporary URL into the store.
-    /// Returns the destination URL (used by the caller to extract metadata, etc.)
+    // MARK: - Writes (local only — BookFileSync mirrors them)
+
+    /// Copies an EPUB into local storage and returns its URL. Not mirrored to
+    /// iCloud until a book record references it, so a cancelled import never
+    /// uploads anything.
     func copyBook(from sourceURL: URL) throws -> URL {
         let baseName = sourceURL.deletingPathExtension().lastPathComponent
         let ext = sourceURL.pathExtension
         let filename = "\(baseName)-\(UUID().uuidString).\(ext)"
-        let destDir = try effectiveBooksDirectory()
-        let destURL = destDir.appendingPathComponent(filename)
+        let destURL = try requireLocalDirectory(.book).appendingPathComponent(filename)
         try FileManager.default.copyItem(at: sourceURL, to: destURL)
         AppLogger.log(tag: "ICloudFileStore", "Book copied → \(filename)")
         return destURL
     }
 
-    /// Saves raw cover image data and returns the filename.
+    /// Saves cover image data and returns the filename.
     func saveCover(_ data: Data, coverID: UUID) throws -> String {
         let filename = "\(coverID.uuidString).png"
-        let destDir = try effectiveCoversDirectory()
-        try data.write(to: destDir.appendingPathComponent(filename), options: .atomic)
+        try data.write(to: requireLocalDirectory(.cover).appendingPathComponent(filename),
+                       options: .atomic)
         return filename
     }
 
-    /// Saves raw reflection image data and returns the filename.
+    /// Saves reflection image data (JPEG) and returns the filename.
     func saveReflectionImage(_ data: Data, imageID: UUID = UUID()) throws -> String {
-        let filename = "\(imageID.uuidString).png"
-        let destDir = try effectiveReflectionsDirectory()
-        try data.write(to: destDir.appendingPathComponent(filename), options: .atomic)
+        let filename = "\(imageID.uuidString).jpg"
+        try data.write(to: requireLocalDirectory(.reflection).appendingPathComponent(filename),
+                       options: .atomic)
         return filename
     }
 
-    /// Deletes a book's files wherever they are stored.
+    /// Deletes files everywhere: this device and iCloud Drive, which removes
+    /// them from the reader's other devices too.
+    func delete(_ refs: [BookFileRef]) {
+        for ref in refs {
+            if let local = localURL(ref), FileManager.default.fileExists(atPath: local.path) {
+                do {
+                    try FileManager.default.removeItem(at: local)
+                } catch {
+                    AppLogger.log(tag: "ICloudFileStore", "Could not delete \(ref.filename): \(error)")
+                }
+            }
+            if let cloud = cloudURL(ref), cloudItemExists(cloud) {
+                coordinatedDelete(cloud)
+            }
+        }
+        BookFileSync.forgetOffloaded(refs)
+    }
+
     func deleteFiles(bookFilename: String?, coverFilename: String?, reflectionFilename: String?) {
-        let urls = [bookFilename.flatMap(bookURL(for:)),
-                    coverFilename.flatMap(coverURL(for:)),
-                    reflectionFilename.flatMap(reflectionImageURL(for:))]
-        for url in urls.compactMap({ $0 }) {
-            try? FileManager.default.removeItem(at: url)
+        var refs: [BookFileRef] = []
+        if let bookFilename { refs.append(BookFileRef(kind: .book, filename: bookFilename)) }
+        if let coverFilename { refs.append(BookFileRef(kind: .cover, filename: coverFilename)) }
+        if let reflectionFilename {
+            refs.append(BookFileRef(kind: .reflection, filename: reflectionFilename))
+        }
+        delete(refs)
+    }
+
+    // MARK: - iCloud item state
+
+    /// Whether iCloud Drive holds the item, downloaded or not. A file that
+    /// has not been downloaded may appear as a `.<name>.icloud` placeholder
+    /// rather than at its own path.
+    func cloudItemExists(_ url: URL) -> Bool {
+        let fm = FileManager.default
+        return fm.fileExists(atPath: url.path) || fm.fileExists(atPath: placeholderURL(for: url).path)
+    }
+
+    func placeholderURL(for url: URL) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).icloud")
+    }
+
+    /// Whether the iCloud copy is fully present on this device.
+    func cloudItemIsDownloaded(_ url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let values = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
+        else { return false }
+        return values.ubiquitousItemDownloadingStatus == .current
+    }
+
+    /// Whether the iCloud copy has reached the server. An item that is not
+    /// materialised here came *from* the server, so it counts as uploaded.
+    func cloudItemIsUploaded(_ url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return cloudItemExists(url)
+        }
+        let values = try? url.resourceValues(forKeys: [.ubiquitousItemIsUploadedKey])
+        return values?.ubiquitousItemIsUploaded ?? false
+    }
+
+    // MARK: - Coordinated primitives
+    //
+    // Files in a ubiquity container are shared with the iCloud daemon, so every
+    // read and write goes through NSFileCoordinator, as Apple requires.
+
+    /// Copies `source` to `destination`, replacing anything there.
+    @discardableResult
+    func coordinatedCopy(from source: URL, to destination: URL) -> Bool {
+        var coordinationError: NSError?
+        var copyError: Error?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            readingItemAt: source, options: [],
+            writingItemAt: destination, options: .forReplacing,
+            error: &coordinationError
+        ) { readURL, writeURL in
+            let fm = FileManager.default
+            do {
+                try fm.createDirectory(at: writeURL.deletingLastPathComponent(),
+                                       withIntermediateDirectories: true)
+                // Copy beside the destination, then swap in: a reader never
+                // sees a half-written file.
+                let temp = writeURL.deletingLastPathComponent()
+                    .appendingPathComponent(".\(UUID().uuidString).partial")
+                try fm.copyItem(at: readURL, to: temp)
+                if fm.fileExists(atPath: writeURL.path) {
+                    _ = try fm.replaceItemAt(writeURL, withItemAt: temp)
+                } else {
+                    try fm.moveItem(at: temp, to: writeURL)
+                }
+            } catch {
+                copyError = error
+            }
+        }
+        if let error = coordinationError ?? copyError {
+            AppLogger.log(tag: "ICloudFileStore",
+                          "Copy \(source.lastPathComponent) failed: \(error)")
+            return false
+        }
+        return true
+    }
+
+    func coordinatedDelete(_ url: URL) {
+        var coordinationError: NSError?
+        var deleteError: Error?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            writingItemAt: url, options: .forDeleting, error: &coordinationError
+        ) { writeURL in
+            do {
+                try FileManager.default.removeItem(at: writeURL)
+            } catch {
+                deleteError = error
+            }
+        }
+        if let error = coordinationError ?? deleteError {
+            AppLogger.log(tag: "ICloudFileStore",
+                          "Delete \(url.lastPathComponent) from iCloud failed: \(error)")
         }
     }
 
-    /// Asks iCloud to download an EPUB that exists in the container but is not
-    /// yet available locally.
-    func startDownload(filename: String) {
-        guard let url = booksDirectory?.appendingPathComponent(filename) else { return }
+    func startDownloading(_ url: URL) {
         do {
             try FileManager.default.startDownloadingUbiquitousItem(at: url)
-            AppLogger.log(tag: "ICloudFileStore", "Download requested for \(filename)")
         } catch {
-            AppLogger.log(tag: "ICloudFileStore", "Download request failed for \(filename): \(error)")
+            AppLogger.log(tag: "ICloudFileStore",
+                          "Download request failed for \(url.lastPathComponent): \(error)")
         }
     }
 
-    // MARK: - Private Helpers
-
-    private var legacyLocalBooksDirectory: URL? {
-        try? FileManager.default.url(
-            for: .applicationSupportDirectory, in: .userDomainMask,
-            appropriateFor: nil, create: false
-        ).appendingPathComponent("Books", isDirectory: true)
-    }
-
-    private var legacyLocalCoversDirectory: URL? {
-        try? FileManager.default.url(
-            for: .applicationSupportDirectory, in: .userDomainMask,
-            appropriateFor: nil, create: false
-        ).appendingPathComponent("Covers", isDirectory: true)
-    }
-
-    private var legacyLocalReflectionsDirectory: URL? {
-        try? FileManager.default.url(
-            for: .applicationSupportDirectory, in: .userDomainMask,
-            appropriateFor: nil, create: false
-        ).appendingPathComponent("Reflections", isDirectory: true)
-    }
-
-    private func effectiveBooksDirectory() throws -> URL {
-        if let dir = booksDirectory {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            return dir
+    /// Drops the local materialisation of an iCloud item; the item stays in
+    /// iCloud. Used once the primary copy is safely local.
+    func evict(_ url: URL) {
+        do {
+            try FileManager.default.evictUbiquitousItem(at: url)
+        } catch {
+            AppLogger.log(tag: "ICloudFileStore",
+                          "Evict \(url.lastPathComponent) failed: \(error)")
         }
-        return try makeLocalDirectory(named: "Books")
     }
 
-    private func effectiveCoversDirectory() throws -> URL {
-        if let dir = coversDirectory {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            return dir
+    // MARK: - Private
+
+    private func requireLocalDirectory(_ kind: BookFileKind) throws -> URL {
+        guard let dir = localDirectory(kind) else {
+            throw CocoaError(.fileNoSuchFile)
         }
-        return try makeLocalDirectory(named: "Covers")
-    }
-
-    private func effectiveReflectionsDirectory() throws -> URL {
-        if let dir = reflectionsDirectory {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            return dir
-        }
-        return try makeLocalDirectory(named: "Reflections")
-    }
-
-    private func makeLocalDirectory(named name: String) throws -> URL {
-        let appSupport = try FileManager.default.url(
-            for: .applicationSupportDirectory, in: .userDomainMask,
-            appropriateFor: nil, create: true
-        )
-        let dir = appSupport.appendingPathComponent(name, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    private func createDirectoriesIfNeeded() {
-        [booksDirectory, coversDirectory, reflectionsDirectory].forEach { url in
-            guard let url else { return }
-            do {
-                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            } catch {
-                AppLogger.log(tag: "ICloudFileStore",
-                              "Failed to create \(url.lastPathComponent): \(error)")
-            }
+    private func createDirectory(_ url: URL?) {
+        guard let url else { return }
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        } catch {
+            AppLogger.log(tag: "ICloudFileStore",
+                          "Failed to create \(url.lastPathComponent): \(error)")
         }
     }
 }

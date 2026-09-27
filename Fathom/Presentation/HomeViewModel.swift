@@ -227,16 +227,13 @@ class HomeViewModel: ObservableObject {
         Task {
             let allBooks = await bookRepository.listBooks()
             guard let book = allBooks.first(where: { $0.id == id }) else { return }
-            // For iCloud files, removeItem works for both downloaded and
-            // placeholder files (it removes from the cloud too).
-            if let url = book.localURL {
-                try? FileManager.default.removeItem(at: url)
-            }
-            if let coverFilename = book.coverFilename,
-               let coverURL = BookFileStore.coverURL(for: coverFilename) {
-                try? FileManager.default.removeItem(at: coverURL)
-            }
+            let reflection = await bookRepository.completion(forBookID: id)?.reflectionImageFilename
+            // The record first, then the files. The other way round, a crash
+            // in between left a book on every device whose file was gone.
             await bookRepository.deleteBook(book)
+            BookFileStore.deleteFiles(bookFilename: book.localFilename,
+                                      coverFilename: book.coverFilename,
+                                      reflectionFilename: reflection)
         }
     }
 

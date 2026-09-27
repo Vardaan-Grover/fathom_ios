@@ -47,9 +47,19 @@ final class UserProfileStore {
         return decoded
     }
 
-    /// - Parameter suppressSync: pass `true` when applying a CloudKit pull so
-    ///   the SyncEngine doesn't immediately push the profile back up.
-    func save(_ profile: UserProfile, suppressSync: Bool = false) {
+    /// Saves a change made on this device.
+    func save(_ profile: UserProfile) {
+        write(profile, modifiedAt: Date(), suppressSync: false)
+    }
+
+    /// Adopts a profile that arrived from another device, keeping that
+    /// device's edit time rather than stamping now — see
+    /// `ReaderSettingsStore.applyRemote` for why that matters.
+    func applyRemote(_ profile: UserProfile, modifiedAt: Date) {
+        write(profile, modifiedAt: modifiedAt, suppressSync: true)
+    }
+
+    private func write(_ profile: UserProfile, modifiedAt: Date, suppressSync: Bool) {
         guard let data = try? JSONEncoder().encode(profile) else { return }
         do {
             try data.write(to: saveURL, options: .atomic)
@@ -57,7 +67,7 @@ final class UserProfileStore {
             AppLogger.log(tag: "UserProfileStore", "Failed to write profile: \(error)")
         }
 
-        UserDefaults.standard.set(Date(), forKey: modifiedAtKey)
+        UserDefaults.standard.set(modifiedAt, forKey: modifiedAtKey)
 
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)

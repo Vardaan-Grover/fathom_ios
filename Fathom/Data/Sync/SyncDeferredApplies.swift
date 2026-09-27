@@ -31,13 +31,17 @@ nonisolated enum SyncDeferredApplies {
         record.encode(with: coder)
         coder.finishEncoding()
 
+        // A re-park replaces the record (a newer version supersedes an older
+        // one) but keeps the original `deferredAt`. Resetting it on every
+        // attempt — which is what happened when each drain re-parked what it
+        // could not apply — meant nothing ever aged past `maximumAge`, so the
+        // prune never ran and orphans accumulated without bound.
         try db.execute(sql: """
             INSERT INTO cloudkit_deferred_applies
                 (recordType, recordID, record, deferredAt)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(recordType, recordID) DO UPDATE SET
-                record     = excluded.record,
-                deferredAt = excluded.deferredAt
+                record = excluded.record
             """, arguments: [record.recordType,
                              record.recordID.recordName,
                              coder.encodedData,
@@ -105,6 +109,15 @@ nonisolated enum SyncDeferredApplies {
     }
 
     // MARK: - Parent checks
+
+    /// Whether a record is parked — used to drop a stale parked copy once a
+    /// newer version of the same record has been applied directly.
+    static func contains(db: Database, type: CKRecord.RecordType, recordName: String) throws -> Bool {
+        try Bool.fetchOne(db, sql: """
+            SELECT EXISTS (SELECT 1 FROM cloudkit_deferred_applies
+                           WHERE recordType = ? AND recordID = ?)
+            """, arguments: [type, recordName]) ?? false
+    }
 
     /// Whether every row this record points at exists locally.
     ///

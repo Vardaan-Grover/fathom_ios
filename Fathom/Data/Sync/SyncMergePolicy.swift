@@ -25,9 +25,11 @@ nonisolated enum FieldMerge: Equatable {
     /// Used for progress and "last seen" timestamps, which only move forward.
     case maxWins
 
-    /// Once set, never cleared. A delete beats a concurrent edit regardless of
-    /// which side is newer. Clearing requires an explicit user undelete, which
-    /// is modelled as a separate write, not as a merge outcome.
+    /// A delete marker. A delete beats a concurrent edit regardless of which
+    /// side is newer, and merge never clears one on its own. The only way a
+    /// tombstone is cleared is an explicit user action on one side (re-adding
+    /// a book to a shelf) while the other side left the marker alone — the
+    /// ancestor is what tells those apart.
     case tombstone
 
     /// Fixed at creation. Both sides must already agree; if they do not, the
@@ -52,25 +54,27 @@ nonisolated enum SyncMergePolicy {
 
         case CKRecordType.book:
             return [
-                // Derived from the EPUB at import — identical on every device
-                // by construction.
-                "title": .immutable,
-                "author": .immutable,
+                // Derived from the EPUB file at import — identical on every
+                // device by construction.
                 "format": .immutable,
                 "localFilename": .immutable,
                 "contentHash": .immutable,
                 "importDate": .immutable,
                 "language": .immutable,
                 "publisher": .immutable,
-                "coverFilename": .immutable,
                 "estimatedPageCount": .immutable,
                 "estimatedReadingTimeMinutes": .immutable,
+                // Editable by the reader, both at import and later from the
+                // book's edit sheet. Treating these as immutable reverted a
+                // rename — and a cover change, whose old file was already
+                // deleted — on every conflict.
+                "title": .lastWriterWins,
+                "author": .lastWriterWins,
+                "description": .lastWriterWins,
+                "coverFilename": .lastWriterWins,
                 // A high-water mark, not a value.
                 "lastReadAt": .maxWins,
                 "modifiedAt": .maxWins
-                // Nothing else: with completion data moved to BookCompletion,
-                // every remaining field is fixed at import. A Book conflict now
-                // means a bug, not a concurrent edit.
             ]
 
         case CKRecordType.bookCompletion:
@@ -234,8 +238,9 @@ nonisolated enum SyncMerge {
     /// records alone, and whose absence is why the previous engine could never
     /// propagate a cleared rating or a deleted reflection.
     ///
-    /// The returned record is the *server* record with merged values applied,
-    /// so it carries the server's change tag and will save cleanly.
+    /// The returned record is a copy of the *server* record with merged values
+    /// applied, so it carries the server's change tag. `server` itself is left
+    /// untouched.
     static func resolve(client: CKRecord,
                         server: CKRecord,
                         ancestor: CKRecord?) -> CKRecord {
@@ -247,12 +252,18 @@ nonisolated enum SyncMerge {
         // it there is no structural information about who changed what, and
         // pretending otherwise makes every field read as contended and every
         // immutable field look like it diverged.
-        guard let ancestor else {
+        //
+        // An ancestor with no values at all is treated the same way. Builds
+        // before full-record caching rebuilt every upload on a system-fields
+        // archive, and CloudKit's ancestor for such an upload carries metadata
+        // only — a three-way merge against it reads every field as changed on
+        // both sides and always prefers the server.
+        guard let ancestor, !ancestor.allKeys().isEmpty else {
             return resolveWithoutAncestor(client: client, server: server)
         }
 
         let type   = server.recordType
-        let merged = server              // carries the current change tag
+        let merged = copy(of: server)    // carries the current change tag
         let keys   = Set(client.allKeys())
             .union(server.allKeys())
             .union(ancestor.allKeys())
@@ -277,11 +288,17 @@ nonisolated enum SyncMerge {
 
             let policy = SyncMergePolicy.merge(for: type, field: key)
 
-            // Tombstones ignore the ancestor entirely: a delete on either side
-            // is final, and no later edit resurrects the row.
+            // Tombstones: a side that touched the marker when the other did not
+            // wins — that is a delete, or an explicit undelete such as putting
+            // a book back on a shelf. When both touched it, the delete wins.
             if policy == .tombstone {
-                if let winner = firstNonNil(serverValue, clientValue) {
-                    merged[key] = winner
+                switch (clientChanged, serverChanged) {
+                case (true, false):
+                    merged[key] = clientValue
+                case (false, _):
+                    break   // server value already in place
+                case (true, true):
+                    merged[key] = firstNonNil(serverValue, clientValue)
                 }
                 continue
             }
@@ -330,7 +347,7 @@ nonisolated enum SyncMerge {
     private static func resolveWithoutAncestor(client: CKRecord,
                                                server: CKRecord) -> CKRecord {
         let type   = server.recordType
-        let merged = server              // carries the current change tag
+        let merged = copy(of: server)    // carries the current change tag
         let keys   = Set(client.allKeys()).union(server.allKeys())
 
         let clientDate = client["modifiedAt"] as? Date
@@ -415,6 +432,15 @@ nonisolated enum SyncMerge {
     }
 
     // MARK: - Value helpers
+
+    /// A copy of the server record, so merging never edits the caller's
+    /// instance. The engine caches the *unmerged* server record as the
+    /// ancestor for the retry; merging into that same object used to cache the
+    /// merged values instead, which made the next conflict misread who had
+    /// changed what.
+    private static func copy(of record: CKRecord) -> CKRecord {
+        (record.copy() as? CKRecord) ?? record
+    }
 
     /// CKRecord values are Objective-C types; compare them the same way
     /// CloudKit does rather than through Swift equality.

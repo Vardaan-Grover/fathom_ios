@@ -164,8 +164,20 @@ struct ReaderScreen: View {
         .sheet(isPresented: $isShowingSettings) {
             ReaderSettingsView(settings: $settings)
                 .onChange(of: settings) { _, newSettings in
+                    // Skip values that are already stored — notably settings
+                    // just adopted from another device, which must not be
+                    // saved back as if this device had made the change.
+                    guard newSettings != ReaderSettingsStore.shared.load() else { return }
                     ReaderSettingsStore.shared.save(newSettings)
                 }
+        }
+        // The reader loads settings once when it opens. Without this, a change
+        // made on another device was invisible until the book was reopened —
+        // and the next tweak here saved the stale copy over it.
+        .onReceive(NotificationCenter.default.publisher(
+            for: ReaderSettingsStore.didChangeRemotelyNotification)
+        ) { _ in
+            settings = ReaderSettingsStore.shared.load()
         }
         .sheet(isPresented: $isShowingAIChats) {
             AIChatsListScreen(bookID: bookID, backendBookID: backendBookID, bookTitle: bookTitle)

@@ -45,10 +45,54 @@ final class SyncActivity: ObservableObject {
     /// Worth showing a banner: something actually arrived.
     var hasArrivals: Bool { received > 0 }
 
+    /// Something the reader has to know about because sync cannot fix it on
+    /// its own. Transient trouble (no network, throttling) is not a problem —
+    /// the engine retries that by itself.
+    nonisolated enum Problem: Equatable, Sendable {
+        /// No iCloud account on the device, so nothing syncs.
+        case noAccount
+        /// iCloud is restricted (parental controls, MDM) or temporarily
+        /// unavailable for this account.
+        case accountUnavailable
+        /// The reader's iCloud storage is full; changes wait on this device.
+        case quotaExceeded
+        /// CloudKit rejected changes for a reason the app did not expect.
+        case failing(String)
+    }
+
+    @Published fileprivate(set) var problem: Problem?
+
+    /// When a fetch last completed without error. Nil until the first one.
+    @Published fileprivate(set) var lastSyncedAt: Date?
+
     private var presentTask: Task<Void, Never>?
     private var settleTask: Task<Void, Never>?
+    private var setupTimeoutTask: Task<Void, Never>?
+
+    /// The first-sync screen never holds the app longer than this. A stalled
+    /// fetch — a dead network mid-sync — must not trap the reader behind a
+    /// full-screen surface with no way out; the header indicator carries on.
+    private static let setupTimeout: Duration = .seconds(45)
 
     private init() {}
+
+    // MARK: - Status
+
+    func report(_ problem: Problem) {
+        guard self.problem != problem else { return }
+        self.problem = problem
+    }
+
+    func clearProblem() {
+        problem = nil
+    }
+
+    func markSynced() {
+        lastSyncedAt = Date()
+        // A clean round trip means whatever was wrong is not wrong any more —
+        // except a missing account, which a fetch cannot fix.
+        if problem != .noAccount { problem = nil }
+    }
 
     // MARK: - Engine hooks
 
@@ -77,6 +121,12 @@ final class SyncActivity: ObservableObject {
             try? await Task.sleep(for: .milliseconds(700))
             guard !Task.isCancelled, let self, self.phase == .gathering else { return }
             self.isPresentingSetup = true
+        }
+        setupTimeoutTask?.cancel()
+        setupTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.setupTimeout)
+            guard !Task.isCancelled, let self else { return }
+            self.isPresentingSetup = false
         }
     }
 
@@ -125,6 +175,7 @@ final class SyncActivity: ObservableObject {
 
     func finish() {
         presentTask?.cancel()
+        setupTimeoutTask?.cancel()
         isPresentingSetup = false
         // The first sync is the only one that earns the screen. Once it is
         // done, this device has a library.

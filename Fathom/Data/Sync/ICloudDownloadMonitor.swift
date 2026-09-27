@@ -54,7 +54,11 @@ final class ICloudDownloadMonitor: ObservableObject {
 
     // MARK: - Lifecycle
 
+    /// Idempotent: a second call while a query is running does nothing. It
+    /// used to start another query and register its observers again, leaking
+    /// one per new iPad window or re-created scene.
     func start() {
+        guard query == nil else { return }
         guard ICloudFileStore.shared.isAvailable else {
             AppLogger.log(tag: "ICloudDownloadMonitor", "iCloud unavailable — monitor not started")
             return

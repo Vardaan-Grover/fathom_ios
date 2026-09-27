@@ -2,22 +2,33 @@ import CloudKit
 import Foundation
 import GRDB
 
-/// Caches the CloudKit *system fields* of every record the server has
-/// acknowledged — change tag, record ID, zone, creation and modification
-/// metadata. Never user data: `encodeSystemFields` deliberately omits the
-/// record's values, so this table stays small regardless of library size.
+/// Caches the last version of every record the server has acknowledged —
+/// system fields (change tag, record ID, zone, timestamps) **and values**.
 ///
-/// The change tag is the point. Saving a record that carries the tag of the
-/// version it was derived from lets CloudKit distinguish "this is an update to
-/// what I have" from "this is a blind overwrite". Without it every save after
-/// the first is a conflict, which is why the previous engine forced
-/// `.changedKeys` and, in doing so, overwrote server state it had never read.
+/// The change tag lets a save say "this is an update to what I have" rather
+/// than a blind overwrite; without it every save after the first conflicts.
+///
+/// The values are what make the three-way merge work. This table used to hold
+/// `encodeSystemFields` output only, and records to push were rebuilt on top
+/// of it. CloudKit derives a conflict's `ancestorRecord` from the record the
+/// upload was built on, so every ancestor arrived with metadata and no values:
+/// each differing field read as "changed on both sides", the server won, and a
+/// local edit or a local clear was discarded on every conflict. Archiving the
+/// full record with `encode(with:)` gives CloudKit — and `SyncMerge` — a real
+/// common ancestor.
+///
+/// Rows written by older builds hold system fields only. They still decode and
+/// still carry a valid tag; they are replaced with full records the next time
+/// the record is fetched or saved.
+///
+/// The column is still named `systemFields` — renaming it buys nothing.
 nonisolated enum SyncRecordMetadata {
 
     // MARK: - Read
 
-    /// The last record the server acknowledged for this ID, with system fields
-    /// only — values must be re-applied by the caller before saving.
+    /// The last record the server acknowledged for this ID. Values are
+    /// present for rows written by this build; callers overwrite every field
+    /// they own before saving.
     static func lastKnownRecord(db: Database,
                                 type: CKRecord.RecordType,
                                 recordName: String) throws -> CKRecord? {
@@ -40,7 +51,7 @@ nonisolated enum SyncRecordMetadata {
         } catch {
             // A metadata row we cannot read is recoverable: the record is
             // pushed without a tag, conflicts once, and the merge resolves it.
-            AppLogger.log(tag: "SyncRecordMetadata", "Undecodable system fields: \(error)")
+            AppLogger.log(tag: "SyncRecordMetadata", "Undecodable cached record: \(error)")
             return nil
         }
     }
@@ -51,7 +62,9 @@ nonisolated enum SyncRecordMetadata {
     /// the server hands back — both saves we made and changes we fetched.
     static func save(db: Database, record: CKRecord) throws {
         let coder = NSKeyedArchiver(requiringSecureCoding: true)
-        record.encodeSystemFields(with: coder)
+        // `encode(with:)`, not `encodeSystemFields(with:)`: the values are the
+        // ancestor for the next conflict. See the type comment.
+        record.encode(with: coder)
         coder.finishEncoding()
 
         try db.execute(sql: """
@@ -76,10 +89,18 @@ nonisolated enum SyncRecordMetadata {
             """, arguments: [type, recordName])
     }
 
-    /// Drops every cached tag. Used when the account changes or the zone is
+    /// Drops every cached record. Used when the account changes or the zone is
     /// recreated — the tags describe records in a zone that no longer exists,
     /// and reusing them would make every first save fail.
     static func deleteAll(db: Database) throws {
         try db.execute(sql: "DELETE FROM cloudkit_record_metadata")
+    }
+
+    /// Whether the server has ever acknowledged this record.
+    static func exists(db: Database, type: CKRecord.RecordType, recordName: String) throws -> Bool {
+        try Bool.fetchOne(db, sql: """
+            SELECT EXISTS (SELECT 1 FROM cloudkit_record_metadata
+                           WHERE recordType = ? AND recordID = ?)
+            """, arguments: [type, recordName]) ?? false
     }
 }

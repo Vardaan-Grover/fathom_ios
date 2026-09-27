@@ -151,6 +151,92 @@ struct SyncMergeTests {
         #expect(merged["deletedAt"] as? Date == deletedAt)
     }
 
+    @Test("Putting a book back on a shelf survives a concurrent reorder elsewhere")
+    func undeleteOnOneSideWins() {
+        let localID = CKRecordName.membershipLocalID(bookID: UUID(), categoryID: UUID())
+        let recordID = CKRecordName.id(type: CKRecordType.bookCategoryMembership,
+                                       localID: localID, zoneID: zoneID)
+        let removedAt = Date(timeIntervalSince1970: 1_800_000_000)
+
+        // Both devices last agreed the book was off the shelf.
+        let ancestor = CKRecord(recordType: CKRecordType.bookCategoryMembership, recordID: recordID)
+        ancestor["sortOrder"] = 1
+        ancestor["deletedAt"] = removedAt
+
+        // This device put it back.
+        let client = CKRecord(recordType: CKRecordType.bookCategoryMembership, recordID: recordID)
+        client["sortOrder"] = 1
+
+        // The other device only reordered.
+        let server = CKRecord(recordType: CKRecordType.bookCategoryMembership, recordID: recordID)
+        server["sortOrder"] = 3
+        server["deletedAt"] = removedAt
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: ancestor)
+        #expect(merged["deletedAt"] == nil, "an explicit re-add must not be undone by merge")
+        #expect(merged["sortOrder"] as? Int == 3)
+    }
+
+    @Test("When both sides touched a tombstone, the delete wins")
+    func concurrentUndeleteAndDeleteKeepsDelete() {
+        let localID = CKRecordName.membershipLocalID(bookID: UUID(), categoryID: UUID())
+        let recordID = CKRecordName.id(type: CKRecordType.bookCategoryMembership,
+                                       localID: localID, zoneID: zoneID)
+        let ancestor = CKRecord(recordType: CKRecordType.bookCategoryMembership, recordID: recordID)
+        ancestor["deletedAt"] = Date(timeIntervalSince1970: 1_800_000_000)
+        let client = CKRecord(recordType: CKRecordType.bookCategoryMembership, recordID: recordID)
+        let server = CKRecord(recordType: CKRecordType.bookCategoryMembership, recordID: recordID)
+        let removedAgain = Date(timeIntervalSince1970: 1_800_000_500)
+        server["deletedAt"] = removedAgain
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: ancestor)
+        #expect(merged["deletedAt"] as? Date == removedAgain)
+    }
+
+    @Test("A value-less ancestor falls back to record timestamps instead of always preferring the server")
+    func valuelessAncestorUsesTimestamps() {
+        // What every conflict looked like while the metadata cache held system
+        // fields only: CloudKit's ancestor had metadata and no values.
+        let id = UUID().uuidString
+        let ancestor = bookRecord(id)
+        let client = bookRecord(id)
+        client["title"] = "Renamed here"
+        client["modifiedAt"] = Date(timeIntervalSince1970: 1_800_000_900)
+        let server = bookRecord(id)
+        server["title"] = "Original"
+        server["modifiedAt"] = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: ancestor)
+        #expect(merged["title"] as? String == "Renamed here")
+    }
+
+    @Test("A book rename on this device survives an unrelated change elsewhere")
+    func bookRenameIsNotTreatedAsImmutable() {
+        let id = UUID().uuidString
+        let early = Date(timeIntervalSince1970: 1_800_000_000)
+        let late = Date(timeIntervalSince1970: 1_800_000_500)
+        let ancestor = bookRecord(id); ancestor["title"] = "Cosmos"; ancestor["lastReadAt"] = early
+        let client = bookRecord(id); client["title"] = "Cosmos (annotated)"; client["lastReadAt"] = early
+        let server = bookRecord(id); server["title"] = "Cosmos"; server["lastReadAt"] = late
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: ancestor)
+        #expect(merged["title"] as? String == "Cosmos (annotated)")
+        #expect(merged["lastReadAt"] as? Date == late)
+    }
+
+    @Test("Merging never edits the server record it was given")
+    func mergeLeavesServerUntouched() {
+        // The engine caches the unmerged server record as the next ancestor.
+        let id = UUID().uuidString
+        let ancestor = bookRecord(id); ancestor["title"] = "A"
+        let client = bookRecord(id); client["title"] = "B"
+        let server = bookRecord(id); server["title"] = "A"
+
+        let merged = SyncMerge.resolve(client: client, server: server, ancestor: ancestor)
+        #expect(merged["title"] as? String == "B")
+        #expect(server["title"] as? String == "A")
+    }
+
     // MARK: - Agreement is not conflict
 
     @Test("Identical values are not treated as a conflict, whatever the ancestor says")
@@ -248,11 +334,11 @@ struct SyncMergeTests {
         // Both sides carry the same import metadata. With no ancestor the old
         // code read every one of these as contended and logged an immutable
         // divergence for each — 51 Book fields per pass in the real run.
-        let client = bookRecord(id); client["title"] = "Cosmos"
-        let server = bookRecord(id); server["title"] = "Cosmos"
+        let client = bookRecord(id); client["contentHash"] = "9f86d0"
+        let server = bookRecord(id); server["contentHash"] = "9f86d0"
 
         let merged = SyncMerge.resolve(client: client, server: server, ancestor: nil)
-        #expect(merged["title"] as? String == "Cosmos")
+        #expect(merged["contentHash"] as? String == "9f86d0")
     }
 
     @Test("A tombstone still wins when there is no ancestor")

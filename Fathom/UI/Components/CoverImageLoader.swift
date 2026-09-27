@@ -38,7 +38,30 @@ nonisolated enum CoverImageLoader {
     /// the isolation violation is only a warning. Everything reachable from
     /// here is explicitly `nonisolated` so there is no violation in the first
     /// place. `MainActorIsolationTests` pins both halves down.
+    ///
+    /// The work runs on a dedicated, bounded queue — not in a detached task.
+    /// A detached task runs on Swift's cooperative pool, which has one thread
+    /// per core and assumes nothing blocks it. A cover read blocks in `pread`
+    /// until iCloud delivers the file, so a grid of not-yet-downloaded covers
+    /// could occupy every pool thread and stall all of the app's async work —
+    /// sync, database reads, everything — until the downloads finished.
     static func offMain<T: Sendable>(_ work: @Sendable @escaping () -> T) async -> T {
-        await Task.detached(priority: .utility, operation: work).value
+        await withCheckedContinuation { continuation in
+            ioQueue.addOperation {
+                continuation.resume(returning: work())
+            }
+        }
     }
+
+    /// OperationQueue is documented as thread-safe; it is just not marked
+    /// Sendable.
+    nonisolated(unsafe) private static let ioQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.fathom.cover-io"
+        queue.qualityOfService = .utility
+        // Enough to overlap reads; few enough that a wall of blocked reads
+        // cannot turn into a thread explosion.
+        queue.maxConcurrentOperationCount = 4
+        return queue
+    }()
 }

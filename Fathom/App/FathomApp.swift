@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct FathomApp: App {
@@ -21,6 +22,13 @@ struct FathomApp: App {
         MainThreadWatchdog.start()
         SyncActivity.startPreviewIfRequested()
         #endif
+
+        // Sync comes up at process launch rather than from a view: CKSyncEngine
+        // only hears pushes once it exists, and a push can launch the app in
+        // the background with no scene — and so no view `.task` — at all.
+        // Idempotent, so extra windows and re-created scenes cannot start it
+        // twice.
+        Task.detached(priority: .userInitiated) { await SyncBootstrap.start() }
 
         let container = AppContainer.shared
         bookRepository = container.bookRepo
@@ -51,9 +59,6 @@ struct FathomApp: App {
                         await authService.startListening()
                     }
                 }
-                // Storage + CloudKit come up independently of any Fathom
-                // account — both are scoped by Apple ID.
-                .task { await SyncBootstrap.start() }
                 // MetricKit delivers at most once a day; registering is the
                 // whole cost. Payloads stay on device — see DiskMetricsSink.
                 .task { DiagnosticsSubscriber.start() }
@@ -73,12 +78,45 @@ struct FathomApp: App {
                         Task { await SyncEngine.shared.fetchChangesIfNeeded() }
                     } else {
                         // Positions and settings are disk-written on a debounce;
-                        // force the pending writes out before we can be killed.
-                        ReadingStateStore.shared.flush()
-                        ReaderSettingsStore.shared.flush()
+                        // force the pending writes out before we can be killed,
+                        // then push them while the system still lets us run.
+                        let positions = ReadingStateStore.shared.flush()
+                        let settingsChanged = ReaderSettingsStore.shared.flush()
+                        SuspensionSync.push(positions: positions, settingsChanged: settingsChanged)
                     }
                 }
             }
+        }
+    }
+}
+
+/// Sends pending changes inside a background task when the app leaves the
+/// foreground, so the last reading session reaches iCloud before suspension
+/// rather than at the next launch.
+@MainActor
+private enum SuspensionSync {
+
+    /// Holds the task identifier for both the expiration handler and the
+    /// completion, which may race.
+    private final class TaskBox {
+        var id: UIBackgroundTaskIdentifier = .invalid
+
+        func end() {
+            guard id != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(id)
+            id = .invalid
+        }
+    }
+
+    static func push(positions: Set<UUID>, settingsChanged: Bool) {
+        let box = TaskBox()
+        box.id = UIApplication.shared.beginBackgroundTask(withName: "Fathom iCloud sync") {
+            box.end()
+        }
+        Task {
+            await SyncEngine.shared.sendBeforeSuspension(positions: positions,
+                                                         settingsChanged: settingsChanged)
+            box.end()
         }
     }
 }

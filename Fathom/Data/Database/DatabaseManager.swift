@@ -29,6 +29,13 @@ final class DatabaseManager {
 
         dbQueue = try DatabaseQueue(path: dbURL.path, configuration: config)
         try Self.makeMigrator().migrate(dbQueue)
+
+        // The apply context only ever changes inside a transaction, so a crash
+        // rolls it back — but a context left raised would silently stop every
+        // local change from syncing, so it is cleared at launch regardless.
+        try dbQueue.write { db in
+            try db.execute(sql: "UPDATE sync_apply_context SET active = 0")
+        }
     }
 
     // Internal (not private) so FathomTests can run the full migration chain
@@ -1069,6 +1076,145 @@ final class DatabaseManager {
             }
         }
 
+        // v35 — rebuild every sync trigger around three rules.
+        //
+        // 1. Writes made *by sync* do not queue a push and do not restamp
+        //    modifiedAt. Every trigger is guarded by `sync_apply_context`,
+        //    which the apply path raises for the length of its transaction.
+        //    Previously each apply fired the triggers and then deleted the
+        //    queue row it had just produced — which also deleted any genuine
+        //    local edit queued for the same record, and the stamp trigger
+        //    replaced the remote `modifiedAt` with this device's clock.
+        //
+        // 2. `books` only queues (and only restamps) when a *synced* column
+        //    changed. preprocessingStatus, aiAnalysisProgress, aiEnabled and
+        //    backendBookID describe this device's copy of the file; changing
+        //    them used to push the whole Book record, many times per import.
+        //
+        // 3. Every synced table has a delete trigger. Highlights, notes,
+        //    bookmarks, saved words and reading activity were upsert-only, so
+        //    when a book was deleted and the foreign keys cascaded, their
+        //    CloudKit records were left behind for ever.
+        //
+        // The context is a counter, not a flag, so nested apply scopes compose.
+        // Triggers treat a missing row as "not applying": failing open means a
+        // redundant push, failing closed would mean silently not syncing.
+        migrator.registerMigration("v35_sync_apply_context_triggers") { db in
+            try db.execute(sql: """
+                CREATE TABLE sync_apply_context (
+                    id     INTEGER PRIMARY KEY CHECK (id = 1),
+                    active INTEGER NOT NULL DEFAULT 0
+                )
+                """)
+            try db.execute(sql: "INSERT INTO sync_apply_context (id, active) VALUES (1, 0)")
+
+            let local = Self.notApplyingSyncSQL
+            let stamp = "strftime('%Y-%m-%dT%H:%M:%f', 'now')"
+
+            func queue(_ type: String, _ key: String, _ op: String) -> String {
+                """
+                INSERT OR REPLACE INTO cloudkit_pending_changes
+                    (recordType, recordID, operation, queuedAt)
+                VALUES ('\(type)', \(key), '\(op)', \(stamp));
+                """
+            }
+
+            func replace(_ name: String, _ body: String) throws {
+                try db.execute(sql: "DROP TRIGGER IF EXISTS \(name)")
+                try db.execute(sql: body)
+            }
+
+            // Tables keyed on a single `id` column.
+            let idTables = ["highlights", "notes", "bookmarks", "saved_words",
+                            "readingActivity", "books", "bookCategories"]
+            for table in idTables {
+                let type = Self.cloudKitType(for: table)
+                let newID = Self.uuidTextSQL("NEW.id")
+                let oldID = Self.uuidTextSQL("OLD.id")
+                let updateGuard = table == "books"
+                    ? "\(local) AND (\(Self.bookSyncedColumnsChangedSQL))"
+                    : local
+
+                try replace("\(table)_ck_insert", """
+                    CREATE TRIGGER \(table)_ck_insert
+                    AFTER INSERT ON \(table)
+                    WHEN \(local)
+                    BEGIN
+                        \(queue(type, newID, "upsert"))
+                    END
+                    """)
+                try replace("\(table)_ck_update", """
+                    CREATE TRIGGER \(table)_ck_update
+                    AFTER UPDATE ON \(table)
+                    WHEN \(updateGuard)
+                    BEGIN
+                        \(queue(type, newID, "upsert"))
+                    END
+                    """)
+                try replace("\(table)_ck_delete", """
+                    CREATE TRIGGER \(table)_ck_delete
+                    AFTER DELETE ON \(table)
+                    WHEN \(local)
+                    BEGIN
+                        \(queue(type, oldID, "delete"))
+                    END
+                    """)
+                try replace("\(table)_stamp_modifiedAt", """
+                    CREATE TRIGGER \(table)_stamp_modifiedAt
+                    AFTER UPDATE ON \(table)
+                    FOR EACH ROW
+                    WHEN \(updateGuard)
+                    BEGIN
+                        UPDATE \(table) SET modifiedAt = \(stamp) WHERE id = NEW.id;
+                    END
+                    """)
+            }
+
+            // bookCompletions — keyed on the book it belongs to. No stamp
+            // trigger: saveCompletion sets modifiedAt itself.
+            for (suffix, event, alias, op) in [("_ck_insert", "INSERT", "NEW", "upsert"),
+                                               ("_ck_update", "UPDATE", "NEW", "upsert"),
+                                               ("_ck_delete", "DELETE", "OLD", "delete")] {
+                try replace("bookCompletions\(suffix)", """
+                    CREATE TRIGGER bookCompletions\(suffix)
+                    AFTER \(event) ON bookCompletions
+                    WHEN \(local)
+                    BEGIN
+                        \(queue("BookCompletion", Self.uuidTextSQL("\(alias).bookID"), op))
+                    END
+                    """)
+            }
+
+            // bookCategoryMemberships — composite key "bookID_categoryID".
+            func composite(_ alias: String) -> String {
+                "\(Self.uuidTextSQL("\(alias).bookID")) || '_' || "
+                    + Self.uuidTextSQL("\(alias).categoryID")
+            }
+            for (suffix, event, alias, op) in [("_ck_insert", "INSERT", "NEW", "upsert"),
+                                               ("_ck_update", "UPDATE", "NEW", "upsert"),
+                                               ("_ck_delete", "DELETE", "OLD", "delete")] {
+                try replace("bookCategoryMemberships\(suffix)", """
+                    CREATE TRIGGER bookCategoryMemberships\(suffix)
+                    AFTER \(event) ON bookCategoryMemberships
+                    WHEN \(local)
+                    BEGIN
+                        \(queue("BookCategoryMembership", composite(alias), op))
+                    END
+                    """)
+            }
+            try replace("bookCategoryMemberships_stamp_modifiedAt", """
+                CREATE TRIGGER bookCategoryMemberships_stamp_modifiedAt
+                AFTER UPDATE ON bookCategoryMemberships
+                FOR EACH ROW
+                WHEN \(local)
+                BEGIN
+                    UPDATE bookCategoryMemberships
+                    SET    modifiedAt = \(stamp)
+                    WHERE  bookID = NEW.bookID AND categoryID = NEW.categoryID;
+                END
+                """)
+        }
+
         return migrator
     }
 
@@ -1088,6 +1234,24 @@ final class DatabaseManager {
         substr(hex(\(column)), 21, 12)
         ELSE \(column) END
         """
+    }
+
+    /// Trigger guard: true unless the sync engine is applying remote changes
+    /// in the current transaction. See migration v35 and `SyncApplyContext`.
+    nonisolated static let notApplyingSyncSQL =
+        "COALESCE((SELECT active FROM sync_apply_context WHERE id = 1), 0) = 0"
+
+    /// Trigger guard for `books`: true when a column that travels on the Book
+    /// record changed. Device-only columns (preprocessing, AI) and modifiedAt
+    /// itself are deliberately absent.
+    nonisolated static let bookSyncedColumns = [
+        "title", "author", "format", "localFilename", "description", "language",
+        "publisher", "coverFilename", "importDate", "contentHash",
+        "estimatedPageCount", "estimatedReadingTimeMinutes", "lastReadAt"
+    ]
+
+    nonisolated static var bookSyncedColumnsChangedSQL: String {
+        bookSyncedColumns.map { "OLD.\($0) IS NOT NEW.\($0)" }.joined(separator: " OR ")
     }
 
     // Maps a SQLite table name to its CloudKit record type string.

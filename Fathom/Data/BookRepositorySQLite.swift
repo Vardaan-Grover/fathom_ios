@@ -117,7 +117,11 @@ final actor BookRepositorySQLite: BookRepository {
             }
         } catch {
             AppLogger.logError(tag: "BookRepository", error)
+            return
         }
+        // Reading position lives in a file, not a row, so the cascade does not
+        // reach it. Removing it here also deletes its CloudKit record.
+        ReadingStateStore.shared.removeState(forBookID: book.id, notifySync: true)
     }
 
     func touchLastReadAt(bookID: UUID) async {

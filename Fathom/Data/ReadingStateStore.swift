@@ -41,6 +41,12 @@ final class ReadingStateStore {
     /// not once per page turn. `userInfo["bookID"]` is the affected `UUID`.
     static let didSaveNotification = Notification.Name("ReadingStateStore.didSave")
 
+    /// Posted on the main queue when a book's reading state is removed locally
+    /// (the book was deleted on this device), so the sync engine can delete the
+    /// matching CloudKit record. Not posted for removals that came from sync.
+    /// `userInfo["bookID"]` is the affected `UUID`.
+    static let didRemoveNotification = Notification.Name("ReadingStateStore.didRemove")
+
     private static let writeDebounce: TimeInterval = 2.0
 
     private let saveURL: URL
@@ -109,12 +115,49 @@ final class ReadingStateStore {
 
     /// Writes any pending changes to disk immediately. Call when the app
     /// resigns active so a subsequent termination can't lose positions.
-    func flush() {
+    ///
+    /// - Returns: the books whose locally saved position had not yet been
+    ///   announced to sync, so the caller can push them before suspension
+    ///   instead of waiting for the notification to arrive.
+    @discardableResult
+    func flush() -> Set<UUID> {
         lock.lock()
         pendingWrite?.cancel()
         pendingWrite = nil
         lock.unlock()
-        performWrite()
+        return performWrite()
+    }
+
+    /// Every book with a stored reading state.
+    func allBookIDs() -> [UUID] {
+        lock.lock()
+        defer { lock.unlock() }
+        loadCacheIfNeededLocked()
+        return (cache ?? [:]).keys.compactMap(UUID.init(uuidString:))
+    }
+
+    /// Forgets a book's reading state — used when the book is deleted.
+    ///
+    /// - Parameter notifySync: `true` for a deletion made on this device, so
+    ///   the CloudKit record goes too. `false` when the deletion itself arrived
+    ///   from sync, where the other device already removed the record.
+    func removeState(forBookID bookID: UUID, notifySync: Bool) {
+        lock.lock()
+        loadCacheIfNeededLocked()
+        let existed = cache?.removeValue(forKey: bookID.uuidString) != nil
+        booksAwaitingSyncNotification.remove(bookID)
+        if existed {
+            isDirty = true
+            scheduleWriteLocked()
+        }
+        lock.unlock()
+
+        guard notifySync else { return }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.didRemoveNotification,
+                                            object: nil,
+                                            userInfo: ["bookID": bookID])
+        }
     }
 
     // MARK: - Sync accessors
@@ -223,26 +266,27 @@ final class ReadingStateStore {
         ioQueue.asyncAfter(deadline: .now() + Self.writeDebounce, execute: work)
     }
 
-    private func performWrite() {
+    @discardableResult
+    private func performWrite() -> Set<UUID> {
         lock.lock()
         pendingWrite = nil
         guard isDirty, let snapshot = cache else {
             lock.unlock()
-            return
+            return []
         }
         isDirty = false
         let toNotify = booksAwaitingSyncNotification
         booksAwaitingSyncNotification = []
         lock.unlock()
 
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        guard let data = try? JSONEncoder().encode(snapshot) else { return toNotify }
         do {
             try data.write(to: saveURL, options: .atomic)
         } catch {
             AppLogger.log(tag: "ReadingStateStore", "Failed to write reading state: \(error)")
         }
 
-        guard !toNotify.isEmpty else { return }
+        guard !toNotify.isEmpty else { return toNotify }
         DispatchQueue.main.async {
             for bookID in toNotify {
                 NotificationCenter.default.post(
@@ -252,6 +296,7 @@ final class ReadingStateStore {
                 )
             }
         }
+        return toNotify
     }
 
     private func legacySavedAtKey(for bookID: UUID) -> String {

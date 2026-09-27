@@ -189,6 +189,16 @@ nonisolated final class ICloudFileStore: Sendable {
         return filename
     }
 
+    /// Deletes a book's files wherever they are stored.
+    func deleteFiles(bookFilename: String?, coverFilename: String?, reflectionFilename: String?) {
+        let urls = [bookFilename.flatMap(bookURL(for:)),
+                    coverFilename.flatMap(coverURL(for:)),
+                    reflectionFilename.flatMap(reflectionImageURL(for:))]
+        for url in urls.compactMap({ $0 }) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
     /// Asks iCloud to download an EPUB that exists in the container but is not
     /// yet available locally.
     func startDownload(filename: String) {

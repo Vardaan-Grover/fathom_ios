@@ -11,21 +11,23 @@ nonisolated struct PendingChangeRow: Decodable, FetchableRecord {
     /// Raw column text rather than a Date: cleanup compares against the exact
     /// stored string, and round-tripping through Date changes the format.
     let queuedAt: String
+
+    var recordName: String { CKRecordName.make(type: recordType, localID: recordID) }
 }
 
 // MARK: - SyncEngine
 
 /// Drives CloudKit sync for the private database.
 ///
-/// Change *detection* is still the SQLite triggers that write into
+/// Change *detection* is the SQLite triggers that write into
 /// `cloudkit_pending_changes` — they catch every local mutation without any
-/// call site having to remember to announce it, which is worth keeping.
-/// Change *transport* is `CKSyncEngine`, which owns the parts the previous
-/// hand-rolled engine did not implement at all: server change tokens, batching
-/// under the 400-record limit, exponential backoff, request throttling,
-/// account changes, zone deletion, and retry after `changeTokenExpired`.
+/// call site having to remember to announce it. Writes made by sync itself do
+/// not fire them (see `SyncApplyContext`). Change *transport* is `CKSyncEngine`,
+/// which owns server change tokens, batching, backoff, throttling, account
+/// changes and retries.
 ///
-/// Conflicts are resolved by `SyncMerge` against the ancestor record, per
+/// Conflicts are resolved by `SyncMerge` — a three-way merge of this device's
+/// current state, the server's record and the last version both shared — per
 /// `docs/sync-conflict-policy.md`.
 actor SyncEngine: CKSyncEngineDelegate {
 
@@ -53,22 +55,36 @@ actor SyncEngine: CKSyncEngineDelegate {
     private var engine: CKSyncEngine?
     /// Read-only access for the apply extension.
     var currentEngine: CKSyncEngine? { engine }
+
+    /// Guards `start()` across its suspension points, so two callers cannot
+    /// both pass the `engine == nil` check and build two engines.
+    private var isStarting = false
+
     private var cdcObserver: AnyDatabaseCancellable?
     private var notificationTokens: [NSObjectProtocol] = []
 
-    /// The queue timestamp each record carried when it was handed to the sync
-    /// engine. On a successful send only rows at or before this timestamp are
-    /// cleared, so an edit made *while* the push was in flight survives and is
-    /// pushed again. Erring toward a redundant push is correct; erring toward a
-    /// dropped change is not.
-    private var enqueuedAt: [String: String] = [:]
+    /// The queue timestamp each record carried when its batch was *built*.
+    ///
+    /// On a successful send only queue rows at or before this stamp are
+    /// cleared, so an edit made while the push was in flight survives and is
+    /// pushed again. The stamp is captured before the record's data is read,
+    /// never later: it used to be refreshed every time the queue changed, so an
+    /// edit made mid-push raised it, the successful send of the *old* data then
+    /// cleared the *new* row, and the edit never reached iCloud.
+    ///
+    /// A record with no entry had no queue row when its batch was built, so
+    /// any row present afterwards is newer and must survive.
+    private var sendWatermarks: [String: String] = [:]
+
+    /// The `queuedAt` last handed to CKSyncEngine per record, so an observation
+    /// that re-reads the whole queue only enqueues what actually changed.
+    private var enqueuedStamps: [String: String] = [:]
+
+    /// Set when a zone fetch in the current cycle reported an error, so the
+    /// cycle is not recorded as a successful sync.
+    private var cycleHadFetchError = false
 
     /// Tallies for one fetch/send cycle, logged as a single summary line.
-    ///
-    /// Successful applies used to produce no output at all, which meant the
-    /// only visible sync activity was its failures — a run that worked and a
-    /// run that did nothing looked identical in the log. That is no way to
-    /// verify a system whose whole job is to move records quietly.
     private struct Tally {
         var fetched = 0, applied = 0, deferred = 0, deleted = 0
         var sent = 0, sentDeletes = 0, conflicts = 0, failed = 0
@@ -80,23 +96,29 @@ actor SyncEngine: CKSyncEngineDelegate {
     private var tally = Tally()
 
     func noteApplied(_ count: Int = 1) { tally.applied += count }
-    func noteDeferred() { tally.deferred += 1 }
+    func noteDeferred(_ count: Int = 1) { tally.deferred += count }
 
     // MARK: - Lifecycle
 
-    /// Call once after `ICloudFileStore.configure()` reports iCloud available.
+    /// Creates the engine. Called once per launch by `SyncBootstrap`, as early
+    /// as possible: CKSyncEngine starts listening for pushes and scheduled
+    /// syncs only once it exists, and it waits by itself for an iCloud account,
+    /// so there is no reason to gate it on anything.
     func start() async {
-        guard engine == nil else { return }
+        guard engine == nil, !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
 
         let restored = SyncStateStore.load()
 
-        // Whether this device has a library of its own yet. Only a device that
-        // does not gets the full-screen arrival surface — an existing reader
-        // opening the app after a change on another device gets the banner.
+        // Only a device with no library *and* no sync history gets the
+        // full-screen arrival surface. Keying it on the library alone showed
+        // "Bringing your library across" to every reader with no books yet on
+        // every slow cold launch — with nothing to bring.
         let bookCount = (try? await DatabaseManager.shared.dbQueue.read { db in
             try Book.fetchCount(db)
         }) ?? 0
-        await SyncActivity.shared.prime(firstSync: bookCount == 0)
+        await SyncActivity.shared.prime(firstSync: restored == nil && bookCount == 0)
 
         let configuration = CKSyncEngine.Configuration(
             database: database,
@@ -114,50 +136,26 @@ actor SyncEngine: CKSyncEngineDelegate {
         }
 
         await enqueuePendingChanges()
+        await enqueueUnsyncedSingletons()
         startCDCObservation()
         startNotificationObservers()
+        await refreshAccountStatus()
 
         AppLogger.log(tag: "SyncEngine", "Started (zone \(Self.zoneName))")
 
-        // Pull whatever changed while this device was not running.
-        //
-        // The foreground hook in FathomApp cannot do this on a cold launch:
-        // `scenePhase` reaches `.active` long before SyncBootstrap has resolved
-        // the iCloud container, run the file migration and got here, so that
-        // call arrives while `engine` is still nil and is dropped. Without this
-        // line a cold launch never fetches at all — which is why every early
-        // run reported `fetched 0` while records sat waiting in the zone.
-        // Parents may have arrived in an earlier session, so drain before the
-        // fetch as well as after it.
+        // Pull whatever changed while this device was not running. The
+        // foreground hook in FathomApp can arrive before this point on a cold
+        // launch, so start() fetches for itself. Parents may have arrived in an
+        // earlier session, so drain before the fetch as well as after it.
         await drainDeferred()
-
         await fetchChangesIfNeeded()
-
-        // An empty cycle logs nothing, so without this a startup fetch that
-        // found no changes is indistinguishable from one that never ran — the
-        // exact ambiguity that made the missing fetch hard to spot. Seeing this
-        // line with no `cycle:` line after it means "fetched, nothing waiting".
         AppLogger.log(tag: "SyncEngine", "startup fetch complete")
-    }
-
-    func stop() {
-        cdcObserver?.cancel()
-        cdcObserver = nil
-        notificationTokens.forEach { NotificationCenter.default.removeObserver($0) }
-        notificationTokens = []
-        engine = nil
-        enqueuedAt = [:]
-        AppLogger.log(tag: "SyncEngine", "Stopped")
     }
 
     /// Foreground refresh. CKSyncEngine also syncs on its own schedule; this
     /// makes a returning user's first screen current without waiting for it.
     func fetchChangesIfNeeded() async {
         guard let engine else {
-            // Expected once per cold launch: scenePhase reaches .active before
-            // SyncBootstrap has started the engine. Harmless, because start()
-            // fetches itself — but worth seeing, because a silent return here
-            // is what hid the missing startup fetch for four rounds.
             AppLogger.log(tag: "SyncEngine", "foreground fetch beat startup — start() will cover it")
             return
         }
@@ -168,15 +166,63 @@ actor SyncEngine: CKSyncEngineDelegate {
         }
     }
 
+    /// Pushes everything pending before the app is suspended.
+    ///
+    /// Positions and settings are flushed to disk when the app leaves the
+    /// foreground, but their sync notification hops through the main queue and
+    /// CKSyncEngine then waits for its own schedule — by which time the app is
+    /// usually suspended, so the last session's position reached iCloud only
+    /// on the next launch and the other device opened the book at the old
+    /// page. The caller holds a background task around this.
+    func sendBeforeSuspension(positions: Set<UUID>, settingsChanged: Bool) async {
+        guard let engine else { return }
+        for bookID in positions {
+            enqueueSingleton(type: CKRecordType.readingPosition, localID: bookID.uuidString)
+        }
+        if settingsChanged {
+            enqueueSingleton(type: CKRecordType.readerSettings, localID: "current")
+        }
+        await enqueuePendingChanges()
+        do {
+            try await engine.sendChanges()
+        } catch {
+            AppLogger.log(tag: "SyncEngine", "Background send failed: \(error)")
+        }
+    }
+
+    /// Reflects the iCloud account's state in the UI. CKSyncEngine handles the
+    /// account itself; this only tells the reader why nothing is syncing.
+    private func refreshAccountStatus() async {
+        do {
+            let status = try await container.accountStatus()
+            switch status {
+            case .available:
+                await SyncActivity.shared.clearProblem()
+            case .noAccount:
+                await SyncActivity.shared.report(.noAccount)
+            case .restricted, .temporarilyUnavailable:
+                await SyncActivity.shared.report(.accountUnavailable)
+            case .couldNotDetermine:
+                break
+            @unknown default:
+                break
+            }
+        } catch {
+            AppLogger.log(tag: "SyncEngine", "Account status check failed: \(error)")
+        }
+    }
+
     // MARK: - Local change detection
+
+    private static let queueSQL = """
+        SELECT recordType, recordID, operation, queuedAt
+        FROM   cloudkit_pending_changes
+        ORDER  BY queuedAt ASC
+        """
 
     private func startCDCObservation() {
         let observation = ValueObservation.tracking { db -> [PendingChangeRow] in
-            try PendingChangeRow.fetchAll(db, sql: """
-                SELECT recordType, recordID, operation, queuedAt
-                FROM   cloudkit_pending_changes
-                ORDER  BY queuedAt ASC
-                """)
+            try PendingChangeRow.fetchAll(db, sql: Self.queueSQL)
         }
 
         cdcObserver = observation.start(
@@ -186,8 +232,7 @@ actor SyncEngine: CKSyncEngineDelegate {
                 AppLogger.log(tag: "SyncEngine", "CDC observation error: \(error)")
             },
             onChange: { [weak self] rows in
-                guard !rows.isEmpty else { return }
-                Task { await self?.enqueue(rows) }
+                Task { await self?.enqueue(rows, isFullQueue: true) }
             }
         )
     }
@@ -195,43 +240,120 @@ actor SyncEngine: CKSyncEngineDelegate {
     private func enqueuePendingChanges() async {
         do {
             let rows = try await DatabaseManager.shared.dbQueue.read { db in
-                try PendingChangeRow.fetchAll(db, sql: """
-                    SELECT recordType, recordID, operation, queuedAt
-                    FROM   cloudkit_pending_changes
-                    ORDER  BY queuedAt ASC
-                    """)
+                try PendingChangeRow.fetchAll(db, sql: Self.queueSQL)
             }
-            enqueue(rows)
+            enqueue(rows, isFullQueue: true, force: true)
         } catch {
             AppLogger.log(tag: "SyncEngine", "Failed to read pending changes: \(error)")
         }
     }
 
-    private func enqueue(_ rows: [PendingChangeRow]) {
+    /// Hands queue rows to CKSyncEngine.
+    ///
+    /// - Parameters:
+    ///   - isFullQueue: `rows` is the whole queue, so records missing from it
+    ///     have left it and their remembered stamps can go.
+    ///   - force: enqueue even rows whose stamp was already handed over — used
+    ///     after a send, when CKSyncEngine has dropped a change whose newer
+    ///     queue row survived.
+    private func enqueue(_ rows: [PendingChangeRow], isFullQueue: Bool, force: Bool = false) {
         guard let engine else { return }
 
         var changes: [CKSyncEngine.PendingRecordZoneChange] = []
+        var superseded: [CKSyncEngine.PendingRecordZoneChange] = []
+        var present = Set<String>()
+
         for row in rows {
             // AIConversation rows can still exist from builds predating v26.
             guard CKRecordType.all.contains(row.recordType) else { continue }
 
-            let name = CKRecordName.make(type: row.recordType, localID: row.recordID)
+            let name = row.recordName
+            present.insert(name)
+            if !force, enqueuedStamps[name] == row.queuedAt { continue }
+            enqueuedStamps[name] = row.queuedAt
+
             let id = CKRecord.ID(recordName: name, zoneID: zoneID)
-            enqueuedAt[name] = row.queuedAt
-            changes.append(row.operation == "delete" ? .deleteRecord(id) : .saveRecord(id))
+            if row.operation == "delete" {
+                changes.append(.deleteRecord(id))
+                superseded.append(.saveRecord(id))
+            } else {
+                changes.append(.saveRecord(id))
+                superseded.append(.deleteRecord(id))
+            }
+        }
+
+        if isFullQueue {
+            enqueuedStamps = enqueuedStamps.filter { present.contains($0.key) }
         }
 
         guard !changes.isEmpty else { return }
+        // A save and a delete for the same record must not both be pending:
+        // whichever the queue holds now is the current intent.
+        engine.state.remove(pendingRecordZoneChanges: superseded)
         engine.state.add(pendingRecordZoneChanges: changes)
         AppLogger.log(tag: "SyncEngine", "queued \(changes.count) local change(s) to push")
     }
 
-    /// Queues a record that has no CDC trigger behind it — the three singletons
+    /// Queues a record that has no CDC trigger behind it — the singletons
     /// that live in file-backed stores rather than SQLite tables.
     private func enqueueSingleton(type: CKRecord.RecordType, localID: String) {
         guard let engine else { return }
         let id = CKRecordName.id(type: type, localID: localID, zoneID: zoneID)
         engine.state.add(pendingRecordZoneChanges: [.saveRecord(id)])
+    }
+
+    private func enqueueSingletonDelete(type: CKRecord.RecordType, localID: String) {
+        guard let engine else { return }
+        let id = CKRecordName.id(type: type, localID: localID, zoneID: zoneID)
+        engine.state.remove(pendingRecordZoneChanges: [.saveRecord(id)])
+        engine.state.add(pendingRecordZoneChanges: [.deleteRecord(id)])
+    }
+
+    /// Queues any singleton the server has never acknowledged.
+    ///
+    /// Singletons are only pushed when they change, so a reading position
+    /// recorded before sync existed — or before a zone reset — would otherwise
+    /// never reach iCloud, and a new device would open those books at the
+    /// start. Settings and profile are only offered when the reader actually
+    /// customised them: pushing a fresh install's defaults would overwrite the
+    /// reader's real settings on every other device.
+    private func enqueueUnsyncedSingletons() async {
+        let candidates = await singletonCandidates()
+        let unsynced: [(String, String)]
+        do {
+            unsynced = try await DatabaseManager.shared.dbQueue.read { db in
+                try candidates.filter { type, localID in
+                    let name = CKRecordName.make(type: type, localID: localID)
+                    return try !SyncRecordMetadata.exists(db: db, type: type, recordName: name)
+                }
+            }
+        } catch {
+            AppLogger.log(tag: "SyncEngine", "Singleton check failed: \(error)")
+            return
+        }
+        for (type, localID) in unsynced {
+            enqueueSingleton(type: type, localID: localID)
+        }
+        if !unsynced.isEmpty {
+            AppLogger.log(tag: "SyncEngine", "queued \(unsynced.count) never-synced singleton(s)")
+        }
+    }
+
+    /// Every singleton this device holds a meaningful local value for.
+    func singletonCandidates() async -> [(String, String)] {
+        let stored = ReadingStateStore.shared.allBookIDs()
+        let existing = (try? await DatabaseManager.shared.dbQueue.read { db in
+            try stored.filter { try Book.exists(db, key: $0) }
+        }) ?? []
+
+        var out = existing.map { (CKRecordType.readingPosition, $0.uuidString) }
+        if ReaderSettingsStore.shared.modifiedAt != nil {
+            out.append((CKRecordType.readerSettings, "current"))
+        }
+        if UserProfileStore.shared.modifiedAt != nil {
+            out.append((CKRecordType.userProfile, "current"))
+        }
+        return out
     }
 
     private func startNotificationObservers() {
@@ -243,6 +365,14 @@ actor SyncEngine: CKSyncEngineDelegate {
             guard let bookID = note.userInfo?["bookID"] as? UUID else { return }
             Task { await self?.enqueueSingleton(type: CKRecordType.readingPosition,
                                                 localID: bookID.uuidString) }
+        })
+
+        notificationTokens.append(center.addObserver(
+            forName: ReadingStateStore.didRemoveNotification, object: nil, queue: nil
+        ) { [weak self] note in
+            guard let bookID = note.userInfo?["bookID"] as? UUID else { return }
+            Task { await self?.enqueueSingletonDelete(type: CKRecordType.readingPosition,
+                                                      localID: bookID.uuidString) }
         })
 
         notificationTokens.append(center.addObserver(
@@ -271,8 +401,37 @@ actor SyncEngine: CKSyncEngineDelegate {
         let pending = syncEngine.state.pendingRecordZoneChanges.filter { scope.contains($0) }
         guard !pending.isEmpty else { return nil }
 
+        // Before any record's data is read — see `sendWatermarks`.
+        await captureWatermarks(for: pending)
+
         return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: pending) { recordID in
             await self.recordToSave(recordID)
+        }
+    }
+
+    private func captureWatermarks(for pending: [CKSyncEngine.PendingRecordZoneChange]) async {
+        let stamps: [String: String]
+        do {
+            stamps = try await DatabaseManager.shared.dbQueue.read { db in
+                var out: [String: String] = [:]
+                for row in try PendingChangeRow.fetchAll(db, sql: Self.queueSQL) {
+                    out[row.recordName] = row.queuedAt
+                }
+                return out
+            }
+        } catch {
+            AppLogger.log(tag: "SyncEngine", "Watermark capture failed: \(error)")
+            return
+        }
+
+        for change in pending {
+            let name: String
+            switch change {
+            case .saveRecord(let id): name = id.recordName
+            case .deleteRecord(let id): name = id.recordName
+            @unknown default: continue
+            }
+            sendWatermarks[name] = stamps[name]
         }
     }
 
@@ -283,16 +442,16 @@ actor SyncEngine: CKSyncEngineDelegate {
             SyncStateStore.save(e.stateSerialization)
 
         case .accountChange(let e):
-            await handleAccountChange(e)
+            await handleAccountChange(e, syncEngine: syncEngine)
 
         case .fetchedRecordZoneChanges(let e):
             tally.fetched += e.modifications.count
             tally.deleted += e.deletions.count
-            await applyFetched(modifications: e.modifications, deletions: e.deletions)
-            await SyncActivity.shared.note(received: e.modifications.count + e.deletions.count)
+            let applied = await applyFetched(modifications: e.modifications, deletions: e.deletions)
+            await SyncActivity.shared.note(received: applied)
 
         case .fetchedDatabaseChanges(let e):
-            await handleDatabaseChanges(e)
+            await handleDatabaseChanges(e, syncEngine: syncEngine)
 
         case .sentRecordZoneChanges(let e):
             tally.sent += e.savedRecords.count
@@ -306,21 +465,26 @@ actor SyncEngine: CKSyncEngineDelegate {
                               "Zone save failed \(failure.zone.zoneID.zoneName): \(failure.error)")
             }
 
+        case .willFetchChanges:
+            cycleHadFetchError = false
+            await SyncActivity.shared.begin()
+
         case .didFetchChanges:
             flushTally()
+            if !cycleHadFetchError {
+                await SyncActivity.shared.markSynced()
+            }
             await SyncActivity.shared.finish()
 
         case .didSendChanges:
             flushTally()
-
-        case .willFetchChanges:
-            await SyncActivity.shared.begin()
 
         case .willSendChanges, .willFetchRecordZoneChanges:
             break
 
         case .didFetchRecordZoneChanges(let e):
             if let error = e.error {
+                cycleHadFetchError = true
                 AppLogger.log(tag: "SyncEngine",
                               "Zone fetch error \(e.zoneID.zoneName): \(error)")
             }
@@ -335,19 +499,22 @@ actor SyncEngine: CKSyncEngineDelegate {
     private func handleSentChanges(_ e: CKSyncEngine.Event.SentRecordZoneChanges,
                                    syncEngine: CKSyncEngine) async {
 
-        // Successful saves: cache the server's system fields so the next push
-        // carries a change tag, and clear the CDC rows they came from.
-        if !e.savedRecords.isEmpty || !e.deletedRecordIDs.isEmpty {
-            let saved = e.savedRecords
-            let deleted = e.deletedRecordIDs
-            let watermarks = enqueuedAt
+        // Successful saves: cache the server's record so the next push carries
+        // its change tag and the next conflict has a real ancestor, and clear
+        // the queue rows the push covered.
+        let saved = e.savedRecords
+        let deleted = e.deletedRecordIDs
+        let sentNames = Set(saved.map(\.recordID.recordName) + deleted.map(\.recordName))
+
+        if !sentNames.isEmpty {
+            let marks = sendWatermarks
             do {
                 try await DatabaseManager.shared.dbQueue.write { db in
                     for record in saved {
                         try SyncRecordMetadata.save(db: db, record: record)
                         Self.clearQueueRow(db: db,
                                            recordName: record.recordID.recordName,
-                                           upTo: watermarks[record.recordID.recordName])
+                                           upTo: marks[record.recordID.recordName])
                     }
                     for id in deleted {
                         if let parsed = CKRecordName.parse(id.recordName) {
@@ -357,14 +524,18 @@ actor SyncEngine: CKSyncEngineDelegate {
                         }
                         Self.clearQueueRow(db: db,
                                            recordName: id.recordName,
-                                           upTo: watermarks[id.recordName])
+                                           upTo: marks[id.recordName])
                     }
                 }
-                for record in saved { enqueuedAt[record.recordID.recordName] = nil }
-                for id in deleted { enqueuedAt[id.recordName] = nil }
             } catch {
                 AppLogger.log(tag: "SyncEngine", "Post-send bookkeeping failed: \(error)")
             }
+            for name in sentNames { sendWatermarks[name] = nil }
+
+            // CKSyncEngine removes a change once it is sent. A queue row that
+            // survived the cleanup is an edit made while the push was in
+            // flight, so hand it back or it waits until the next launch.
+            await requeueSurvivors(of: sentNames)
         }
 
         for failure in e.failedRecordSaves {
@@ -376,12 +547,30 @@ actor SyncEngine: CKSyncEngineDelegate {
             case .unknownItem:
                 // Already gone on the server — the outcome we wanted.
                 try? await DatabaseManager.shared.dbQueue.write { db in
-                    Self.clearQueueRow(db: db, recordName: recordID.recordName, upTo: nil)
+                    Self.removeFromQueue(db: db, recordName: recordID.recordName)
                 }
+            case .networkFailure, .networkUnavailable, .serviceUnavailable,
+                 .requestRateLimited, .zoneBusy, .notAuthenticated, .operationCancelled,
+                 .batchRequestFailed:
+                break   // retried by CKSyncEngine
             default:
                 AppLogger.log(tag: "SyncEngine",
                               "Delete failed \(recordID.recordName): \(error)")
             }
+        }
+    }
+
+    private func requeueSurvivors(of names: Set<String>) async {
+        do {
+            let rows = try await DatabaseManager.shared.dbQueue.read { db in
+                try PendingChangeRow.fetchAll(db, sql: Self.queueSQL)
+            }
+            let survivors = rows.filter { names.contains($0.recordName) }
+            if !survivors.isEmpty {
+                enqueue(survivors, isFullQueue: false, force: true)
+            }
+        } catch {
+            AppLogger.log(tag: "SyncEngine", "Survivor check failed: \(error)")
         }
     }
 
@@ -395,37 +584,28 @@ actor SyncEngine: CKSyncEngineDelegate {
         switch failure.error.code {
 
         case .serverRecordChanged:
-            // Merge against the ancestor, write the result locally so this
-            // device converges too, and re-queue so the merged version reaches
-            // the server.
+            // Merge the server's version with this device's *current* state —
+            // not the record that was sent, which may already be out of date —
+            // write the result locally, and re-queue so it reaches the server.
+            // The server's record is cached before the retry is built, so the
+            // retry carries its change tag instead of looping as an insert.
             guard let server = failure.error.serverRecord else {
                 AppLogger.log(tag: "SyncEngine", "Conflict without server record: \(name)")
                 return
             }
-            let merged = SyncMerge.resolve(client: failure.error.clientRecord ?? record,
-                                           server: server,
-                                           ancestor: failure.error.ancestorRecord)
-
-            // Cache the server's system fields BEFORE re-queueing. Without
-            // this the retry rebuilds its record from the database through
-            // `seededRecord`, finds no cached tag, and pushes as an insert
-            // again — so CloudKit answers "record to insert already exists"
-            // and the same conflict repeats forever.
-            //
-            // That deadlock is not hypothetical: it is what the first real
-            // run against CloudKit did, 250 records looping with no record
-            // ever reaching the server. Any device whose metadata cache is
-            // empty while the zone already holds its records — a reinstall, a
-            // restore from backup, a cleared cache — lands in it.
             tally.conflicts += 1
-            await applyMerged(merged, cacheSystemFieldsFrom: server)
+            await resolveConflict(recordID: record.recordID,
+                                  server: server,
+                                  reportedAncestor: failure.error.ancestorRecord)
             syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(record.recordID)])
             AppLogger.log(tag: "SyncEngine", "Merged conflict for \(name)")
 
         case .zoneNotFound:
-            // The zone was deleted out from under us. Recreate it and re-push
-            // everything — the local database is the user's library and must
-            // not be discarded because a zone vanished.
+            // The zone is gone — most often because the reader deleted Fathom's
+            // iCloud data. Recreate it and push this record; the cached tags
+            // describe records that no longer exist, so drop them all. The rest
+            // of the library is re-uploaded only when the zone deletion event
+            // says it should be (see `handleDatabaseChanges`).
             try? await DatabaseManager.shared.dbQueue.write { db in
                 try SyncRecordMetadata.deleteAll(db: db)
             }
@@ -433,26 +613,57 @@ actor SyncEngine: CKSyncEngineDelegate {
             syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(record.recordID)])
 
         case .unknownItem:
-            // Referenced something the server no longer has. Drop the tag so
-            // the next push creates it fresh.
-            if let parsed = CKRecordName.parse(name) {
-                try? await DatabaseManager.shared.dbQueue.write { db in
-                    try SyncRecordMetadata.delete(db: db, type: parsed.type, recordName: name)
-                }
-            }
-            syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(record.recordID)])
+            // The save carried a tag for a record the server no longer has.
+            await handleVanishedRecord(record.recordID, syncEngine: syncEngine)
 
         case .networkFailure, .networkUnavailable, .serviceUnavailable,
-             .requestRateLimited, .zoneBusy:
-            // Transient. CKSyncEngine keeps the change pending and retries with
-            // backoff; doing anything here would fight it.
+             .requestRateLimited, .zoneBusy, .notAuthenticated, .operationCancelled,
+             .batchRequestFailed:
+            // Transient, or a side effect of another record in the same batch.
+            // CKSyncEngine keeps the change pending and retries with backoff.
             break
 
         case .quotaExceeded:
-            AppLogger.log(tag: "SyncEngine", "iCloud quota exceeded — sync paused for \(name)")
+            AppLogger.log(tag: "SyncEngine", "iCloud quota exceeded — waiting on \(name)")
+            await SyncActivity.shared.report(.quotaExceeded)
 
         default:
             AppLogger.log(tag: "SyncEngine", "Save failed \(name): \(failure.error)")
+            await SyncActivity.shared.report(.failing(failure.error.localizedDescription))
+        }
+    }
+
+    /// A save failed with `unknownItem`: the record existed on the server when
+    /// this device last saw it, and does not now.
+    ///
+    /// For types the app hard-deletes — books, shelves, completions and shelf
+    /// memberships, which go when their book or shelf does — that means another
+    /// device deleted it, and the right answer is to delete it here too. The
+    /// previous handler re-uploaded the local copy, so opening a book on one
+    /// device (which touches `lastReadAt`) resurrected it everywhere after it
+    /// had been deleted on another — with its file already gone.
+    ///
+    /// Everything else is never deleted on purpose, so the local copy is
+    /// re-uploaded as a new record.
+    private func handleVanishedRecord(_ recordID: CKRecord.ID, syncEngine: CKSyncEngine) async {
+        guard let parsed = CKRecordName.parse(recordID.recordName) else { return }
+
+        switch parsed.type {
+        case CKRecordType.book, CKRecordType.bookCategory,
+             CKRecordType.bookCompletion, CKRecordType.bookCategoryMembership:
+            AppLogger.log(tag: "SyncEngine",
+                          "\(recordID.recordName) was deleted on another device — deleting here")
+            syncEngine.state.remove(pendingRecordZoneChanges: [.saveRecord(recordID)])
+            if await applyRemoteDeletion(recordID) {
+                await postRemoteChangeNotification()
+            }
+
+        default:
+            try? await DatabaseManager.shared.dbQueue.write { db in
+                try SyncRecordMetadata.delete(db: db, type: parsed.type,
+                                              recordName: recordID.recordName)
+            }
+            syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
         }
     }
 
@@ -460,76 +671,107 @@ actor SyncEngine: CKSyncEngineDelegate {
     /// Silent when nothing happened, so an idle app stays quiet.
     private func flushTally() {
         guard !tally.isEmpty else { return }
-        AppLogger.log(tag: "SyncEngine", """
-            cycle: fetched \(tally.fetched) (applied \(tally.applied),             deferred \(tally.deferred), deletes \(tally.deleted)) ·             sent \(tally.sent) (deletes \(tally.sentDeletes),             conflicts \(tally.conflicts), failed \(tally.failed))
-            """)
+        let t = tally
+        AppLogger.log(tag: "SyncEngine",
+                      "cycle: fetched \(t.fetched) (applied \(t.applied), deferred \(t.deferred), "
+                      + "deletes \(t.deleted)) · sent \(t.sent) (deletes \(t.sentDeletes), "
+                      + "conflicts \(t.conflicts), failed \(t.failed))")
         tally = Tally()
     }
 
     // MARK: - Account and database changes
 
-    private func handleAccountChange(_ e: CKSyncEngine.Event.AccountChange) async {
-        switch e.changeType {
-        case .signIn:
-            // A fresh account: everything local is unsent as far as the new
-            // account's zone is concerned.
-            try? await DatabaseManager.shared.dbQueue.write { db in
-                try SyncRecordMetadata.deleteAll(db: db)
-            }
-            await enqueuePendingChanges()
+    /// The library on this device belongs to the reader, not to an account, so
+    /// it is never deleted here. A sign-in — whether the first, or a switch to
+    /// a different Apple ID — uploads all of it into that account, merging
+    /// with anything already there. A sign-out keeps it on the device, and it
+    /// is uploaded again at the next sign-in.
+    private func handleAccountChange(_ e: CKSyncEngine.Event.AccountChange,
+                                     syncEngine: CKSyncEngine) async {
+        // Cached tags and parked records describe the previous account's zone.
+        try? await DatabaseManager.shared.dbQueue.write { db in
+            try SyncRecordMetadata.deleteAll(db: db)
+            try SyncDeferredApplies.removeAll(db: db)
+        }
+        sendWatermarks = [:]
+        enqueuedStamps = [:]
 
-        case .signOut, .switchAccounts:
-            // Tags and tokens describe a zone this device can no longer reach.
-            // Local data stays — it is the user's library, not a cache.
-            try? await DatabaseManager.shared.dbQueue.write { db in
-                try SyncRecordMetadata.deleteAll(db: db)
-            }
-            SyncStateStore.reset()
-            AppLogger.log(tag: "SyncEngine", "Account changed — sync state cleared")
+        switch e.changeType {
+        case .signIn, .switchAccounts:
+            AppLogger.log(tag: "SyncEngine", "Account signed in — uploading the local library")
+            syncEngine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
+            await enqueueEverything()
+            await SyncActivity.shared.clearProblem()
+
+        case .signOut:
+            AppLogger.log(tag: "SyncEngine", "Account signed out — library kept on device")
+            await SyncActivity.shared.report(.noAccount)
 
         @unknown default:
             break
         }
     }
 
-    private func handleDatabaseChanges(_ e: CKSyncEngine.Event.FetchedDatabaseChanges) async {
+    private func handleDatabaseChanges(_ e: CKSyncEngine.Event.FetchedDatabaseChanges,
+                                       syncEngine: CKSyncEngine) async {
         for deletion in e.deletions where deletion.zoneID == zoneID {
-            AppLogger.log(tag: "SyncEngine",
-                          "Zone removed (\(deletion.reason)) — re-uploading local library")
-            try? await DatabaseManager.shared.dbQueue.write { db in
-                try SyncRecordMetadata.deleteAll(db: db)
+            switch deletion.reason {
+            case .purged:
+                // The reader deleted Fathom's iCloud data from Settings. Keep
+                // the library on this device, but do not put it back: that is
+                // what they asked for. Changes made from now on sync again —
+                // the first one recreates the zone.
+                AppLogger.log(tag: "SyncEngine",
+                              "iCloud data deleted by the user — keeping the library on device, not re-uploading")
+                try? await DatabaseManager.shared.dbQueue.write { db in
+                    try SyncRecordMetadata.deleteAll(db: db)
+                    try SyncDeferredApplies.removeAll(db: db)
+                    try db.execute(sql: "DELETE FROM cloudkit_pending_changes")
+                }
+                syncEngine.state.remove(
+                    pendingRecordZoneChanges: syncEngine.state.pendingRecordZoneChanges)
+                sendWatermarks = [:]
+                enqueuedStamps = [:]
+
+            default:
+                // Deleted some other way, or reset because the reader's
+                // end-to-end encryption keys were reset. The server has
+                // nothing; the local library is the only copy.
+                AppLogger.log(tag: "SyncEngine",
+                              "Zone removed (\(deletion.reason)) — re-uploading the local library")
+                try? await DatabaseManager.shared.dbQueue.write { db in
+                    try SyncRecordMetadata.deleteAll(db: db)
+                }
+                syncEngine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
+                await enqueueEverything()
             }
-            engine?.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
-            await enqueueEverything()
         }
     }
 
     // MARK: - Queue helpers
 
-    /// Deletes a processed CDC row, keeping any row re-queued after the push
-    /// began. `upTo` nil means "delete regardless", used when the record is
-    /// known to be gone.
+    /// Deletes a processed CDC row, keeping any row re-queued after the batch
+    /// was built. A nil `upTo` means no row existed then, so nothing is
+    /// deleted — whatever is there now is a newer change.
     nonisolated private static func clearQueueRow(db: Database, recordName: String, upTo queuedAt: String?) {
-        guard let parsed = CKRecordName.parse(recordName) else { return }
+        guard let queuedAt, let parsed = CKRecordName.parse(recordName) else { return }
         do {
-            if let queuedAt {
-                try db.execute(sql: """
-                    DELETE FROM cloudkit_pending_changes
-                    WHERE recordType = ? AND recordID = ? AND queuedAt <= ?
-                    """, arguments: [parsed.type, parsed.localID, queuedAt])
-            } else {
-                try db.execute(sql: """
-                    DELETE FROM cloudkit_pending_changes
-                    WHERE recordType = ? AND recordID = ?
-                    """, arguments: [parsed.type, parsed.localID])
-            }
+            try db.execute(sql: """
+                DELETE FROM cloudkit_pending_changes
+                WHERE recordType = ? AND recordID = ? AND queuedAt <= ?
+                """, arguments: [parsed.type, parsed.localID, queuedAt])
         } catch {
             AppLogger.log(tag: "SyncEngine", "Queue cleanup failed for \(recordName): \(error)")
         }
     }
 
-    /// Removes a CDC entry from inside an already-open write transaction, so a
-    /// record we just pulled is not immediately pushed back.
+    /// Removes a record's CDC entry unconditionally — for a record known to be
+    /// gone, where no pending local change can matter any more.
+    nonisolated static func removeFromQueue(db: Database, recordName: String) {
+        guard let parsed = CKRecordName.parse(recordName) else { return }
+        removeFromQueue(db: db, type: parsed.type, id: parsed.localID)
+    }
+
     nonisolated static func removeFromQueue(db: Database, type: String, id: String) {
         do {
             try db.execute(

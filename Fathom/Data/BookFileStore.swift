@@ -41,6 +41,14 @@ nonisolated enum BookFileStore {
         try ICloudFileStore.shared.saveReflectionImage(data, imageID: imageID)
     }
 
+    /// Deletes a book's files — the EPUB, its cover and its reflection image —
+    /// everywhere they are stored. Call after the database row is gone.
+    static func deleteFiles(bookFilename: String?, coverFilename: String?, reflectionFilename: String?) {
+        ICloudFileStore.shared.deleteFiles(bookFilename: bookFilename,
+                                           coverFilename: coverFilename,
+                                           reflectionFilename: reflectionFilename)
+    }
+
     /// Resolves the full URL for a reflection image filename.
     static func reflectionImageURL(for filename: String) -> URL? {
         ICloudFileStore.shared.reflectionImageURL(for: filename)

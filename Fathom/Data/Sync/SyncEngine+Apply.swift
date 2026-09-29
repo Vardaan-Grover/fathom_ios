@@ -539,7 +539,8 @@ extension SyncEngine {
     /// the conflict resolution inside any trigger it fires. The sync triggers
     /// are suppressed during apply, but the rule is kept so this code stays
     /// safe if that ever changes.
-    private nonisolated static func writeModel( // swiftlint:disable:this cyclomatic_complexitydb: Database,
+    private nonisolated static func writeModel( // swiftlint:disable:this cyclomatic_complexity
+                                               db: Database,
                                                record: CKRecord,
                                                type: CKRecord.RecordType) throws -> Bool {
         switch type {

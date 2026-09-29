@@ -47,7 +47,7 @@ struct SyncApplyTriggerTests {
         var book = try insertBook(dbQueue)
         try clearQueue(dbQueue)
 
-        book.preprocessingStatus = .ready
+        book.preprocessingStatus = .completed
         book.aiAnalysisProgress = 0.5
         try dbQueue.write { db in try book.update(db) }
 

@@ -218,7 +218,9 @@ extension SyncEngine {
         }
 
         for deletion in deletions {
-            if await applyRemoteDeletion(deletion.recordID) { applied += 1 }
+            // Not a `where` clause: it cannot contain `await`.
+            let changed = await applyRemoteDeletion(deletion.recordID)
+            if changed { applied += 1 }
         }
 
         // A parent may have arrived in this batch, or in an earlier one during
@@ -537,8 +539,7 @@ extension SyncEngine {
     /// the conflict resolution inside any trigger it fires. The sync triggers
     /// are suppressed during apply, but the rule is kept so this code stays
     /// safe if that ever changes.
-    // swiftlint:disable:next cyclomatic_complexity
-    private nonisolated static func writeModel(db: Database,
+    private nonisolated static func writeModel( // swiftlint:disable:this cyclomatic_complexitydb: Database,
                                                record: CKRecord,
                                                type: CKRecord.RecordType) throws -> Bool {
         switch type {

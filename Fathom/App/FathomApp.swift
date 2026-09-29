@@ -28,7 +28,13 @@ struct FathomApp: App {
         // the background with no scene — and so no view `.task` — at all.
         // Idempotent, so extra windows and re-created scenes cannot start it
         // twice.
-        Task.detached(priority: .userInitiated) { await SyncBootstrap.start() }
+        //
+        // Not when the app is only hosting the unit tests: they use their own
+        // in-memory databases, and live CloudKit and iCloud Drive work in the
+        // same process only slows them down and makes them unpredictable.
+        if !Self.isHostingTests {
+            Task.detached(priority: .userInitiated) { await SyncBootstrap.start() }
+        }
 
         let container = AppContainer.shared
         bookRepository = container.bookRepo
@@ -41,6 +47,14 @@ struct FathomApp: App {
             bookRepo: container.bookRepo,
             preprocessingCoordinator: container.preprocessingCoordinator
         ))
+    }
+
+    /// True when Xcode launched the app to host the test bundle.
+    private static var isHostingTests: Bool {
+        let env = ProcessInfo.processInfo.environment
+        return env["XCTestConfigurationFilePath"] != nil
+            || env["XCTestBundlePath"] != nil
+            || env["XCTestSessionIdentifier"] != nil
     }
 
     var body: some Scene {

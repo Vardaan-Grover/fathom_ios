@@ -140,6 +140,23 @@ nonisolated final class ICloudFileStore: Sendable {
         url(for: BookFileRef(kind: .reflection, filename: filename))
     }
 
+    /// A URL that can be read *without waiting on iCloud*: the local copy, or
+    /// an iCloud copy that is already fully downloaded. Nil otherwise.
+    ///
+    /// Reading an iCloud file that is not downloaded blocks in `pread` until
+    /// it arrives — possibly for ever on a device that never fetches it. Cover
+    /// loads go through here so that a missing cover shows as a placeholder
+    /// instead of pinning one of the loader's threads.
+    func readableURLWithoutWaiting(for ref: BookFileRef) -> URL? {
+        if let local = localURL(ref), FileManager.default.fileExists(atPath: local.path) {
+            return local
+        }
+        if let cloud = cloudURL(ref), cloudItemIsDownloaded(cloud) {
+            return cloud
+        }
+        return nil
+    }
+
     /// Whether this device holds its own copy of the file.
     func hasLocalCopy(_ ref: BookFileRef) -> Bool {
         guard let url = localURL(ref) else { return false }

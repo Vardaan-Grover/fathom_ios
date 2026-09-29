@@ -82,8 +82,15 @@ nonisolated enum BookFileStore {
         if let cached = coverImageCache.object(forKey: key) {
             return cached
         }
-        guard let url = coverURL(for: filename),
-            let image = downsampledImage(at: url, maxPixelDimension: coverMaxPixelDimension)
+        // Never wait on iCloud here. A cover that is not on this device yet
+        // is requested and shows as a placeholder; BookFileSync copies it in
+        // and the next load finds it.
+        let ref = BookFileRef(kind: .cover, filename: filename)
+        guard let url = ICloudFileStore.shared.readableURLWithoutWaiting(for: ref) else {
+            BookFileSync.shared.requestDownload(ref)
+            return nil
+        }
+        guard let image = downsampledImage(at: url, maxPixelDimension: coverMaxPixelDimension)
         else { return nil }
         let cost: Int
         if let cgImage = image.cgImage {
